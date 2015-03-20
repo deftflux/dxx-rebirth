@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -60,9 +66,7 @@ void func_close()
 
 int (*func_get( char * name, int * numparams ))(void)
 {
-	int i;
-
-	for (i=0; i<func_size; i++ )
+	for (int i=0; i<func_size; i++ )
 		if (!d_stricmp( name, func_table[i].name ))
 		{
 			*numparams = func_table[i].nparams;
@@ -74,9 +78,7 @@ int (*func_get( char * name, int * numparams ))(void)
 
 int func_get_index( char * name )
 {
-	int i;
-
-	for (i=0; i<func_size; i++ )
+	for (int i=0; i<func_size; i++ )
 		if (!d_stricmp( name, func_table[i].name ))
 		{
 			return i;

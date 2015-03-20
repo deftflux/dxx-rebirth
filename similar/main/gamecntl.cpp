@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -21,7 +27,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #include <algorithm>
 #include <stdio.h>
-#include <stdlib.h>
+#include <cstdlib>
 #include <string.h>
 #include <stdarg.h>
 
@@ -99,18 +105,29 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "editor/esegment.h"
 #endif
 
+#include "compiler-array.h"
+#include "compiler-exchange.h"
+#include "compiler-range_for.h"
+#include "highest_valid.h"
+#include "partial_range.h"
+
 #include <SDL.h>
+
+#if defined(__GNUC__) && defined(WIN64)
+/* Mingw64 _mingw_print_pop.h changes PRIi64 to POSIX-style.  Change it
+ * back here.
+ */
+#undef PRIi64
+#define PRIi64 "I64i"
+#endif
 
 using std::min;
 
 // Global Variables -----------------------------------------------------------
 
-int	Debug_spew;
-
 //	Function prototypes --------------------------------------------------------
 #ifndef RELEASE
 static void do_cheat_menu();
-static void advance_sound();
 static void play_test_sound();
 #endif
 
@@ -205,13 +222,11 @@ int which_bomb()
 
 static void do_weapon_n_item_stuff()
 {
-	int i;
-
 	if (Controls.state.fire_flare > 0)
 	{
 		Controls.state.fire_flare = 0;
 		if (allowed_to_fire_flare())
-			Flare_create(ConsoleObject);
+			Flare_create(vobjptridx(ConsoleObject));
 	}
 
 	if (allowed_to_fire_missile() && Controls.state.fire_secondary)
@@ -224,15 +239,13 @@ static void do_weapon_n_item_stuff()
 
 	if (Controls.state.cycle_primary > 0)
 	{
-		for (i=0;i < Controls.state.cycle_primary;i++)
+		for (uint_fast32_t i = exchange(Controls.state.cycle_primary, 0); i--;)
 			CyclePrimary ();
-		Controls.state.cycle_primary = 0;
 	}
 	if (Controls.state.cycle_secondary > 0)
 	{
-		for (i=0;i < Controls.state.cycle_secondary;i++)
+		for (uint_fast32_t i = exchange(Controls.state.cycle_secondary, 0); i--;)
 			CycleSecondary ();
-		Controls.state.cycle_secondary = 0;
 	}
 	if (Controls.state.select_weapon > 0)
 	{
@@ -241,11 +254,10 @@ static void do_weapon_n_item_stuff()
 		Controls.state.select_weapon = 0;
 	}
 #if defined(DXX_BUILD_DESCENT_II)
-	if (Controls.state.headlight > 0)
+	if (auto &headlight = Controls.state.headlight)
 	{
-		for (i=0;i < Controls.state.headlight;i++)
+		if (exchange(headlight, 0) & 1)
 			toggle_headlight_active ();
-		Controls.state.headlight = 0;
 	}
 #endif
 
@@ -253,10 +265,10 @@ static void do_weapon_n_item_stuff()
 		Global_missile_firing_count = 0;
 
 	//	Drop proximity bombs.
-	while (Controls.state.drop_bomb > 0)
+	if (Controls.state.drop_bomb > 0)
 	{
+		for (uint_fast32_t i = exchange(Controls.state.drop_bomb, 0); i--;)
 		do_missile_firing(1);
-		Controls.state.drop_bomb--;
 	}
 #if defined(DXX_BUILD_DESCENT_II)
 	if (Controls.state.toggle_bomb > 0)
@@ -289,23 +301,28 @@ static void do_weapon_n_item_stuff()
 #endif
 }
 
-static void format_time(char *str, int secs_int)
+static void format_time(char (&str)[9], unsigned secs_int, unsigned hours_extra)
 {
-	int h, m, s;
-
-	h = secs_int/3600;
-	s = secs_int%3600;
-	m = s / 60;
-	s = s % 60;
-	sprintf(str, "%1d:%02d:%02d", h, m, s );
+	auto d1 = std::div(secs_int, 60);
+	const unsigned s = d1.rem;
+	const unsigned m1 = d1.quot;
+	auto d2 = std::div(m1, 60);
+	const unsigned m = d2.rem;
+	const unsigned h = d2.quot + hours_extra;
+	snprintf(str, sizeof(str), "%1u:%02u:%02u", h, m, s);
 }
 
+struct pause_window : ignore_window_pointer_t
+{
+	array<char, 1024> msg;
+};
+
 //Process selected keys until game unpaused
-static int pause_handler(window *wind, d_event *event, char *msg)
+static window_event_result pause_handler(window *wind,const d_event &event, pause_window *p)
 {
 	int key;
 
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_WINDOW_ACTIVATED:
 			game_flush_inputs();
@@ -319,14 +336,12 @@ static int pause_handler(window *wind, d_event *event, char *msg)
 				case 0:
 					break;
 				case KEY_ESC:
-					window_close(wind);
-					return 1;
+					return window_event_result::close;
 				case KEY_F1:
 					show_help();
-					return 1;
+					return window_event_result::handled;
 				case KEY_PAUSE:
-					window_close(wind);
-					return 1;
+					return window_event_result::close;
 				default:
 					break;
 			}
@@ -337,24 +352,22 @@ static int pause_handler(window *wind, d_event *event, char *msg)
 			break;
 
 		case EVENT_WINDOW_DRAW:
-			show_boxed_message(msg, 1);
+			show_boxed_message(&p->msg[0], 1);
 			break;
 
 		case EVENT_WINDOW_CLOSE:
 			songs_resume();
-			d_free(msg);
+			delete p;
 			break;
 
 		default:
 			break;
 	}
-
-	return 0;
+	return window_event_result::ignored;
 }
 
 static int do_game_pause()
 {
-	char *msg;
 	char total_time[9],level_time[9];
 
 	if (Game_mode & GM_MULTI)
@@ -363,22 +376,19 @@ static int do_game_pause()
 		return(KEY_PAUSE);
 	}
 
-	MALLOC(msg, char, 1024);
-	if (!msg)
-		return 0;
-
+	pause_window *p = new pause_window;
 	songs_pause();
 
-	format_time(total_time, f2i(Players[Player_num].time_total) + Players[Player_num].hours_total*3600);
-	format_time(level_time, f2i(Players[Player_num].time_level) + Players[Player_num].hours_level*3600);
+	format_time(total_time, f2i(Players[Player_num].time_total), Players[Player_num].hours_total);
+	format_time(level_time, f2i(Players[Player_num].time_level), Players[Player_num].hours_level);
 	if (Newdemo_state!=ND_STATE_PLAYBACK)
-		snprintf(msg,1024,"PAUSE\n\nSkill level:  %s\nHostages on board:  %d\nTime on level: %s\nTotal time in game: %s",MENU_DIFFICULTY_TEXT(Difficulty_level),Players[Player_num].hostages_on_board,level_time,total_time);
+		snprintf(&p->msg[0], p->msg.size(),"PAUSE\n\nSkill level:  %s\nHostages on board:  %d\nTime on level: %s\nTotal time in game: %s",MENU_DIFFICULTY_TEXT(Difficulty_level),Players[Player_num].hostages_on_board,level_time,total_time);
 	else
-	  	snprintf(msg,1024,"PAUSE\n\nSkill level:  %s\nHostages on board:  %d\n",MENU_DIFFICULTY_TEXT(Difficulty_level),Players[Player_num].hostages_on_board);
+	  	snprintf(&p->msg[0], p->msg.size(),"PAUSE\n\nSkill level:  %s\nHostages on board:  %d\n",MENU_DIFFICULTY_TEXT(Difficulty_level),Players[Player_num].hostages_on_board);
 	set_screen_mode(SCREEN_MENU);
 
-	if (!window_create(&grd_curscreen->sc_canvas, 0, 0, SWIDTH, SHEIGHT, pause_handler, msg))
-		d_free(msg);
+	if (!window_create(&grd_curscreen->sc_canvas, 0, 0, SWIDTH, SHEIGHT, pause_handler, p))
+		delete p;
 
 	return 0 /*key*/;	// Keycode returning ripped out (kreatordxx)
 }
@@ -401,9 +411,9 @@ static int HandleEndlevelKey(int key)
 	return 0;
 }
 
-static int HandleDeathInput(d_event *event)
+static int HandleDeathInput(const d_event &event)
 {
-	if (event->type == EVENT_KEY_COMMAND)
+	if (event.type == EVENT_KEY_COMMAND)
 	{
 		int key = event_key_get(event);
 
@@ -414,7 +424,7 @@ static int HandleDeathInput(d_event *event)
 				Death_sequence_aborted = 1;
 	}
 
-	if (Player_exploded && (event->type == EVENT_JOYSTICK_BUTTON_UP || event->type == EVENT_MOUSE_BUTTON_UP))
+	if (Player_exploded && (event.type == EVENT_JOYSTICK_BUTTON_UP || event.type == EVENT_MOUSE_BUTTON_UP))
 		Death_sequence_aborted = 1;
 
 	if (Death_sequence_aborted)
@@ -490,7 +500,7 @@ static int HandleDemoKey(int key)
 			if (PlayerCfg.PRShot)
 			{
 				gr_set_current_canvas(NULL);
-				render_frame(0, 0);
+				render_frame(0);
 				gr_set_curfont(MEDIUM2_FONT);
 				gr_string(SWIDTH-FSPACX(92),SHEIGHT-LINE_SPACING,"DXX-Rebirth\n");
 				gr_flip();
@@ -501,9 +511,7 @@ static int HandleDemoKey(int key)
 				int old_state;
 				old_state = Newdemo_show_percentage;
 				Newdemo_show_percentage = 0;
-				game_render_frame_mono(0);
-				if (!GameArg.DbgNoDoubleBuffer)
-					gr_flip();
+				game_render_frame_mono(!GameArg.DbgNoDoubleBuffer);
 				save_screen_shot(0);
 				Newdemo_show_percentage = old_state;
 			}
@@ -517,19 +525,21 @@ static int HandleDemoKey(int key)
 		case KEY_DEBUGGED + KEY_K: {
 			int how_many, c;
 			char filename[FILENAME_LEN], num[16];
-			newmenu_item m[6];
-
+			array<newmenu_item, 2> m{
+				nm_item_text("output file name"),
+				nm_item_input(filename),
+			};
 			filename[0] = '\0';
-			nm_set_item_text(& m[ 0], "output file name");
-			nm_set_item_input(&m[ 1], 8, filename);
-			c = newmenu_do( NULL, NULL, 2, m, unused_newmenu_subfunction, unused_newmenu_userdata);
+			c = newmenu_do( NULL, NULL, m, unused_newmenu_subfunction, unused_newmenu_userdata);
 			if (c == -2)
 				break;
 			strcat(filename, DEMO_EXT);
 			num[0] = '\0';
-			nm_set_item_text(& m[ 0], "strip how many bytes");
-			nm_set_item_input(&m[ 1], 16, num);
-			c = newmenu_do( NULL, NULL, 2, m, unused_newmenu_subfunction, unused_newmenu_userdata);
+			m = {
+				nm_item_text("strip how many bytes"),
+				nm_item_input(num),
+			};
+			c = newmenu_do( NULL, NULL, m, unused_newmenu_subfunction, unused_newmenu_userdata);
 			if (c == -2)
 				break;
 			how_many = atoi(num);
@@ -559,7 +569,7 @@ static int select_next_window_function(int w)
 			PlayerCfg.Cockpit3DView[w] = CV_REAR;
 			break;
 		case CV_REAR:
-			if (find_escort()) {
+			if (find_escort() != object_none) {
 				PlayerCfg.Cockpit3DView[w] = CV_ESCORT;
 				break;
 			}
@@ -620,8 +630,6 @@ dump_door_debugging_info()
 	fvi_info hit_info;
 	int fate;
 	PHYSFS_file *dfile;
-	int wall_num;
-
 	obj = &Objects[Players[Player_num].objnum];
 	vm_vec_scale_add(&new_pos,&obj->pos,&obj->orient.fvec,i2f(100));
 
@@ -633,7 +641,7 @@ dump_door_debugging_info()
 	fq.ignore_obj_list	= NULL;
 	fq.flags					= 0;
 
-	fate = find_vector_intersection(&fq,&hit_info);
+	fate = find_vector_intersection(fq, hit_info);
 
 	dfile = PHYSFSX_openWriteBuffered("door.out");
 
@@ -645,14 +653,12 @@ dump_door_debugging_info()
 
 	if (fate == HIT_WALL) {
 
-		wall_num = Segments[hit_info.hit_seg].sides[hit_info.hit_side].wall_num;
+		auto wall_num = Segments[hit_info.hit_seg].sides[hit_info.hit_side].wall_num;
 		PHYSFSX_printf(dfile,"wall_num = %d\n",wall_num);
 
-		if (wall_num != -1) {
+		if (wall_num != wall_none) {
 			wall *wall = &Walls[wall_num];
 			active_door *d;
-			int i;
-
 			PHYSFSX_printf(dfile,"    segnum = %d\n",wall->segnum);
 			PHYSFSX_printf(dfile,"    sidenum = %d\n",wall->sidenum);
 			PHYSFSX_printf(dfile,"    hps = %x\n",wall->hps);
@@ -668,8 +674,8 @@ dump_door_debugging_info()
 			PHYSFSX_printf(dfile,"\n");
 
 
-			for (i=0;i<Num_open_doors;i++) {		//find door
-				d = &ActiveDoors[i];
+			range_for (auto &i, partial_range(ActiveDoors, Num_open_doors)) {		//find door
+				d = &i;
 				if (d->front_wallnum[0]==wall-Walls || d->back_wallnum[0]==wall-Walls || (d->n_parts==2 && (d->front_wallnum[1]==wall-Walls || d->back_wallnum[1]==wall-Walls)))
 					break;
 			}
@@ -697,7 +703,7 @@ dump_door_debugging_info()
 
 //this is for system-level keys, such as help, etc.
 //returns 1 if screen changed
-static int HandleSystemKey(int key)
+static window_event_result HandleSystemKey(int key)
 {
 	if (!Player_is_dead)
 		switch (key)
@@ -711,12 +717,20 @@ static int HandleSystemKey(int key)
 
 			case KEY_ESC:
 			{
-				int choice;
-				choice=nm_messagebox( NULL, 2, TXT_YES, TXT_NO, TXT_ABORT_GAME );
-				if (choice == 0)
-					window_close(Game_wind);
-
-				return 1;
+				const bool allow_saveload = !(Game_mode & GM_MULTI) || (Game_mode & GM_MULTI_COOP);
+				const auto choice = nm_messagebox_str(nullptr, allow_saveload ? nm_messagebox_tie("Abort Game", TXT_OPTIONS_, "Save Game...", TXT_LOAD_GAME) : nm_messagebox_tie("Abort Game", TXT_OPTIONS_), "Game Menu");
+				switch(choice)
+				{
+					case 0:
+						return window_event_result::close;
+					case 1:
+						return HandleSystemKey(KEY_F2);
+					case 2:
+						return HandleSystemKey(KEY_ALTED | KEY_F2);
+					case 3:
+						return HandleSystemKey(KEY_ALTED | KEY_F3);
+				}
+				return window_event_result::handled;
 			}
 #if defined(DXX_BUILD_DESCENT_II)
 // fleshed these out because F1 and F2 aren't sequenctial keycodes on mac -- MWA
@@ -724,11 +738,11 @@ static int HandleSystemKey(int key)
 			KEY_MAC(case KEY_COMMAND+KEY_SHIFTED+KEY_1:)
 			case KEY_SHIFTED+KEY_F1:
 				select_next_window_function(0);
-				return 1;
+				return window_event_result::handled;
 			KEY_MAC(case KEY_COMMAND+KEY_SHIFTED+KEY_2:)
 			case KEY_SHIFTED+KEY_F2:
 				select_next_window_function(1);
-				return 1;
+				return window_event_result::handled;
 #endif
 		}
 
@@ -747,7 +761,7 @@ static int HandleSystemKey(int key)
 			if (PlayerCfg.PRShot)
 			{
 				gr_set_current_canvas(NULL);
-				render_frame(0, 0);
+				render_frame(0);
 				gr_set_curfont(MEDIUM2_FONT);
 				gr_string(SWIDTH-FSPACX(92),SHEIGHT-LINE_SPACING,"DXX-Rebirth\n");
 				gr_flip();
@@ -755,9 +769,7 @@ static int HandleSystemKey(int key)
 			}
 			else
 			{
-				game_render_frame_mono(0);
-				if(!GameArg.DbgNoDoubleBuffer)
-					gr_flip();
+				game_render_frame_mono(!GameArg.DbgNoDoubleBuffer);
 				save_screen_shot(0);
 			}
 			break;
@@ -856,24 +868,24 @@ static int HandleSystemKey(int key)
 		KEY_MAC(case KEY_COMMAND+KEY_ALTED+KEY_2:)
 		case KEY_ALTED+KEY_F2:
 			if (!Player_is_dead)
-				state_save_all(0, NULL, 0); // 0 means not between levels.
+				state_save_all(0, nullptr, 0); // 0 means not between levels.
 			break;
 
 		KEY_MAC(case KEY_COMMAND+KEY_S:)
 		case KEY_ALTED+KEY_SHIFTED+KEY_F2:
 			if (!Player_is_dead)
-				state_save_all(0, NULL, 1);
+				state_save_all(0, nullptr, 1);
 			break;
 		KEY_MAC(case KEY_COMMAND+KEY_SHIFTED+KEY_O:)
 		KEY_MAC(case KEY_COMMAND+KEY_ALTED+KEY_3:)
 		case KEY_ALTED+KEY_F3:
 			if (!((Game_mode & GM_MULTI) && !(Game_mode & GM_MULTI_COOP)))
-				state_restore_all(1, 0, NULL, 0);
+				state_restore_all(1, 0, nullptr, 0);
 			break;
 		KEY_MAC(case KEY_COMMAND+KEY_O:)
 		case KEY_ALTED+KEY_SHIFTED+KEY_F3:
 			if (!((Game_mode & GM_MULTI) && !(Game_mode & GM_MULTI_COOP)))
-				state_restore_all(1, 0, NULL, 1);
+				state_restore_all(1, 0, nullptr, 1);
 			break;
 
 #if defined(DXX_BUILD_DESCENT_II)
@@ -921,14 +933,12 @@ static int HandleSystemKey(int key)
 			break;
 
 		default:
-			return 0;
-			break;
+			return window_event_result::ignored;
 	}
-
-	return 1;
+	return window_event_result::handled;
 }
 
-static int HandleGameKey(int key)
+static window_event_result HandleGameKey(int key)
 {
 	switch (key) {
 #if defined(DXX_BUILD_DESCENT_II)
@@ -949,10 +959,10 @@ static int HandleGameKey(int key)
 				else
 					HUD_init_message_literal(HM_DEFAULT, "No Guide-Bot in Multiplayer!");
 				game_flush_inputs();
-				return 1;
+				return window_event_result::handled;
 			}
 			else
-				return 0;
+				return window_event_result::ignored;
 #endif
 
 		case KEY_ALTED+KEY_F7:
@@ -966,7 +976,7 @@ static int HandleGameKey(int key)
 				case 2: HUD_init_message_literal(HM_DEFAULT, "Alternative HUD #2"); break;
 				case 3: HUD_init_message_literal(HM_DEFAULT, "No HUD"); break;
 			}
-			return 1;
+			return window_event_result::handled;
 
 		KEY_MAC(case KEY_COMMAND+KEY_6:)
 		case KEY_F6:
@@ -975,7 +985,7 @@ static int HandleGameKey(int key)
 				RefuseThisPlayer=1;
 				HUD_init_message_literal(HM_MULTI, "Player accepted!");
 			}
-			return 1;
+			return window_event_result::handled;
 		case KEY_ALTED + KEY_1:
 			if (Netgame.RefusePlayers && WaitForRefuseAnswer && (Game_mode & GM_TEAM))
 				{
@@ -984,7 +994,7 @@ static int HandleGameKey(int key)
 					RefuseTeam=1;
 					game_flush_inputs();
 				}
-			return 1;
+			return window_event_result::handled;
 		case KEY_ALTED + KEY_2:
 			if (Netgame.RefusePlayers && WaitForRefuseAnswer && (Game_mode & GM_TEAM))
 				{
@@ -993,11 +1003,11 @@ static int HandleGameKey(int key)
 					RefuseTeam=2;
 					game_flush_inputs();
 				}
-			return 1;
+			return window_event_result::handled;
 
 		default:
 #if defined(DXX_BUILD_DESCENT_I)
-			return 0;
+			return window_event_result::ignored;
 #endif
 			break;
 
@@ -1029,23 +1039,23 @@ static int HandleGameKey(int key)
 				break;
 
 			default:
-				return 0;
+				return window_event_result::ignored;
 		}
 	else
-		return 0;
+		return window_event_result::ignored;
 #endif
 
-	return 1;
+	return window_event_result::handled;
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
 static void kill_all_robots(void)
 {
-	int	i, dead_count=0;
+	int	dead_count=0;
 	//int	boss_index = -1;
 
 	// Kill all bots except for Buddy bot and boss.  However, if only boss and buddy left, kill boss.
-	for (i=0; i<=Highest_object_index; i++)
+	range_for (const auto i, highest_valid(Objects))
 		if (Objects[i].type == OBJ_ROBOT) {
 			if (!Robot_info[get_robot_id(&Objects[i])].companion && !Robot_info[get_robot_id(&Objects[i])].boss_flag) {
 				dead_count++;
@@ -1062,7 +1072,7 @@ static void kill_all_robots(void)
 
 	// Toast the buddy if nothing else toasted!
 	if (dead_count == 0)
-		for (i=0; i<=Highest_object_index; i++)
+		range_for (const auto i, highest_valid(Objects))
 			if (Objects[i].type == OBJ_ROBOT)
 				if (Robot_info[get_robot_id(&Objects[i])].companion) {
 					Objects[i].flags |= OF_EXPLODING|OF_SHOULD_BE_DEAD;
@@ -1082,29 +1092,30 @@ static void kill_all_robots(void)
 //	Yippee!!
 static void kill_and_so_forth(void)
 {
-	int     i, j;
-
 	HUD_init_message_literal(HM_DEFAULT, "Killing, awarding, etc.!");
 
-	for (i=0; i<=Highest_object_index; i++) {
-		switch (Objects[i].type) {
+	range_for (const auto i, highest_valid(Objects))
+	{
+		const auto o = vobjptridx(i);
+		switch (o->type) {
 			case OBJ_ROBOT:
-				Objects[i].flags |= OF_EXPLODING|OF_SHOULD_BE_DEAD;
+				o->flags |= OF_EXPLODING|OF_SHOULD_BE_DEAD;
 				break;
 			case OBJ_POWERUP:
-				do_powerup(&Objects[i]);
+				do_powerup(o);
 				break;
 		}
 	}
 
 	do_controlcen_destroyed_stuff(object_none);
 
-	for (i=0; i<Num_triggers; i++) {
+	for (uint_fast32_t i = 0; i < Num_triggers; i++) {
 		if (trigger_is_exit(&Triggers[i])) {
-			for (j=0; j<Num_walls; j++) {
-				if (Walls[j].trigger == i) {
-					compute_segment_center(&ConsoleObject->pos, &Segments[Walls[j].segnum]);
-					obj_relink(ConsoleObject-Objects,Walls[j].segnum);
+			range_for (auto &w, partial_range(Walls, Num_walls))
+			{
+				if (w.trigger == i) {
+					compute_segment_center(ConsoleObject->pos, &Segments[w.segnum]);
+					obj_relink(ConsoleObject-Objects,w.segnum);
 					goto kasf_done;
 				}
 			}
@@ -1120,10 +1131,10 @@ kasf_done: ;
 static void kill_all_snipers(void) __attribute_used;
 static void kill_all_snipers(void)
 {
-	int     i, dead_count=0;
+	int     dead_count=0;
 
 	//	Kill all snipers.
-	for (i=0; i<=Highest_object_index; i++)
+	range_for (const auto i, highest_valid(Objects))
 		if (Objects[i].type == OBJ_ROBOT)
 			if (Objects[i].ctype.ai_info.behavior == AIB_SNIPE) {
 				dead_count++;
@@ -1136,10 +1147,8 @@ static void kill_all_snipers(void)
 static void kill_thief(void) __attribute_used;
 static void kill_thief(void)
 {
-	int     i;
-
 	//	Kill thief.
-	for (i=0; i<=Highest_object_index; i++)
+	range_for (const auto i, highest_valid(Objects))
 		if (Objects[i].type == OBJ_ROBOT)
 			if (Robot_info[get_robot_id(&Objects[i])].thief) {
 				Objects[i].flags |= OF_EXPLODING|OF_SHOULD_BE_DEAD;
@@ -1150,10 +1159,8 @@ static void kill_thief(void)
 static void kill_buddy(void) __attribute_used;
 static void kill_buddy(void)
 {
-	int     i;
-
 	//	Kill buddy.
-	for (i=0; i<=Highest_object_index; i++)
+	range_for (const auto i, highest_valid(Objects))
 		if (Objects[i].type == OBJ_ROBOT)
 			if (Robot_info[get_robot_id(&Objects[i])].companion) {
 				Objects[i].flags |= OF_EXPLODING|OF_SHOULD_BE_DEAD;
@@ -1162,7 +1169,7 @@ static void kill_buddy(void)
 }
 #endif
 
-static int HandleTestKey(int key)
+static window_event_result HandleTestKey(int key)
 {
 	switch (key)
 	{
@@ -1213,7 +1220,7 @@ static int HandleTestKey(int key)
 		case KEY_DEBUGGED+KEY_X: Players[Player_num].lives++; break; // Extra life cheat key.
 		case KEY_DEBUGGED+KEY_H:
 			if (Player_is_dead)
-				return 0;
+				return window_event_result::ignored;
 
 			Players[Player_num].flags ^= PLAYER_FLAGS_CLOAKED;
 			if (Players[Player_num].flags & PLAYER_FLAGS_CLOAKED) {
@@ -1234,8 +1241,7 @@ static int HandleTestKey(int key)
 		case KEY_E + KEY_DEBUGGED:
 			window_set_visible(Game_wind, 0);	// don't let the game do anything while we set the editor up
 			init_editor();
-			window_close(Game_wind);
-			break;
+			return window_event_result::close;
 #if defined(DXX_BUILD_DESCENT_II)
 	case KEY_Q + KEY_SHIFTED + KEY_DEBUGGED:
 		{
@@ -1277,23 +1283,11 @@ static int HandleTestKey(int key)
 			break;
 		case KEY_DEBUGGED + KEY_L:
 			if (++Lighting_on >= 2) Lighting_on = 0; break;
-		case KEY_DEBUGGED + KEY_SHIFTED + KEY_L:
-			Beam_brightness=0x38000-Beam_brightness; break;
 		case KEY_PAD5: slew_stop(); break;
 
 #ifndef NDEBUG
 		case KEY_DEBUGGED + KEY_F11: play_test_sound(); break;
-		case KEY_DEBUGGED + KEY_SHIFTED+KEY_F11: advance_sound(); play_test_sound(); break;
 #endif
-
-		case KEY_DEBUGGED + KEY_M:
-			Debug_spew = !Debug_spew;
-			if (Debug_spew) {
-				HUD_init_message_literal(HM_DEFAULT,  "Debug Spew: ON" );
-			} else {
-				HUD_init_message_literal(HM_DEFAULT,  "Debug Spew: OFF" );
-			}
-			break;
 
 		case KEY_DEBUGGED + KEY_C:
 			do_cheat_menu();
@@ -1337,11 +1331,12 @@ static int HandleTestKey(int key)
 #endif
 
 		case KEY_DEBUGGED+KEY_B: {
-			newmenu_item m;
-			char text[FILENAME_LEN]="";
+			d_fname text{};
 			int item;
-			nm_set_item_input(&m, FILENAME_LEN, text);
-			item = newmenu_do( NULL, "Briefing to play?", 1, &m, unused_newmenu_subfunction, unused_newmenu_userdata);
+			array<newmenu_item, 1> m{
+				nm_item_input(text),
+			};
+			item = newmenu_do( NULL, "Briefing to play?", m, unused_newmenu_subfunction, unused_newmenu_userdata);
 			if (item != -1) {
 				do_briefing_screens(text,1);
 			}
@@ -1350,7 +1345,7 @@ static int HandleTestKey(int key)
 
 		case KEY_DEBUGGED+KEY_SHIFTED+KEY_B:
 			if (Player_is_dead)
-				return 0;
+				return window_event_result::ignored;
 
 			kill_and_so_forth();
 			break;
@@ -1359,11 +1354,9 @@ static int HandleTestKey(int key)
 			HUD_init_message(HM_DEFAULT, "GameTime %" PRIi64 " - Reset in 10 seconds!", GameTime64);
 			break;
 		default:
-			return 0;
-			break;
+			return window_event_result::ignored;
 	}
-
-	return 1;
+	return window_event_result::handled;
 }
 #endif		//#ifndef RELEASE
 
@@ -1372,7 +1365,7 @@ struct cheat_code
 {
 	const char string[CHEAT_MAX_LEN];
 	int (game_cheats::*stateptr);
-} __pack__;
+};
 
 static const cheat_code cheat_codes[] = {
 #if defined(DXX_BUILD_DESCENT_I)
@@ -1420,29 +1413,28 @@ static const cheat_code cheat_codes[] = {
 	{ "bittersweet", &game_cheats::acid },
 };
 
-static int FinalCheats(int key)
+static window_event_result FinalCheats()
 {
-	static char cheat_buffer[CHEAT_MAX_LEN];
 	int (game_cheats::*gotcha);
 
 	if (Game_mode & GM_MULTI)
-		return 0;
+		return window_event_result::ignored;
 
-	for (unsigned i = 1; i < CHEAT_MAX_LEN; i++)
-		cheat_buffer[i-1] = cheat_buffer[i];
-	cheat_buffer[CHEAT_MAX_LEN-1] = key_ascii();
+	static array<char, CHEAT_MAX_LEN> cheat_buffer;
+	std::move(std::next(cheat_buffer.begin()), cheat_buffer.end(), cheat_buffer.begin());
+	cheat_buffer.back() = key_ascii();
 	for (unsigned i = 0;; i++)
 	{
 		if (i >= sizeof(cheat_codes) / sizeof(cheat_codes[0]))
-			return 0;
+			return window_event_result::ignored;
 		int cheatlen = strlen(cheat_codes[i].string);
 		Assert(cheatlen <= CHEAT_MAX_LEN);
-		if (d_strnicmp(cheat_codes[i].string, cheat_buffer+CHEAT_MAX_LEN-cheatlen, cheatlen)==0)
+		if (d_strnicmp(cheat_codes[i].string, &cheat_buffer[CHEAT_MAX_LEN-cheatlen], cheatlen)==0)
 		{
 			gotcha = cheat_codes[i].stateptr;
 #if defined(DXX_BUILD_DESCENT_I)
 			if (!cheats.enabled && cheats.*gotcha != cheats.enabled)
-				return 0;
+				return window_event_result::ignored;
 			if (!cheats.enabled)
 				HUD_init_message_literal(HM_DEFAULT, TXT_CHEATS_ENABLED);
 #endif
@@ -1462,7 +1454,7 @@ static int FinalCheats(int key)
 		Players[Player_num].primary_weapon_flags |= (HAS_LASER_FLAG | HAS_VULCAN_FLAG | HAS_SPREADFIRE_FLAG);
 		Players[Player_num].secondary_weapon_flags |= (HAS_CONCUSSION_FLAG | HAS_HOMING_FLAG | HAS_PROXIMITY_BOMB_FLAG);
 
-		Players[Player_num].vulcan_ammo = Primary_ammo_max[VULCAN_INDEX];
+		Players[Player_num].vulcan_ammo = VULCAN_AMMO_MAX;
 		for (unsigned i=0; i<3; i++)
 			Players[Player_num].secondary_ammo[i] = Secondary_ammo_max[i];
 
@@ -1482,7 +1474,7 @@ static int FinalCheats(int key)
 		Players[Player_num].primary_weapon_flags |= (HAS_LASER_FLAG | HAS_VULCAN_FLAG | HAS_SPREADFIRE_FLAG | HAS_PLASMA_FLAG | HAS_FUSION_FLAG);
 		Players[Player_num].secondary_weapon_flags |= (HAS_CONCUSSION_FLAG | HAS_HOMING_FLAG | HAS_PROXIMITY_BOMB_FLAG | HAS_SMART_FLAG | HAS_MEGA_FLAG);
 
-		Players[Player_num].vulcan_ammo = Primary_ammo_max[VULCAN_INDEX];
+		Players[Player_num].vulcan_ammo = VULCAN_AMMO_MAX;
 		for (unsigned i=0; i<MAX_SECONDARY_WEAPONS; i++)
 			Players[Player_num].secondary_ammo[i] = Secondary_ammo_max[i];
 
@@ -1516,7 +1508,7 @@ static int FinalCheats(int key)
 			Players[Player_num].secondary_weapon_flags |= (HAS_CONCUSSION_FLAG | HAS_HOMING_FLAG | HAS_PROXIMITY_BOMB_FLAG | HAS_SMART_FLAG | HAS_MEGA_FLAG) | (HAS_FLASH_FLAG | HAS_GUIDED_FLAG | HAS_SMART_BOMB_FLAG | HAS_MERCURY_FLAG | HAS_EARTHSHAKER_FLAG);
 		}
 
-		Players[Player_num].vulcan_ammo = Primary_ammo_max[VULCAN_INDEX];
+		Players[Player_num].vulcan_ammo = VULCAN_AMMO_MAX;
 		for (unsigned i=0; i<MAX_SECONDARY_WEAPONS; i++)
 			Players[Player_num].secondary_ammo[i] = Secondary_ammo_max[i];
 
@@ -1600,14 +1592,15 @@ static int FinalCheats(int key)
 
 	if (gotcha == &game_cheats::levelwarp)
 	{
-		newmenu_item m;
 		char text[10]="";
 		int new_level_num;
 		int item;
-		nm_set_item_input(&m, 10, text);
-		item = newmenu_do( NULL, TXT_WARP_TO_LEVEL, 1, &m, unused_newmenu_subfunction, unused_newmenu_userdata);
+		array<newmenu_item, 1> m{
+			nm_item_input(text),
+		};
+		item = newmenu_do( NULL, TXT_WARP_TO_LEVEL, m, unused_newmenu_subfunction, unused_newmenu_userdata);
 		if (item != -1) {
-			new_level_num = atoi(m.text);
+			new_level_num = atoi(m[0].text);
 			if (new_level_num!=0 && new_level_num>=0 && new_level_num<=Last_level) {
 				window_set_visible(Game_wind, 0);
 				StartNewLevel(new_level_num);
@@ -1680,13 +1673,13 @@ static int FinalCheats(int key)
 		
 		if (cheats.buddyangry)
 		{
-			HUD_init_message(HM_DEFAULT, "%s gets angry!",PlayerCfg.GuidebotName);
-			strcpy(PlayerCfg.GuidebotName,"Wingnut");
+			HUD_init_message(HM_DEFAULT, "%s gets angry!", static_cast<const char *>(PlayerCfg.GuidebotName));
+			PlayerCfg.GuidebotName = "Wingnut";
 		}
 		else
 		{
-			strcpy(PlayerCfg.GuidebotName,PlayerCfg.GuidebotNameReal);
-			HUD_init_message(HM_DEFAULT, "%s calms down",PlayerCfg.GuidebotName);
+			PlayerCfg.GuidebotName = PlayerCfg.GuidebotNameReal;
+			HUD_init_message(HM_DEFAULT, "%s calms down", static_cast<const char *>(PlayerCfg.GuidebotName));
 		}
 	}
 #endif
@@ -1696,7 +1689,7 @@ static int FinalCheats(int key)
 		HUD_init_message_literal(HM_DEFAULT, cheats.acid?"Going up!":"Coming down!");
 	}
 
-	return 1;
+	return window_event_result::handled;
 }
 
 // Internal Cheat Menu
@@ -1709,24 +1702,24 @@ static void do_cheat_menu()
 
 	sprintf( score_text, "%d", Players[Player_num].score );
 
-	nm_set_item_checkbox(&mm[0],TXT_INVULNERABILITY,Players[Player_num].flags & PLAYER_FLAGS_INVULNERABLE);
-	nm_set_item_checkbox(&mm[1],TXT_CLOAKED,Players[Player_num].flags & PLAYER_FLAGS_CLOAKED);
-	nm_set_item_checkbox(&mm[2],"All keys",0);
-	nm_set_item_number(&mm[3], "% Energy", f2i(Players[Player_num].energy), 0, 200);
-	nm_set_item_number(&mm[4], "% Shields", f2i(Players[Player_num].shields), 0, 200);
-	nm_set_item_text(& mm[5], "Score:");
-	nm_set_item_input(&mm[6], 10, score_text);
+	nm_set_item_checkbox(mm[0],TXT_INVULNERABILITY,Players[Player_num].flags & PLAYER_FLAGS_INVULNERABLE);
+	nm_set_item_checkbox(mm[1],TXT_CLOAKED,Players[Player_num].flags & PLAYER_FLAGS_CLOAKED);
+	nm_set_item_checkbox(mm[2],"All keys",0);
+	nm_set_item_number(mm[3], "% Energy", f2i(Players[Player_num].energy), 0, 200);
+	nm_set_item_number(mm[4], "% Shields", f2i(Players[Player_num].shields), 0, 200);
+	nm_set_item_text(mm[5], "Score:");
+	nm_set_item_input(mm[6], score_text);
 #if defined(DXX_BUILD_DESCENT_I)
-	nm_set_item_radio(&mm[7], "Laser level 1", (Players[Player_num].laser_level==0), 0);
-	nm_set_item_radio(&mm[8], "Laser level 2", (Players[Player_num].laser_level==1), 0);
-	nm_set_item_radio(&mm[9], "Laser level 3", (Players[Player_num].laser_level==2), 0);
-	nm_set_item_radio(&mm[10], "Laser level 4", (Players[Player_num].laser_level==3), 0);
-	nm_set_item_number(&mm[11], "Missiles", Players[Player_num].secondary_ammo[CONCUSSION_INDEX], 0, 200);
+	nm_set_item_radio(mm[7], "Laser level 1", (Players[Player_num].laser_level==0), 0);
+	nm_set_item_radio(mm[8], "Laser level 2", (Players[Player_num].laser_level==1), 0);
+	nm_set_item_radio(mm[9], "Laser level 3", (Players[Player_num].laser_level==2), 0);
+	nm_set_item_radio(mm[10], "Laser level 4", (Players[Player_num].laser_level==3), 0);
+	nm_set_item_number(mm[11], "Missiles", Players[Player_num].secondary_ammo[CONCUSSION_INDEX], 0, 200);
 
 	mmn = newmenu_do("Wimp Menu",NULL,12, mm, unused_newmenu_subfunction, unused_newmenu_userdata);
 #elif defined(DXX_BUILD_DESCENT_II)
-	nm_set_item_number(&mm[7], "Laser Level", Players[Player_num].laser_level+1, 0, MAX_SUPER_LASER_LEVEL+1);
-	nm_set_item_number(&mm[8], "Missiles", Players[Player_num].secondary_ammo[CONCUSSION_INDEX], 0, 200);
+	nm_set_item_number(mm[7], "Laser Level", Players[Player_num].laser_level+1, 0, MAX_SUPER_LASER_LEVEL+1);
+	nm_set_item_number(mm[8], "Missiles", Players[Player_num].secondary_ammo[CONCUSSION_INDEX], 0, 200);
 
 	mmn = newmenu_do("Wimp Menu",NULL,9, mm, unused_newmenu_subfunction, unused_newmenu_userdata);
 #endif
@@ -1773,33 +1766,16 @@ static void do_cheat_menu()
 
 #ifndef NDEBUG
 //	Sounds for testing
-
-int test_sound_num = 0;
-int sound_nums[] = {10,11,20,21,30,31,32,33,40,41,50,51,60,61,62,70,80,81,82,83,90,91};
-
-#define N_TEST_SOUNDS (sizeof(sound_nums) / sizeof(*sound_nums))
-
-
-static void advance_sound()
-{
-	if (++test_sound_num == N_TEST_SOUNDS)
-		test_sound_num=0;
-
-}
-
-
-int     Test_sound = 251;
+__attribute_used
+static int Test_sound;
 
 static void play_test_sound()
 {
-
-	// -- digi_play_sample(sound_nums[test_sound_num], F1_0);
 	digi_play_sample(Test_sound, F1_0);
 }
-
 #endif  //ifndef NDEBUG
 
-int ReadControls(d_event *event)
+window_event_result ReadControls(const d_event &event)
 {
 	int key;
 	static ubyte exploding_flag=0;
@@ -1816,12 +1792,12 @@ int ReadControls(d_event *event)
 	}
 	if (Player_is_dead && !( (Game_mode & GM_MULTI) && (multi_sending_message[Player_num] || multi_defining_message) ))
 		if (HandleDeathInput(event))
-			return 1;
+			return window_event_result::handled;
 
 	if (Newdemo_state == ND_STATE_PLAYBACK)
 		update_vcr_state();
 
-	if (event->type == EVENT_KEY_COMMAND)
+	if (event.type == EVENT_KEY_COMMAND)
 	{
 		key = event_key_get(event);
 #if defined(DXX_BUILD_DESCENT_II)
@@ -1838,34 +1814,41 @@ int ReadControls(d_event *event)
 #ifndef RELEASE
 		if ((key&KEY_DEBUGGED)&&(Game_mode&GM_MULTI))   {
 			Network_message_reciever = 100;		// Send to everyone...
-			sprintf( Network_message, "%s %s", TXT_I_AM_A, TXT_CHEATER);
+			snprintf(Network_message.data(), Network_message.size(), "%s %s", TXT_I_AM_A, TXT_CHEATER);
 		}
 #endif
 
 		if (Endlevel_sequence)
 		{
 			if (HandleEndlevelKey(key))
-				return 1;
+				return window_event_result::handled;
 		}
 		else if (Newdemo_state == ND_STATE_PLAYBACK )
 		{
 			if (HandleDemoKey(key))
-				return 1;
+				return window_event_result::handled;
 		}
 		else
 		{
-			if (FinalCheats(key)) return 1;
-			if (HandleSystemKey(key)) return 1;
-			if (HandleGameKey(key)) return 1;
+			window_event_result r = FinalCheats();
+			if (r == window_event_result::ignored)
+				r = HandleSystemKey(key);
+			if (r == window_event_result::ignored)
+				r = HandleGameKey(key);
+			if (r != window_event_result::ignored)
+				return r;
 		}
 
 #ifndef RELEASE
-		if (HandleTestKey(key))
-			return 1;
+		{
+			window_event_result r = HandleTestKey(key);
+			if (r != window_event_result::ignored)
+				return r;
+		}
 #endif
 
 		if (call_default_handler(event))
-			return 1;
+			return window_event_result::handled;
 	}
 
 	if (!Endlevel_sequence && !Player_is_dead && (Newdemo_state != ND_STATE_PLAYBACK))
@@ -1881,14 +1864,11 @@ int ReadControls(d_event *event)
 			Controls.state.automap = 0;
 			if (!((Game_mode & GM_MULTI) && Control_center_destroyed && (Countdown_seconds_left < 10)))
 			{
-				do_automap(0);
-				return 1;
+				do_automap();
+				return window_event_result::handled;
 			}
 		}
-
 		do_weapon_n_item_stuff();
 	}
-
-	return 0;
+	return window_event_result::ignored;
 }
-

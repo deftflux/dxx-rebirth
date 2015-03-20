@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -18,6 +24,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  */
 
 #include <algorithm>
+#include <numeric>
 #include <stdio.h>
 #include <string.h>	// for memset()
 
@@ -28,6 +35,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "segment.h"
 #include "dxxerror.h"
 #include "render.h"
+#include "render_state.h"
 #include "game.h"
 #include "vclip.h"
 #include "lighting.h"
@@ -41,6 +49,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "weapon.h"
 #include "powerup.h"
 #include "fvi.h"
+#include "object.h"
 #include "robot.h"
 #include "multi.h"
 #include "palette.h"
@@ -48,21 +57,38 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "rle.h"
 #include "wall.h"
 
+#include "compiler-range_for.h"
+#include "highest_valid.h"
+#include "partial_range.h"
+
 using std::min;
 using std::max;
 
-int	Do_dynamic_light=1;
-int use_fcd_lighting = 0;
+static int Do_dynamic_light=1;
+static int use_fcd_lighting;
 g3s_lrgb Dynamic_light[MAX_VERTICES];
 
 #define	HEADLIGHT_CONE_DOT	(F1_0*9/10)
 #define	HEADLIGHT_SCALE		(F1_0*10)
 
-// ----------------------------------------------------------------------------------------------
-static void apply_light(g3s_lrgb obj_light_emission, int obj_seg, vms_vector *obj_pos, int n_render_vertices, int *render_vertices, int *vert_segnum_list, int objnum)
+static void add_light_div(g3s_lrgb &d, const g3s_lrgb &light, const fix &scale)
 {
-	int	vv;
+	d.r += fixdiv(light.r, scale);
+	d.g += fixdiv(light.g, scale);
+	d.b += fixdiv(light.b, scale);
+}
 
+static void add_light_dot_square(g3s_lrgb &d, const g3s_lrgb &light, const fix &dot)
+{
+	auto square = fixmul(dot, dot);
+	d.r += fixmul(square, light.r)/8;
+	d.g += fixmul(square, light.g)/8;
+	d.b += fixmul(square, light.b)/8;
+}
+
+// ----------------------------------------------------------------------------------------------
+static void apply_light(g3s_lrgb obj_light_emission, segnum_t obj_seg, const vms_vector &obj_pos, int n_render_vertices, int *render_vertices, segnum_t *vert_segnum_list, objnum_t objnum)
+{
 	if (((obj_light_emission.r+obj_light_emission.g+obj_light_emission.b)/3) > 0)
 	{
 		fix obji_64 = ((obj_light_emission.r+obj_light_emission.g+obj_light_emission.b)/3)*64;
@@ -76,24 +102,19 @@ static void apply_light(g3s_lrgb obj_light_emission, int obj_seg, vms_vector *ob
 		// for pretty dim sources, only process vertices in object's own segment.
 		//	12/04/95, MK, markers only cast light in own segment.
 		if ((abs(obji_64) <= F1_0*8) || is_marker) {
-			int *vp = Segments[obj_seg].verts;
+			auto &vp = Segments[obj_seg].verts;
 
-			for (vv=0; vv<MAX_VERTICES_PER_SEGMENT; vv++) {
-				int			vertnum;
-				vms_vector	*vertpos;
+			range_for (const auto vertnum, vp)
+			{
 				fix			dist;
-
-				vertnum = vp[vv];
-				vertpos = &Vertices[vertnum];
+				const auto &vertpos = Vertices[vertnum];
 				dist = vm_vec_dist_quick(obj_pos, vertpos);
 				dist = fixmul(dist/4, dist/4);
 				if (dist < abs(obji_64)) {
 					if (dist < MIN_LIGHT_DIST)
 						dist = MIN_LIGHT_DIST;
 
-					Dynamic_light[vertnum].r += fixdiv(obj_light_emission.r, dist);
-					Dynamic_light[vertnum].g += fixdiv(obj_light_emission.g, dist);
-					Dynamic_light[vertnum].b += fixdiv(obj_light_emission.b, dist);
+					add_light_div(Dynamic_light[vertnum], obj_light_emission, dist);
 				}
 			}
 		} else {
@@ -106,40 +127,38 @@ static void apply_light(g3s_lrgb obj_light_emission, int obj_seg, vms_vector *ob
 					if (Players[Objects[objnum].id].flags & PLAYER_FLAGS_HEADLIGHT_ON) {
 						headlight_shift = 3;
 						if (Objects[objnum].id != Player_num) {
-							vms_vector	tvec;
 							fvi_query	fq;
 							fvi_info		hit_data;
 							int			fate;
 
-							vm_vec_scale_add(&tvec, &Objects[objnum].pos, &Objects[objnum].orient.fvec, F1_0*200);
+							const auto tvec = vm_vec_scale_add(Objects[objnum].pos, Objects[objnum].orient.fvec, F1_0*200);
 
 							fq.startseg				= Objects[objnum].segnum;
 							fq.p0						= &Objects[objnum].pos;
 							fq.p1						= &tvec;
 							fq.rad					= 0;
 							fq.thisobjnum			= objnum;
-							fq.ignore_obj_list	= NULL;
+							fq.ignore_obj_list.first = nullptr;
 							fq.flags					= FQ_TRANSWALL;
 
-							fate = find_vector_intersection(&fq, &hit_data);
+							fate = find_vector_intersection(fq, hit_data);
 							if (fate != HIT_NONE)
-								max_headlight_dist = vm_vec_mag_quick(vm_vec_sub(&tvec, &hit_data.hit_pnt, &Objects[objnum].pos)) + F1_0*4;
+								max_headlight_dist = vm_vec_mag_quick(vm_vec_sub(hit_data.hit_pnt, Objects[objnum].pos)) + F1_0*4;
 						}
 					}
 #endif
-			for (vv=0; vv<n_render_vertices; vv++) {
-				int			vertnum, vsegnum;
-				vms_vector	*vertpos;
+			for (int vv=0; vv<n_render_vertices; vv++) {
+				int			vertnum;
 				fix			dist;
 				int			apply_light = 0;
 
 				vertnum = render_vertices[vv];
-				vsegnum = vert_segnum_list[vv];
-				vertpos = &Vertices[vertnum];
+				auto vsegnum = vert_segnum_list[vv];
+				const auto &vertpos = Vertices[vertnum];
 
 				if (use_fcd_lighting && abs(obji_64) > F1_0*32)
 				{
-					dist = find_connected_distance(obj_pos, obj_seg, vertpos, vsegnum, n_render_vertices, WID_RENDPAST_FLAG+WID_FLY_FLAG);
+					dist = find_connected_distance(obj_pos, obj_seg, vertpos, vsegnum, n_render_vertices, WID_RENDPAST_FLAG|WID_FLY_FLAG);
 					if (dist >= 0)
 						apply_light = 1;
 				}
@@ -157,17 +176,13 @@ static void apply_light(g3s_lrgb obj_light_emission, int obj_seg, vms_vector *ob
 					if (headlight_shift && objnum != object_none)
 					{
 						fix dot;
-						vms_vector vec_to_point;
-
-						vm_vec_sub(&vec_to_point, vertpos, obj_pos);
-						vm_vec_normalize_quick(&vec_to_point); // MK, Optimization note: You compute distance about 15 lines up, this is partially redundant
-						dot = vm_vec_dot(&vec_to_point, &Objects[objnum].orient.fvec);
+						// MK, Optimization note: You compute distance about 15 lines up, this is partially redundant
+						const auto vec_to_point = vm_vec_normalized_quick(vm_vec_sub(vertpos, obj_pos));
+						dot = vm_vec_dot(vec_to_point, Objects[objnum].orient.fvec);
 						if (dot < F1_0/2)
 						{
 							// Do the normal thing, but darken around headlight.
-							Dynamic_light[vertnum].r += fixdiv(obj_light_emission.r, fixmul(HEADLIGHT_SCALE, dist));
-							Dynamic_light[vertnum].g += fixdiv(obj_light_emission.g, fixmul(HEADLIGHT_SCALE, dist));
-							Dynamic_light[vertnum].b += fixdiv(obj_light_emission.b, fixmul(HEADLIGHT_SCALE, dist));
+							add_light_div(Dynamic_light[vertnum], obj_light_emission, fixmul(HEADLIGHT_SCALE, dist));
 						}
 						else
 						{
@@ -175,24 +190,18 @@ static void apply_light(g3s_lrgb obj_light_emission, int obj_seg, vms_vector *ob
 							{
 								if (dist < max_headlight_dist)
 								{
-									Dynamic_light[vertnum].r += fixmul(fixmul(dot, dot), obj_light_emission.r)/8;
-									Dynamic_light[vertnum].g += fixmul(fixmul(dot, dot), obj_light_emission.g)/8;
-									Dynamic_light[vertnum].b += fixmul(fixmul(dot, dot), obj_light_emission.b)/8;
+									add_light_dot_square(Dynamic_light[vertnum], obj_light_emission, dot);
 								}
 							}
 							else
 							{
-								Dynamic_light[vertnum].r += fixmul(fixmul(dot, dot), obj_light_emission.r)/8;
-								Dynamic_light[vertnum].g += fixmul(fixmul(dot, dot), obj_light_emission.g)/8;
-								Dynamic_light[vertnum].b += fixmul(fixmul(dot, dot), obj_light_emission.b)/8;
+								add_light_dot_square(Dynamic_light[vertnum], obj_light_emission, dot);
 							}
 						}
 					}
 					else
 					{
-						Dynamic_light[vertnum].r += fixdiv(obj_light_emission.r, dist);
-						Dynamic_light[vertnum].g += fixdiv(obj_light_emission.g, dist);
-						Dynamic_light[vertnum].b += fixdiv(obj_light_emission.b, dist);
+						add_light_div(Dynamic_light[vertnum], obj_light_emission, dist);
 					}
 				}
 			}
@@ -204,28 +213,27 @@ static void apply_light(g3s_lrgb obj_light_emission, int obj_seg, vms_vector *ob
 #define FLASH_SCALE             (3*F1_0/FLASH_LEN_FIXED_SECONDS)
 
 // ----------------------------------------------------------------------------------------------
-static void cast_muzzle_flash_light(int n_render_vertices, int *render_vertices, int *vert_segnum_list)
+static void cast_muzzle_flash_light(int n_render_vertices, int *render_vertices, segnum_t *vert_segnum_list)
 {
 	fix64 current_time;
-	int i;
 	short time_since_flash;
 
 	current_time = timer_query();
 
-	for (i=0; i<MUZZLE_QUEUE_MAX; i++)
+	range_for (auto &i, Muzzle_data)
 	{
-		if (Muzzle_data[i].create_time)
+		if (i.create_time)
 		{
-			time_since_flash = current_time - Muzzle_data[i].create_time;
+			time_since_flash = current_time - i.create_time;
 			if (time_since_flash < FLASH_LEN_FIXED_SECONDS)
 			{
 				g3s_lrgb ml;
 				ml.r = ml.g = ml.b = ((FLASH_LEN_FIXED_SECONDS - time_since_flash) * FLASH_SCALE);
-				apply_light(ml, Muzzle_data[i].segnum, &Muzzle_data[i].pos, n_render_vertices, render_vertices, vert_segnum_list, object_none);
+				apply_light(ml, i.segnum, i.pos, n_render_vertices, render_vertices, vert_segnum_list, object_none);
 			}
 			else
 			{
-				Muzzle_data[i].create_time = 0; // turn off this muzzle flash
+				i.create_time = 0; // turn off this muzzle flash
 			}
 		}
 	}
@@ -237,8 +245,8 @@ static const fix Obj_light_xlate[16] = { 0x1234, 0x3321, 0x2468, 0x1735,
 			    0x2123, 0x39af, 0x0f03, 0x132a,
 			    0x3123, 0x29af, 0x1f03, 0x032a };
 #define MAX_HEADLIGHTS	8
-object *Headlights[MAX_HEADLIGHTS];
-int Num_headlights;
+static unsigned Num_headlights;
+static array<object *, MAX_HEADLIGHTS> Headlights;
 
 // ---------------------------------------------------------
 static g3s_lrgb compute_light_emission(int objnum)
@@ -261,10 +269,10 @@ static g3s_lrgb compute_light_emission(int objnum)
 			}
 			else if (game_mode_hoard() && Players[obj->id].secondary_ammo[PROXIMITY_INDEX]) // If hoard game and player, add extra light based on how many orbs you have Pulse as well.
 			{
-				fix s,hoardlight;
+				fix hoardlight;
 				hoardlight=i2f(Players[obj->id].secondary_ammo[PROXIMITY_INDEX])/2; //i2f(12));
 				hoardlight++;
-				fix_sincos (((fix)(GameTime64/2)) & 0xFFFF,&s,NULL); // probably a bad way to do it
+				auto s = fix_sin(static_cast<fix>(GameTime64/2) & 0xFFFF); // probably a bad way to do it
 				s+=F1_0; 
 				s>>=1;
 				hoardlight=fixmul (s,hoardlight);
@@ -273,11 +281,10 @@ static g3s_lrgb compute_light_emission(int objnum)
 			else
 #endif
 			{
-				vms_vector sthrust = obj->mtype.phys_info.thrust;
 				fix k = fixmuldiv(obj->mtype.phys_info.mass,obj->mtype.phys_info.drag,(f1_0-obj->mtype.phys_info.drag));
 				// smooth thrust value like set_thrust_from_velocity()
-				vm_vec_copy_scale(&sthrust,&obj->mtype.phys_info.velocity,k);
-				light_intensity = max(vm_vec_mag_quick(&sthrust)/4, F1_0*2) + F1_0/2;
+				auto sthrust = vm_vec_copy_scale(obj->mtype.phys_info.velocity,k);
+				light_intensity = max(static_cast<fix>(vm_vec_mag_quick(sthrust) / 4), F1_0*2) + F1_0/2;
 			}
 			break;
 		case OBJ_FIREBALL:
@@ -352,7 +359,6 @@ static g3s_lrgb compute_light_emission(int objnum)
 	{
 		case OBJ_FIREBALL:
 		case OBJ_WEAPON:
-		case OBJ_FLARE:
 #if defined(DXX_BUILD_DESCENT_II)
 		case OBJ_MARKER:
 #endif
@@ -384,7 +390,7 @@ static g3s_lrgb compute_light_emission(int objnum)
 
 	if (compute_color)
 	{
-		int i, t_idx_s = -1, t_idx_e = -1;
+		int t_idx_s = -1, t_idx_e = -1;
 
 		if (light_intensity < F1_0) // for every effect we want color, increase light_intensity so the effect becomes barely visible
 			light_intensity = F1_0;
@@ -400,7 +406,7 @@ static g3s_lrgb compute_light_emission(int objnum)
 				polymodel *po = &Polygon_models[obj->rtype.pobj_info.model_num];
 				if (po->n_textures <= 0)
 				{
-					int color = g3_poly_get_color(po->model_data);
+					int color = g3_poly_get_color(po->model_data.get());
 					if (color)
 					{
 						obj_color.r = gr_current_pal[color].r;
@@ -443,7 +449,7 @@ static g3s_lrgb compute_light_emission(int objnum)
 		if (t_idx_s != -1 && t_idx_e != -1)
 		{
 			obj_color.r = obj_color.g = obj_color.b = 0;
-			for (i = t_idx_s; i <= t_idx_e; i++)
+			for (int i = t_idx_s; i <= t_idx_e; i++)
 			{
 				grs_bitmap *bm = &GameBitmaps[i];
 				bitmap_index bi;
@@ -470,15 +476,11 @@ static g3s_lrgb compute_light_emission(int objnum)
 }
 
 // ----------------------------------------------------------------------------------------------
-void set_dynamic_light(void)
+void set_dynamic_light(render_state_t &rstate)
 {
-	int	vv;
-	int	objnum;
-	int	n_render_vertices;
 	int	render_vertices[MAX_VERTICES];
-	int	vert_segnum_list[MAX_VERTICES];
+	segnum_t	vert_segnum_list[MAX_VERTICES];
 	sbyte   render_vertex_flags[MAX_VERTICES];
-	int	render_seg,segnum, v;
 	static fix light_time; 
 
 	Num_headlights = 0;
@@ -494,13 +496,13 @@ void set_dynamic_light(void)
 	memset(render_vertex_flags, 0, Highest_vertex_index+1);
 
 	//	Create list of vertices that need to be looked at for setting of ambient light.
-	n_render_vertices = 0;
-	for (render_seg=0; render_seg<N_render_segs; render_seg++) {
-		segnum = Render_list[render_seg];
+	uint_fast32_t n_render_vertices = 0;
+	range_for (const auto segnum, partial_range(rstate.Render_list, rstate.N_render_segs))
+	{
 		if (segnum != segment_none) {
-			int	*vp = Segments[segnum].verts;
-			for (v=0; v<MAX_VERTICES_PER_SEGMENT; v++) {
-				int	vnum = vp[v];
+			auto &vp = Segments[segnum].verts;
+			range_for (const auto vnum, vp)
+			{
 				if (vnum<0 || vnum>Highest_vertex_index) {
 					Int3();		//invalid vertex number
 					continue;	//ignore it, and go on to next one
@@ -515,20 +517,18 @@ void set_dynamic_light(void)
 		}
 	}
 
-	for (vv=0; vv<n_render_vertices; vv++) {
-		int	vertnum;
-
-		vertnum = render_vertices[vv];
+	range_for (const auto vertnum, partial_range(render_vertices, n_render_vertices))
+	{
 		Assert(vertnum >= 0 && vertnum <= Highest_vertex_index);
-		Dynamic_light[vertnum].r = Dynamic_light[vertnum].g = Dynamic_light[vertnum].b = 0;
+		Dynamic_light[vertnum] = {};
 	}
 
 	cast_muzzle_flash_light(n_render_vertices, render_vertices, vert_segnum_list);
 
-	for (objnum=0; objnum<=Highest_object_index; objnum++)
+	range_for (const auto objnum, highest_valid(Objects))
 	{
 		object		*obj = &Objects[objnum];
-		vms_vector	*objpos = &obj->pos;
+		const auto &objpos = obj->pos;
 		g3s_lrgb	obj_light_emission;
 
 		obj_light_emission = compute_light_emission(objnum);
@@ -553,14 +553,11 @@ void toggle_headlight_active()
 
 #define HEADLIGHT_BOOST_SCALE 8		//how much to scale light when have headlight boost
 
-fix	Beam_brightness = (F1_0/2);	//global saying how bright the light beam is
-
 #define MAX_DIST_LOG	6							//log(MAX_DIST-expressed-as-integer)
 #define MAX_DIST		(f1_0<<MAX_DIST_LOG)	//no light beyond this dist
 
-static fix compute_headlight_light_on_object(object *objp)
+static fix compute_headlight_light_on_object(const vobjptr_t objp)
 {
-	int	i;
 	fix	light;
 
 	//	Let's just illuminate players and robots for speed reasons, ok?
@@ -569,17 +566,13 @@ static fix compute_headlight_light_on_object(object *objp)
 
 	light = 0;
 
-	for (i=0; i<Num_headlights; i++) {
+	range_for (const auto light_objp, partial_range(Headlights, Num_headlights))
+	{
 		fix			dot, dist;
-		vms_vector	vec_to_obj;
-		object		*light_objp;
-
-		light_objp = Headlights[i];
-
-		vm_vec_sub(&vec_to_obj, &objp->pos, &light_objp->pos);
-		dist = vm_vec_normalize_quick(&vec_to_obj);
+		auto vec_to_obj = vm_vec_sub(objp->pos, light_objp->pos);
+		dist = vm_vec_normalize_quick(vec_to_obj);
 		if (dist > 0) {
-			dot = vm_vec_dot(&light_objp->orient.fvec, &vec_to_obj);
+			dot = vm_vec_dot(light_objp->orient.fvec, vec_to_obj);
 
 			if (dot < F1_0/2)
 				light += fixdiv(HEADLIGHT_SCALE, fixmul(HEADLIGHT_SCALE, dist));	//	Do the normal thing, but darken around headlight.
@@ -592,42 +585,17 @@ static fix compute_headlight_light_on_object(object *objp)
 }
 
 //compute the average dynamic light in a segment.  Takes the segment number
-g3s_lrgb compute_seg_dynamic_light(int segnum)
+g3s_lrgb compute_seg_dynamic_light(segnum_t segnum)
 {
-	g3s_lrgb sum, seg_lrgb;
-	segment *seg;
-	int *verts;
-
-	seg = &Segments[segnum];
-
-	verts = seg->verts;
-	sum.r = sum.g = sum.b = 0;
-
-	sum.r += Dynamic_light[*verts].r;
-	sum.g += Dynamic_light[*verts].g;
-	sum.b += Dynamic_light[*verts++].b;
-	sum.r += Dynamic_light[*verts].r;
-	sum.g += Dynamic_light[*verts].g;
-	sum.b += Dynamic_light[*verts++].b;
-	sum.r += Dynamic_light[*verts].r;
-	sum.g += Dynamic_light[*verts].g;
-	sum.b += Dynamic_light[*verts++].b;
-	sum.r += Dynamic_light[*verts].r;
-	sum.g += Dynamic_light[*verts].g;
-	sum.b += Dynamic_light[*verts++].b;
-	sum.r += Dynamic_light[*verts].r;
-	sum.g += Dynamic_light[*verts].g;
-	sum.b += Dynamic_light[*verts++].b;
-	sum.r += Dynamic_light[*verts].r;
-	sum.g += Dynamic_light[*verts].g;
-	sum.b += Dynamic_light[*verts++].b;
-	sum.r += Dynamic_light[*verts].r;
-	sum.g += Dynamic_light[*verts].g;
-	sum.b += Dynamic_light[*verts++].b;
-	sum.r += Dynamic_light[*verts].r;
-	sum.g += Dynamic_light[*verts].g;
-	sum.b += Dynamic_light[*verts].b;
-	
+	auto seg = &Segments[segnum];
+	auto op = [](g3s_lrgb r, unsigned v) {
+		r.r += Dynamic_light[v].r;
+		r.g += Dynamic_light[v].g;
+		r.b += Dynamic_light[v].b;
+		return r;
+	};
+	g3s_lrgb sum = std::accumulate(begin(seg->verts), end(seg->verts), g3s_lrgb{0, 0, 0}, op);
+	g3s_lrgb seg_lrgb;
 	seg_lrgb.r = sum.r >> 3;
 	seg_lrgb.g = sum.g >> 3;
 	seg_lrgb.b = sum.b >> 3;
@@ -641,7 +609,7 @@ object *old_viewer;
 int reset_lighting_hack;
 #define LIGHT_RATE i2f(4) //how fast the light ramps up
 
-void start_lighting_frame(object *viewer)
+void start_lighting_frame(const objptr_t viewer)
 {
 	reset_lighting_hack = (viewer != old_viewer);
 	old_viewer = viewer;
@@ -650,7 +618,7 @@ void start_lighting_frame(object *viewer)
 //compute the lighting for an object.  Takes a pointer to the object,
 //and possibly a rotated 3d point.  If the point isn't specified, the
 //object's center point is rotated.
-g3s_lrgb compute_object_light(objptridx_t obj,vms_vector *rotated_pnt)
+g3s_lrgb compute_object_light(const vobjptridx_t obj,const vms_vector *rotated_pnt)
 {
 	g3s_lrgb light, seg_dl;
 	fix mlight;
@@ -659,7 +627,7 @@ g3s_lrgb compute_object_light(objptridx_t obj,vms_vector *rotated_pnt)
 
 	if (!rotated_pnt)
 	{
-		g3_rotate_point(&objpnt,&obj->pos);
+		g3_rotate_point(objpnt,obj->pos);
 		rotated_pnt = &objpnt.p3_vec;
 	}
 

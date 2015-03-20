@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -20,23 +26,28 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #ifndef _SWITCH_H
 #define _SWITCH_H
 
-#ifdef __cplusplus
+#include <physfs.h>
 
-struct segment;
+#ifdef __cplusplus
+#include "pack.h"
+#include "segnum.h"
+#include "objnum.h"
+#include "fwdvalptridx.h"
 
 #define MAX_TRIGGERS        100
 #define MAX_WALLS_PER_LINK  10
 
-#if defined(DXX_BUILD_DESCENT_II)
-// Trigger types
-
 #define TT_OPEN_DOOR        0   // Open a door
-#define TT_CLOSE_DOOR       1   // Close a door
 #define TT_MATCEN           2   // Activate a matcen
 #define TT_EXIT             3   // End the level
 #define TT_SECRET_EXIT      4   // Go to secret level
 #define TT_ILLUSION_OFF     5   // Turn an illusion off
 #define TT_ILLUSION_ON      6   // Turn an illusion on
+
+#if defined(DXX_BUILD_DESCENT_II)
+// Trigger types
+
+#define TT_CLOSE_DOOR       1   // Close a door
 #define TT_UNLOCK_DOOR      7   // Unlock a door
 #define TT_LOCK_DOOR        8   // Lock a door
 #define TT_OPEN_WALL        9   // Makes a wall open
@@ -64,8 +75,8 @@ struct v29_trigger
 	fix     time;
 	sbyte   link_num;
 	short   num_links;
-	short   seg[MAX_WALLS_PER_LINK];
-	short   side[MAX_WALLS_PER_LINK];
+	array<short, MAX_WALLS_PER_LINK>   seg;
+	array<short, MAX_WALLS_PER_LINK>   side;
 } __pack__;
 
 struct v30_trigger
@@ -75,8 +86,8 @@ struct v30_trigger
 	sbyte   pad;                        //keep alignment
 	fix     value;
 	fix     time;
-	short   seg[MAX_WALLS_PER_LINK];
-	short   side[MAX_WALLS_PER_LINK];
+	array<short, MAX_WALLS_PER_LINK>   seg;
+	array<short, MAX_WALLS_PER_LINK>   side;
 } __pack__;
 #endif
 
@@ -101,33 +112,32 @@ struct v30_trigger
 //the trigger really should have both a type & a flags, since most of the
 //flags bits are exclusive of the others.
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
-struct trigger
+struct trigger : public prohibit_void_ptr<trigger>
 {
 #if defined(DXX_BUILD_DESCENT_I)
-	sbyte		type;
 	short		flags;
 #elif defined(DXX_BUILD_DESCENT_II)
 	ubyte   type;       //what this trigger does
 	ubyte   flags;      //currently unused
-	sbyte   num_links;  //how many doors, etc. linked to this
-	sbyte   pad;        //keep alignment
+	uint8_t   num_links;  //how many doors, etc. linked to this
 #endif
 	fix     value;
 	fix     time;
 #if defined(DXX_BUILD_DESCENT_I)
 	sbyte		link_num;
-	short 	num_links;
+	uint16_t 	num_links;
 #endif
-	short   seg[MAX_WALLS_PER_LINK];
-	short   side[MAX_WALLS_PER_LINK];
-} __pack__;
+	array<segnum_t, MAX_WALLS_PER_LINK>   seg;
+	array<short, MAX_WALLS_PER_LINK>   side;
+};
 
-extern trigger Triggers[MAX_TRIGGERS];
+const int trigger_none = -1;
 
-extern int Num_triggers;
+extern unsigned Num_triggers;
+extern array<trigger, MAX_TRIGGERS> Triggers;
 
 extern void trigger_init();
-extern void check_trigger(segment *seg, short side, short objnum,int shot);
+void check_trigger(vsegptridx_t seg, short side, objnum_t objnum,int shot);
 extern int check_trigger_sub(int trigger_num, int player_num,int shot);
 extern void triggers_frame_process();
 
@@ -140,14 +150,19 @@ static inline int trigger_is_exit(const trigger *t)
 #endif
 }
 
-static inline int trigger_is_matcen(const trigger *t)
+static inline int trigger_is_matcen(const trigger &t)
 {
 #if defined(DXX_BUILD_DESCENT_I)
-	return t->flags & TRIGGER_MATCEN;
+	return t.flags & TRIGGER_MATCEN;
 #elif defined(DXX_BUILD_DESCENT_II)
-	return t->type == TT_MATCEN;
+	return t.type == TT_MATCEN;
 #endif
 }
+
+#if defined(DXX_BUILD_DESCENT_I)
+void v25_trigger_read(PHYSFS_file *fp, trigger *);
+void v26_trigger_read(PHYSFS_file *fp, trigger &);
+#endif
 
 #if defined(DXX_BUILD_DESCENT_II)
 /*
@@ -165,14 +180,18 @@ extern void v30_trigger_read(v30_trigger *t, PHYSFS_file *fp);
  * reads a trigger structure from a PHYSFS_file
  */
 extern void trigger_read(trigger *t, PHYSFS_file *fp);
+void v29_trigger_read_as_v31(PHYSFS_File *fp, trigger &t);
+void v30_trigger_read_as_v31(PHYSFS_File *fp, trigger &t);
 
 /*
  * reads n trigger structs from a PHYSFS_file and swaps if specified
  */
-extern void trigger_read_n_swap(trigger *t, int n, int swap, PHYSFS_file *fp);
+void trigger_read(PHYSFS_file *fp, trigger &t);
+void trigger_write(PHYSFS_file *fp, const trigger &t);
 
-extern void trigger_write(trigger *t, short version, PHYSFS_file *fp);
-
+void v29_trigger_write(PHYSFS_file *fp, const trigger &t);
+void v30_trigger_write(PHYSFS_file *fp, const trigger &t);
+void v31_trigger_write(PHYSFS_file *fp, const trigger &t);
 #endif
 
 #endif

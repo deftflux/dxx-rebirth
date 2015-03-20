@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -24,6 +30,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "game.h"
 
 #ifdef __cplusplus
+#include "pack.h"
 
 #define MAX_GUNS 8      //should be multiple of 4 for ubyte array
 
@@ -39,10 +46,9 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define RI_CLOAKED_ALWAYS           1
 #define RI_CLOAKED_EXCEPT_FIRING    2
 
-struct object;
 
 //describes the position of a certain joint
-struct jointpos
+struct jointpos : prohibit_void_ptr<jointpos>
 {
 	short jointnum;
 	vms_angvec angles;
@@ -62,14 +68,14 @@ struct jointlist
 #endif
 
 //  Robot information
-struct robot_info
+struct robot_info : prohibit_void_ptr<robot_info>
 {
 	int     model_num;                  // which polygon model?
 #if defined(DXX_BUILD_DESCENT_I)
 	int			n_guns;								// how many different gun positions
 #endif
-	vms_vector  gun_points[MAX_GUNS];   // where each gun model is
-	ubyte   gun_submodels[MAX_GUNS];    // which submodel is each gun in?
+	array<vms_vector, MAX_GUNS>  gun_points;   // where each gun model is
+	array<uint8_t, MAX_GUNS>   gun_submodels;    // which submodel is each gun in?
 	short   exp1_vclip_num;
 	short   exp1_sound_num;
 	short   exp2_vclip_num;
@@ -101,17 +107,17 @@ struct robot_info
 	fix     mass;           // how heavy is this thing?
 	fix     drag;           // how much drag does it have?
 
-	fix     field_of_view[NDL]; // compare this value with forward_vector.dot.vector_to_player, if field_of_view <, then robot can see player
-	fix     firing_wait[NDL];   //  time in seconds between shots
+	array<fix, NDL>     field_of_view, // compare this value with forward_vector.dot.vector_to_player, if field_of_view <, then robot can see player
+		firing_wait,   //  time in seconds between shots
 #if defined(DXX_BUILD_DESCENT_II)
-	fix     firing_wait2[NDL];  //  time in seconds between shots
+		firing_wait2,  //  time in seconds between shots
 #endif
-	fix     turn_time[NDL];     // time in seconds to rotate 360 degrees in a dimension
-	fix     max_speed[NDL];         //  maximum speed attainable by this robot
-	fix     circle_distance[NDL];   //  distance at which robot circles player
+		turn_time,     // time in seconds to rotate 360 degrees in a dimension
+		max_speed,         //  maximum speed attainable by this robot
+		circle_distance;   //  distance at which robot circles player
 
-	sbyte   rapidfire_count[NDL];   //  number of shots fired rapidly
-	sbyte   evade_speed[NDL];       //  rate at which robot can evade shots, 0=none, 4=very fast
+	array<int8_t, NDL>   rapidfire_count,   //  number of shots fired rapidly
+		evade_speed;       //  rate at which robot can evade shots, 0=none, 4=very fast
 	sbyte   cloak_type;     //  0=never, 1=always, 2=except-when-firing
 	sbyte   attack_type;    //  0=firing, 1=charge (like green guy)
 
@@ -140,24 +146,22 @@ struct robot_info
 	ubyte   behavior;           //  Default behavior.
 	ubyte   aim;                //  255 = perfect, less = more likely to miss.  0 != random, would look stupid.  0=45 degree spread.  Specify in bitmaps.tbl in range 0.0..1.0
 #endif
-
 	//animation info
-	jointlist anim_states[MAX_GUNS+1][N_ANIM_STATES];
-
+	array<array<jointlist, N_ANIM_STATES>, MAX_GUNS+1> anim_states;
 	int     always_0xabcd;      // debugging
+};
 
-} __pack__;
-
+const int weapon_none = -1;
 
 #if defined(DXX_BUILD_DESCENT_I)
 #define	MAX_ROBOT_TYPES	30				// maximum number of robot types
 
-static inline int robot_is_companion(const robot_info *robptr)
+static inline int robot_is_companion(const robot_info *)
 {
 	return 0;
 }
 
-static inline int robot_is_thief(const robot_info *robptr)
+static inline int robot_is_thief(const robot_info *)
 {
 	return 0;
 }
@@ -180,11 +184,11 @@ static inline int robot_is_thief(const robot_info *robptr)
 extern char Robot_names[MAX_ROBOT_TYPES][ROBOT_NAME_LENGTH];
 
 //the array of robots types
-extern robot_info Robot_info[MAX_ROBOT_TYPES];     // Robot info for AI system, loaded from bitmaps.tbl.
+extern array<robot_info, MAX_ROBOT_TYPES> Robot_info;     // Robot info for AI system, loaded from bitmaps.tbl.
 #endif
 
 //how many kinds of robots
-extern  int N_robot_types;      // Number of robot types.  We used to assume this was the same as N_polygon_models.
+extern unsigned N_robot_types;      // Number of robot types.  We used to assume this was the same as N_polygon_models.
 
 //test data for one robot
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
@@ -193,14 +197,13 @@ extern  int N_robot_types;      // Number of robot types.  We used to assume thi
 #elif defined(DXX_BUILD_DESCENT_II)
 #define MAX_ROBOT_JOINTS 1600
 #endif
-extern jointpos Robot_joints[MAX_ROBOT_JOINTS];
+extern array<jointpos, MAX_ROBOT_JOINTS> Robot_joints;
 #endif
-extern int  N_robot_joints;
+extern unsigned N_robot_joints;
 
 //given an object and a gun number, return position in 3-space of gun
 //fills in gun_point
-void calc_gun_point(vms_vector *gun_point,struct object *obj,int gun_num);
-//void calc_gun_point(vms_vector *gun_point,int objnum,int gun_num);
+void calc_gun_point(vms_vector &gun_point,vcobjptr_t obj,int gun_num);
 
 //  Tells joint positions for a gun to be in a specified state.
 //  A gun can have associated with it any number of joints.  In order to tell whether a gun is a certain
@@ -226,12 +229,13 @@ extern int robot_get_anim_state(const jointpos **jp_list_ptr,int robot_type,int 
 /*
  * reads n robot_info structs from a PHYSFS_file
  */
-extern int robot_info_read_n(robot_info *ri, int n, PHYSFS_file *fp);
+void robot_info_read(PHYSFS_File *fp, robot_info &r);
 
 /*
  * reads n jointpos structs from a PHYSFS_file
  */
-extern int jointpos_read_n(jointpos *jp, int n, PHYSFS_file *fp);
+void jointpos_read(PHYSFS_file *fp, jointpos &jp);
+void jointpos_write(PHYSFS_file *fp, const jointpos &jp);
 
 #endif
 

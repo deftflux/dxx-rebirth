@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -23,74 +29,34 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "robot.h"
 #include "object.h"
 #include "polyobj.h"
+#include "physfsx.h"
 
-int	N_robot_types = 0;
-int	N_robot_joints = 0;
+#include "compiler-range_for.h"
+#include "partial_range.h"
+
+unsigned N_robot_types;
+unsigned N_robot_joints;
 
 //	Robot stuff
-robot_info Robot_info[MAX_ROBOT_TYPES];
+array<robot_info, MAX_ROBOT_TYPES> Robot_info;
 
 //Big array of joint positions.  All robots index into this array
+array<jointpos, MAX_ROBOT_JOINTS> Robot_joints;
 
-#define deg(a) ((int) (a) * 32768 / 180)
-
-//test data for one robot
-jointpos Robot_joints[MAX_ROBOT_JOINTS] = {
-
-//gun 0
-	{2,{deg(-30),0,0}},         //rest (2 joints)
-	{3,{deg(-40),0,0}},
-
-	{2,{deg(0),0,0}},           //alert
-	{3,{deg(0),0,0}},
-
-	{2,{deg(0),0,0}},           //fire
-	{3,{deg(0),0,0}},
-
-	{2,{deg(50),0,0}},          //recoil
-	{3,{deg(-50),0,0}},
-
-	{2,{deg(10),0,deg(70)}},    //flinch
-	{3,{deg(0),deg(20),0}},
-
-//gun 1
-	{4,{deg(-30),0,0}},         //rest (2 joints)
-	{5,{deg(-40),0,0}},
-
-	{4,{deg(0),0,0}},           //alert
-	{5,{deg(0),0,0}},
-
-	{4,{deg(0),0,0}},           //fire
-	{5,{deg(0),0,0}},
-
-	{4,{deg(50),0,0}},          //recoil
-	{5,{deg(-50),0,0}},
-
-	{4,{deg(20),0,deg(-50)}},   //flinch
-	{5,{deg(0),0,deg(20)}},
-
-//rest of body (the head)
-
-	{1,{deg(70),0,0}},          //rest (1 joint, head)
-
-	{1,{deg(0),0,0}},           //alert
-
-	{1,{deg(0),0,0}},           //fire
-
-	{1,{deg(0),0,0}},           //recoil
-
-	{1,{deg(-20),deg(15),0}},   //flinch
-
-};
+static inline void PHYSFSX_writeAngleVec(PHYSFS_file *fp, const vms_angvec &v)
+{
+	PHYSFS_writeSLE16(fp, v.p);
+	PHYSFS_writeSLE16(fp, v.b);
+	PHYSFS_writeSLE16(fp, v.h);
+}
 
 //given an object and a gun number, return position in 3-space of gun
 //fills in gun_point
-void calc_gun_point(vms_vector *gun_point,object *obj,int gun_num)
+void calc_gun_point(vms_vector &gun_point,const vcobjptr_t obj,int gun_num)
 {
 	polymodel *pm;
 	robot_info *r;
 	vms_vector pnt;
-	vms_matrix m;
 	int mn;				//submodel number
 
 	Assert(obj->render_type==RT_POLYOBJ || obj->render_type==RT_MORPH);
@@ -109,22 +75,19 @@ void calc_gun_point(vms_vector *gun_point,object *obj,int gun_num)
 
 	//instance up the tree for this gun
 	while (mn != 0) {
-		vms_vector tpnt;
+		const auto m = vm_transposed_matrix(vm_angles_2_matrix(obj->rtype.pobj_info.anim_angles[mn]));
+		const auto tpnt = vm_vec_rotate(pnt,m);
 
-		vm_angles_2_matrix(&m,&obj->rtype.pobj_info.anim_angles[mn]);
-		vm_transpose_matrix(&m);
-		vm_vec_rotate(&tpnt,&pnt,&m);
-
-		vm_vec_add(&pnt,&tpnt,&pm->submodel_offsets[mn]);
+		vm_vec_add(pnt,tpnt,pm->submodel_offsets[mn]);
 
 		mn = pm->submodel_parents[mn];
 	}
 
 	//now instance for the entire object
 
-	vm_copy_transpose_matrix(&m,&obj->orient);
-	vm_vec_rotate(gun_point,&pnt,&m);
-	vm_vec_add2(gun_point,&obj->pos);
+	const auto m = vm_transposed_matrix(obj->orient);
+	vm_vec_rotate(gun_point,pnt,m);
+	vm_vec_add2(gun_point,obj->pos);
 
 }
 
@@ -143,8 +106,8 @@ int robot_get_anim_state(const jointpos **jp_list_ptr,int robot_type,int gun_num
 
 #ifndef NDEBUG
 //for test, set a robot to a specific state
-static void set_robot_state(object *obj,int state) __attribute_used;
-static void set_robot_state(object *obj,int state)
+static void set_robot_state(const vobjptr_t obj,int state) __attribute_used;
+static void set_robot_state(const vobjptr_t obj,int state)
 {
 	int g,j,jo;
 	robot_info *ri;
@@ -177,10 +140,10 @@ static void set_robot_state(object *obj,int state)
 void robot_set_angles(robot_info *r,polymodel *pm,vms_angvec angs[N_ANIM_STATES][MAX_SUBMODELS])
 {
 	int m,g,state;
-	int gun_nums[MAX_SUBMODELS];			//which gun each submodel is part of
+	array<int, MAX_SUBMODELS> gun_nums;			//which gun each submodel is part of
 
-	for (m=0;m<pm->n_models;m++)
-		gun_nums[m] = r->n_guns;		//assume part of body...
+	range_for (auto &m, partial_range(gun_nums, pm->n_models))
+		m = r->n_guns;		//assume part of body...
 
 	gun_nums[0] = -1;		//body never animates, at least for now
 
@@ -217,142 +180,134 @@ void robot_set_angles(robot_info *r,polymodel *pm,vms_angvec angs[N_ANIM_STATES]
 /*
  * reads n jointlist structs from a PHYSFS_file
  */
-static int jointlist_read_n(jointlist *jl, int n, PHYSFS_file *fp)
+static void jointlist_read(PHYSFS_File *fp, array<jointlist, N_ANIM_STATES> &jl)
 {
-	int i;
-
-	for (i = 0; i < n; i++) {
-		jl[i].n_joints = PHYSFSX_readShort(fp);
-		jl[i].offset = PHYSFSX_readShort(fp);
+	range_for (auto &i, jl)
+	{
+		i.n_joints = PHYSFSX_readShort(fp);
+		i.offset = PHYSFSX_readShort(fp);
 	}
-	return i;
 }
 
 /*
  * reads n robot_info structs from a PHYSFS_file
  */
-int robot_info_read_n(robot_info *ri, int n, PHYSFS_file *fp)
+void robot_info_read(PHYSFS_File *fp, robot_info &ri)
 {
-	int i, j;
-
-	for (i = 0; i < n; i++) {
-		ri[i].model_num = PHYSFSX_readInt(fp);
+	ri.model_num = PHYSFSX_readInt(fp);
 #if defined(DXX_BUILD_DESCENT_I)
-		ri[i].n_guns = PHYSFSX_readInt(fp);
+	ri.n_guns = PHYSFSX_readInt(fp);
 #endif
-		for (j = 0; j < MAX_GUNS; j++)
-			PHYSFSX_readVector(&(ri[i].gun_points[j]), fp);
-		for (j = 0; j < sizeof(ri[i].gun_submodels) / sizeof(ri[i].gun_submodels[0]); j++)
-			ri[i].gun_submodels[j] = PHYSFSX_readByte(fp);
+	range_for (auto &j, ri.gun_points)
+		PHYSFSX_readVector(fp, j);
+	range_for (auto &j, ri.gun_submodels)
+		j = PHYSFSX_readByte(fp);
 
-		ri[i].exp1_vclip_num = PHYSFSX_readShort(fp);
-		ri[i].exp1_sound_num = PHYSFSX_readShort(fp);
+	ri.exp1_vclip_num = PHYSFSX_readShort(fp);
+	ri.exp1_sound_num = PHYSFSX_readShort(fp);
 
-		ri[i].exp2_vclip_num = PHYSFSX_readShort(fp);
-		ri[i].exp2_sound_num = PHYSFSX_readShort(fp);
+	ri.exp2_vclip_num = PHYSFSX_readShort(fp);
+	ri.exp2_sound_num = PHYSFSX_readShort(fp);
 
 #if defined(DXX_BUILD_DESCENT_I)
-		ri[i].weapon_type = PHYSFSX_readShort(fp);
+	ri.weapon_type = PHYSFSX_readShort(fp);
 #elif defined(DXX_BUILD_DESCENT_II)
-		ri[i].weapon_type = PHYSFSX_readByte(fp);
-		ri[i].weapon_type2 = PHYSFSX_readByte(fp);
-		ri[i].n_guns = PHYSFSX_readByte(fp);
+	ri.weapon_type = PHYSFSX_readByte(fp);
+	ri.weapon_type2 = PHYSFSX_readByte(fp);
+	ri.n_guns = PHYSFSX_readByte(fp);
 #endif
-		ri[i].contains_id = PHYSFSX_readByte(fp);
+	ri.contains_id = PHYSFSX_readByte(fp);
 
-		ri[i].contains_count = PHYSFSX_readByte(fp);
-		ri[i].contains_prob = PHYSFSX_readByte(fp);
-		ri[i].contains_type = PHYSFSX_readByte(fp);
+	ri.contains_count = PHYSFSX_readByte(fp);
+	ri.contains_prob = PHYSFSX_readByte(fp);
+	ri.contains_type = PHYSFSX_readByte(fp);
 #if defined(DXX_BUILD_DESCENT_I)
-		ri[i].score_value = PHYSFSX_readInt(fp);
+	ri.score_value = PHYSFSX_readInt(fp);
 #elif defined(DXX_BUILD_DESCENT_II)
-		ri[i].kamikaze = PHYSFSX_readByte(fp);
+	ri.kamikaze = PHYSFSX_readByte(fp);
 
-		ri[i].score_value = PHYSFSX_readShort(fp);
-		ri[i].badass = PHYSFSX_readByte(fp);
-		ri[i].energy_drain = PHYSFSX_readByte(fp);
+	ri.score_value = PHYSFSX_readShort(fp);
+	ri.badass = PHYSFSX_readByte(fp);
+	ri.energy_drain = PHYSFSX_readByte(fp);
 #endif
 
-		ri[i].lighting = PHYSFSX_readFix(fp);
-		ri[i].strength = PHYSFSX_readFix(fp);
+	ri.lighting = PHYSFSX_readFix(fp);
+	ri.strength = PHYSFSX_readFix(fp);
 
-		ri[i].mass = PHYSFSX_readFix(fp);
-		ri[i].drag = PHYSFSX_readFix(fp);
+	ri.mass = PHYSFSX_readFix(fp);
+	ri.drag = PHYSFSX_readFix(fp);
 
-		for (j = 0; j < NDL; j++)
-			ri[i].field_of_view[j] = PHYSFSX_readFix(fp);
-		for (j = 0; j < NDL; j++)
-			ri[i].firing_wait[j] = PHYSFSX_readFix(fp);
+	range_for (auto &j, ri.field_of_view)
+		j = PHYSFSX_readFix(fp);
+	range_for (auto &j, ri.firing_wait)
+		j = PHYSFSX_readFix(fp);
 #if defined(DXX_BUILD_DESCENT_II)
-		for (j = 0; j < NDL; j++)
-			ri[i].firing_wait2[j] = PHYSFSX_readFix(fp);
+	range_for (auto &j, ri.firing_wait2)
+		j = PHYSFSX_readFix(fp);
 #endif
-		for (j = 0; j < NDL; j++)
-			ri[i].turn_time[j] = PHYSFSX_readFix(fp);
+	range_for (auto &j, ri.turn_time)
+		j = PHYSFSX_readFix(fp);
 #if defined(DXX_BUILD_DESCENT_I)
-		for (j = 0; j < NDL; j++)
-			PHYSFSX_readFix(fp);
-		for (j = 0; j < NDL; j++)
+	for (unsigned j = 0; j < NDL * 2; j++)
 			PHYSFSX_readFix(fp);
 #endif
-		for (j = 0; j < NDL; j++)
-			ri[i].max_speed[j] = PHYSFSX_readFix(fp);
-		for (j = 0; j < NDL; j++)
-			ri[i].circle_distance[j] = PHYSFSX_readFix(fp);
-		for (j = 0; j < NDL; j++)
-			ri[i].rapidfire_count[j] = PHYSFSX_readByte(fp);
-		for (j = 0; j < NDL; j++)
-			ri[i].evade_speed[j] = PHYSFSX_readByte(fp);
+	range_for (auto &j, ri.max_speed)
+		j = PHYSFSX_readFix(fp);
+	range_for (auto &j, ri.circle_distance)
+		j = PHYSFSX_readFix(fp);
+	range_for (auto &j, ri.rapidfire_count)
+		j = PHYSFSX_readByte(fp);
+	range_for (auto &j, ri.evade_speed)
+		j = PHYSFSX_readByte(fp);
 
-		ri[i].cloak_type = PHYSFSX_readByte(fp);
-		ri[i].attack_type = PHYSFSX_readByte(fp);
+	ri.cloak_type = PHYSFSX_readByte(fp);
+	ri.attack_type = PHYSFSX_readByte(fp);
 #if defined(DXX_BUILD_DESCENT_I)
-		ri[i].boss_flag = PHYSFSX_readByte(fp);
+	ri.boss_flag = PHYSFSX_readByte(fp);
 #endif
 
-		ri[i].see_sound = PHYSFSX_readByte(fp);
-		ri[i].attack_sound = PHYSFSX_readByte(fp);
-		ri[i].claw_sound = PHYSFSX_readByte(fp);
+	ri.see_sound = PHYSFSX_readByte(fp);
+	ri.attack_sound = PHYSFSX_readByte(fp);
+	ri.claw_sound = PHYSFSX_readByte(fp);
 #if defined(DXX_BUILD_DESCENT_II)
-		ri[i].taunt_sound = PHYSFSX_readByte(fp);
+	ri.taunt_sound = PHYSFSX_readByte(fp);
 
-		ri[i].boss_flag = PHYSFSX_readByte(fp);
-		ri[i].companion = PHYSFSX_readByte(fp);
-		ri[i].smart_blobs = PHYSFSX_readByte(fp);
-		ri[i].energy_blobs = PHYSFSX_readByte(fp);
+	ri.boss_flag = PHYSFSX_readByte(fp);
+	ri.companion = PHYSFSX_readByte(fp);
+	ri.smart_blobs = PHYSFSX_readByte(fp);
+	ri.energy_blobs = PHYSFSX_readByte(fp);
 
-		ri[i].thief = PHYSFSX_readByte(fp);
-		ri[i].pursuit = PHYSFSX_readByte(fp);
-		ri[i].lightcast = PHYSFSX_readByte(fp);
-		ri[i].death_roll = PHYSFSX_readByte(fp);
+	ri.thief = PHYSFSX_readByte(fp);
+	ri.pursuit = PHYSFSX_readByte(fp);
+	ri.lightcast = PHYSFSX_readByte(fp);
+	ri.death_roll = PHYSFSX_readByte(fp);
 
-		ri[i].flags = PHYSFSX_readByte(fp);
-		PHYSFS_read(fp, ri[i].pad, 3, 1);
+	ri.flags = PHYSFSX_readByte(fp);
+	PHYSFS_read(fp, ri.pad, 3, 1);
 
-		ri[i].deathroll_sound = PHYSFSX_readByte(fp);
-		ri[i].glow = PHYSFSX_readByte(fp);
-		ri[i].behavior = PHYSFSX_readByte(fp);
-		ri[i].aim = PHYSFSX_readByte(fp);
+	ri.deathroll_sound = PHYSFSX_readByte(fp);
+	ri.glow = PHYSFSX_readByte(fp);
+	ri.behavior = PHYSFSX_readByte(fp);
+	ri.aim = PHYSFSX_readByte(fp);
 #endif
 
-		for (j = 0; j < MAX_GUNS + 1; j++)
-			jointlist_read_n(ri[i].anim_states[j], N_ANIM_STATES, fp);
+	range_for (auto &j, ri.anim_states)
+		jointlist_read(fp, j);
 
-		ri[i].always_0xabcd = PHYSFSX_readInt(fp);
-	}
-	return i;
+	ri.always_0xabcd = PHYSFSX_readInt(fp);
 }
 
 /*
  * reads n jointpos structs from a PHYSFS_file
  */
-int jointpos_read_n(jointpos *jp, int n, PHYSFS_file *fp)
+void jointpos_read(PHYSFS_file *fp, jointpos &jp)
 {
-	int i;
+	jp.jointnum = PHYSFSX_readShort(fp);
+	PHYSFSX_readAngleVec(&jp.angles, fp);
+}
 
-	for (i = 0; i < n; i++) {
-		jp[i].jointnum = PHYSFSX_readShort(fp);
-		PHYSFSX_readAngleVec(&jp[i].angles, fp);
-	}
-	return i;
+void jointpos_write(PHYSFS_file *fp, const jointpos &jp)
+{
+	PHYSFS_writeSLE16(fp, jp.jointnum);
+	PHYSFSX_writeAngleVec(fp, jp.angles);
 }

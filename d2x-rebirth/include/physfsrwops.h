@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  * This code provides a glue layer between PhysicsFS and Simple Directmedia
  *  Layer's (SDL) RWops i/o abstraction.
  *
@@ -20,8 +26,7 @@
  *  This file was written by Ryan C. Gordon. (icculus@clutteredmind.org).
  */
 
-#ifndef _INCLUDE_PHYSFSRWOPS_H_
-#define _INCLUDE_PHYSFSRWOPS_H_
+#pragma once
 
 #if 1	//!(defined(__APPLE__) && defined(__MACH__))
 #include <physfs.h>
@@ -31,6 +36,17 @@
 #include <SDL.h>
 
 #ifdef __cplusplus
+#include <memory>
+
+struct RWops_delete
+{
+	void operator()(SDL_RWops *o) const
+	{
+		SDL_RWclose(o);
+	}
+};
+
+typedef std::unique_ptr<SDL_RWops, RWops_delete> RWops_ptr;
 
 /**
  * Open a platform-independent filename for reading, and make it accessible
@@ -42,11 +58,9 @@
  *  @return A valid SDL_RWops structure on success, NULL on error. Specifics
  *           of the error can be gleaned from PHYSFS_getLastError().
  */
-__EXPORT__ SDL_RWops *PHYSFSRWOPS_openRead(const char *fname);
+RWops_ptr PHYSFSRWOPS_openRead(const char *fname);
 
 #endif
-
-#endif /* include-once blocker */
 
 /* end of physfsrwops.h ... */
 

@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -33,7 +39,7 @@ void ui_draw_userbox( UI_DIALOG *dlg, UI_GADGET_USERBOX * userbox )
 
 		gr_set_current_canvas( userbox->canvas );
 
-		if (dlg->keyboard_focus_gadget == (UI_GADGET *)userbox)
+		if (dlg->keyboard_focus_gadget == userbox)
 			gr_setcolor( CRED );
 		else
 			gr_setcolor( CBRIGHT );
@@ -43,12 +49,9 @@ void ui_draw_userbox( UI_DIALOG *dlg, UI_GADGET_USERBOX * userbox )
 }
 
 
-UI_GADGET_USERBOX * ui_add_gadget_userbox( UI_DIALOG * dlg, short x, short y, short w, short h )
+std::unique_ptr<UI_GADGET_USERBOX> ui_add_gadget_userbox(UI_DIALOG * dlg, short x, short y, short w, short h)
 {
-	UI_GADGET_USERBOX * userbox;
-
-	userbox = (UI_GADGET_USERBOX *)ui_gadget_add( dlg, 7, x, y, x+w-1, y+h-1 );
-
+	std::unique_ptr<UI_GADGET_USERBOX> userbox{ui_gadget_add<UI_GADGET_USERBOX>(dlg, x, y, x+w-1, y+h-1)};
 	userbox->width = w;
 	userbox->height = h;
 	userbox->b1_held_down=0;
@@ -65,26 +68,24 @@ UI_GADGET_USERBOX * ui_add_gadget_userbox( UI_DIALOG * dlg, short x, short y, sh
 	userbox->mouse_x = 0;
 	userbox->mouse_y = 0;
 	userbox->bitmap = &(userbox->canvas->cv_bitmap);
-
 	return userbox;
-
 }
 
-int ui_userbox_do( UI_DIALOG *dlg, UI_GADGET_USERBOX * userbox, d_event *event )
+window_event_result ui_userbox_do( UI_DIALOG *dlg, UI_GADGET_USERBOX * userbox,const d_event &event )
 {
 	int OnMe, olddrag;
 	int x, y, z;
 	int keypress = 0;
-	int rval = 0;
+	window_event_result rval = window_event_result::ignored;
 	
-	if (event->type == EVENT_WINDOW_DRAW)
+	if (event.type == EVENT_WINDOW_DRAW)
 		ui_draw_userbox( dlg, userbox );
 	
-	if (event->type == EVENT_KEY_COMMAND)
+	if (event.type == EVENT_KEY_COMMAND)
 		keypress = event_key_get(event);
 		
 	mouse_get_pos(&x, &y, &z);
-	OnMe = ui_mouse_on_gadget( (UI_GADGET *)userbox );
+	OnMe = ui_mouse_on_gadget( userbox );
 
 	olddrag  = userbox->b1_held_down;
 
@@ -102,17 +103,17 @@ int ui_userbox_do( UI_DIALOG *dlg, UI_GADGET_USERBOX * userbox, d_event *event )
 			userbox->b1_held_down = 1;
 			userbox->b1_drag_x1 = x - userbox->x1;
 			userbox->b1_drag_y1 = y - userbox->y1;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 		else if (B1_JUST_RELEASED)
 		{
 			if (userbox->b1_held_down)
 				userbox->b1_clicked = 1;
 			userbox->b1_held_down = 0;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 
-		if ( (event->type == EVENT_MOUSE_MOVED) && userbox->b1_held_down )
+		if ( (event.type == EVENT_MOUSE_MOVED) && userbox->b1_held_down )
 		{
 			userbox->b1_dragging = 1;
 			userbox->b1_drag_x2 = x - userbox->x1;
@@ -122,7 +123,7 @@ int ui_userbox_do( UI_DIALOG *dlg, UI_GADGET_USERBOX * userbox, d_event *event )
 		if ( B1_DOUBLE_CLICKED )
 		{
 			userbox->b1_double_clicked = 1;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 		else
 			userbox->b1_double_clicked = 0;
@@ -140,16 +141,16 @@ int ui_userbox_do( UI_DIALOG *dlg, UI_GADGET_USERBOX * userbox, d_event *event )
 			userbox->b1_done_dragging = 1;
 	}
 
-	if (dlg->keyboard_focus_gadget==(UI_GADGET *)userbox)
+	if (dlg->keyboard_focus_gadget==userbox)
 	{
 		userbox->keypress = keypress;
-		rval = 1;
+		rval = window_event_result::handled;
 	}
 	
 	if (userbox->b1_clicked || userbox->b1_dragging)
 	{
-		ui_gadget_send_event(dlg, userbox->b1_clicked ? EVENT_UI_GADGET_PRESSED : EVENT_UI_USERBOX_DRAGGED, (UI_GADGET *)userbox);
-		rval = 1;
+		ui_gadget_send_event(dlg, userbox->b1_clicked ? EVENT_UI_GADGET_PRESSED : EVENT_UI_USERBOX_DRAGGED, userbox);
+		rval = window_event_result::handled;
 	}
 
 	return rval;

@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *  messagebox.c
  *  d1x-rebirth
  *
@@ -82,7 +88,7 @@ void display_mac_alert(const char *message, int error)
 		gr_toggle_fullscreen();
 }
 
-void msgbox_warning(char *message)
+void msgbox_warning(const char *message)
 {
 	display_mac_alert(message, 0);
 }

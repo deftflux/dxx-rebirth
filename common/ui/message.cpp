@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -26,6 +32,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #include "dxxsconf.h"
 #include "compiler-array.h"
+#include "compiler-make_unique.h"
 
 // ts = total span
 // w = width of each item
@@ -39,7 +46,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 struct messagebox
 {
 	const ui_messagebox_tie	*button;
-	UI_GADGET_BUTTON	*button_g[10];
+	array<std::unique_ptr<UI_GADGET_BUTTON>, 10> button_g;
 	const char				*text;
 	int					*choice;
 	int					width;
@@ -47,19 +54,17 @@ struct messagebox
 	int					line_y;
 };
 
-static int messagebox_handler(UI_DIALOG *dlg, d_event *event, messagebox *m)
+static int messagebox_handler(UI_DIALOG *dlg,const d_event &event, messagebox *m)
 {
-	int i;
-	
-	if (event->type == EVENT_UI_DIALOG_DRAW)
+	if (event.type == EVENT_UI_DIALOG_DRAW)
 	{
-		grs_font * temp_font;
+		const grs_font * temp_font;
 
 		gr_set_current_canvas( &grd_curscreen->sc_canvas );
 		temp_font = grd_curscreen->sc_canvas.cv_font;
 		
 		if ( grd_curscreen->sc_w < 640 ) 	{
-			grd_curscreen->sc_canvas.cv_font = ui_small_font;
+			grd_curscreen->sc_canvas.cv_font = ui_small_font.get();
 		}
 		
 		ui_dialog_set_current_canvas(dlg);
@@ -76,9 +81,9 @@ static int messagebox_handler(UI_DIALOG *dlg, d_event *event, messagebox *m)
 		return 1;
 	}
 
-	for (i=0; i < m->button->count(); i++ )
+	for (uint_fast32_t i=0; i < m->button->count(); i++ )
 	{
-		if (GADGET_PRESSED(m->button_g[i]))
+		if (GADGET_PRESSED(m->button_g[i].get()))
 		{
 			*(m->choice) = i+1;
 			return 1;
@@ -91,15 +96,13 @@ static int messagebox_handler(UI_DIALOG *dlg, d_event *event, messagebox *m)
 int (ui_messagebox)( short xc, short yc, const char * text, const ui_messagebox_tie &Button )
 {
 	UI_DIALOG * dlg;
-	messagebox *m;
-
-	int i, width, height, avg, x, y;
+	int width, height, avg, x, y;
 	int button_width, button_height, text_height, text_width;
 	int w, h;
 
 	int choice;
 
-	MALLOC(m, messagebox, 1);
+	auto m = make_unique<messagebox>();
 	m->button = &Button;
 	m->text = text;
 	m->choice = &choice;
@@ -110,7 +113,7 @@ int (ui_messagebox)( short xc, short yc, const char * text, const ui_messagebox_
 	w = grd_curscreen->sc_w;
 	h = grd_curscreen->sc_h;
 
-	for (i=0; i < Button.count(); i++ )
+	for (uint_fast32_t i=0; i < Button.count(); i++ )
 	{
 		ui_get_button_size( Button.string(i), &width, &height );
 
@@ -172,7 +175,7 @@ int (ui_messagebox)( short xc, short yc, const char * text, const ui_messagebox_
 		y = h - height;
 	}
 
-	dlg = ui_create_dialog( x, y, width, height, static_cast<dialog_flags>(DF_DIALOG | DF_MODAL), messagebox_handler, m );
+	dlg = ui_create_dialog(x, y, width, height, static_cast<dialog_flags>(DF_DIALOG | DF_MODAL), messagebox_handler, m.get());
 
 	//ui_draw_line_in( MESSAGEBOX_BORDER, MESSAGEBOX_BORDER, width-MESSAGEBOX_BORDER, height-MESSAGEBOX_BORDER );
 
@@ -187,7 +190,7 @@ int (ui_messagebox)( short xc, short yc, const char * text, const ui_messagebox_
 
 	y = height - TEXT_EXTRA_HEIGHT - button_height;
 
-	for (i=0; i < Button.count(); i++ )
+	for (uint_fast32_t i=0; i < Button.count(); i++ )
 	{
 
 		x = EVEN_DIVIDE(width,button_width,Button.count(),i);
@@ -199,7 +202,7 @@ int (ui_messagebox)( short xc, short yc, const char * text, const ui_messagebox_
 
 	//key_flush();
 
-	dlg->keyboard_focus_gadget = (UI_GADGET *)m->button_g[0];
+	dlg->keyboard_focus_gadget = m->button_g[0].get();
 
 	choice = 0;
 

@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -22,9 +28,10 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define _NEWDEMO_H
 
 #ifdef __cplusplus
-
-struct object;
-struct objptridx_t;
+#include "physfsx.h"
+#include "segnum.h"
+#include "objnum.h"
+#include "fwdvalptridx.h"
 
 #define ND_STATE_NORMAL			0
 #define ND_STATE_RECORDING		1
@@ -37,7 +44,7 @@ struct objptridx_t;
 
 #define DEMO_DIR                "demos/"
 #define DEMO_EXT		"dem"
-extern const file_extension_t demo_file_extensions[2];
+extern const array<file_extension_t, 1> demo_file_extensions;
 
 #ifdef WORDS_BIGENDIAN
 #define DEMO_BACKUP_EXT			"386"
@@ -68,17 +75,17 @@ struct morph_data;
 // Functions called during recording process...
 extern void newdemo_record_start_demo();
 extern void newdemo_record_start_frame(fix frame_time );
-void newdemo_record_render_object(objptridx_t  obj);
-void newdemo_record_viewer_object(objptridx_t  obj);
+void newdemo_record_render_object(vobjptridx_t  obj);
+void newdemo_record_viewer_object(vobjptridx_t  obj);
 extern void newdemo_record_sound_3d( int soundno, int angle, int volume );
 extern void newdemo_record_sound_3d_once( int soundno, int angle, int volume );
 extern void newdemo_record_sound_once( int soundno );
 extern void newdemo_record_sound( int soundno );
-extern void newdemo_record_wall_hit_process( int segnum, int side, int damage, int playernum );
+void newdemo_record_wall_hit_process( segnum_t segnum, int side, int damage, int playernum );
 extern void newdemo_record_hostage_rescued( int hostage_num );
 extern void newdemo_record_morph_frame(struct morph_data *);
 extern void newdemo_record_player_stats(int shields, int energy, int score );
-extern void newdemo_record_wall_toggle(int segnum, int side );
+void newdemo_record_wall_toggle(segnum_t segnum, int side );
 extern void newdemo_record_control_center_destroyed();
 extern void newdemo_record_hud_message(const char *s);
 extern void newdemo_record_palette_effect(short r, short g, short b);
@@ -86,7 +93,7 @@ extern void newdemo_record_player_energy(int);
 extern void newdemo_record_player_shields(int);
 extern void newdemo_record_player_flags(uint);
 extern void newdemo_record_player_weapon(int, int);
-extern void newdemo_record_effect_blowup(short, int, vms_vector *);
+void newdemo_record_effect_blowup(segnum_t, int, const vms_vector &);
 extern void newdemo_record_homing_distance(fix);
 extern void newdemo_record_letterbox(void);
 extern void newdemo_record_rearview(void);
@@ -107,10 +114,10 @@ extern void newdemo_record_player_score(int score);
 extern void newdemo_record_multi_score(int pnum, int score);
 extern void newdemo_record_primary_ammo(int new_ammo);
 extern void newdemo_record_secondary_ammo(int new_ammo);
-extern void newdemo_record_door_opening(int segnum, int side);
+void newdemo_record_door_opening(segnum_t segnum, int side);
 extern void newdemo_record_laser_level(sbyte old_level, sbyte new_level);
 #if defined(DXX_BUILD_DESCENT_II)
-extern void newdemo_record_trigger( int segnum, int side, int objnum,int shot );
+void newdemo_record_trigger( segnum_t segnum, int side, objnum_t objnum,int shot );
 extern void newdemo_record_player_afterburner(fix afterburner);
 extern void newdemo_record_cloaking_wall(int front_wall_num, int back_wall_num, ubyte type, ubyte state, fix cloak_value, fix l0, fix l1, fix l2, fix l3);
 extern void newdemo_record_secret_exit_blown(int truth);
@@ -133,8 +140,8 @@ extern int newdemo_swap_endian(const char *filename);
 extern int newdemo_get_percent_done();
 
 extern void newdemo_record_link_sound_to_object3( int soundno, short objnum, fix max_volume, fix  max_distance, int loop_start, int loop_end );
-extern int newdemo_find_object( int signature );
-extern void newdemo_record_kill_sound_linked_to_object( int objnum );
+objnum_t newdemo_find_object(int signature);
+void newdemo_record_kill_sound_linked_to_object(vcobjptridx_t);
 void newdemo_record_guided_end();
 void newdemo_record_guided_start();
 int newdemo_count_demos();

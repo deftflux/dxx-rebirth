@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -24,12 +30,15 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "pstypes.h"
 
 #ifdef __cplusplus
+#include <cstdint>
 #include "dxxsconf.h"
 #include "compiler-array.h"
 
 struct rgb_t {
 	ubyte r,g,b;
 };
+
+typedef uint8_t color_t;
 
 static inline bool operator==(const rgb_t &a, const rgb_t &b) { return a.r == b.r && a.g == b.g && a.b == b.b; }
 
@@ -50,7 +59,7 @@ extern void gr_make_cthru_table(ubyte * table, ubyte r, ubyte g, ubyte b );
 extern void gr_palette_clear();
 extern void gr_make_blend_table(ubyte *blend_table, ubyte r, ubyte g, ubyte b);
 #endif
-extern int gr_find_closest_color_current( int r, int g, int b );
+color_t gr_find_closest_color_current( int r, int g, int b );
 extern void gr_palette_read(palette_array_t &palette);
 extern void init_computed_colors(void);
 extern ubyte gr_palette_gamma;

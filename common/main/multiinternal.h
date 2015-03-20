@@ -1,7 +1,20 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 #pragma once
 
+#include "dxxerror.h"
 #include "object.h"
 #include "powerup.h"
+#include "serial.h"
+
+#define _UNPACK_MULTIPLAYER_SERIAL_MESSAGE(A,...)	A, ## __VA_ARGS__
+#define DEFINE_MULTIPLAYER_SERIAL_MESSAGE(C,T,V,A)	\
+	DEFINE_SERIAL_UDT_TO_MESSAGE(T,V, (multiplayer_command<C>(), _UNPACK_MULTIPLAYER_SERIAL_MESSAGE A));	\
+	ASSERT_SERIAL_UDT_MESSAGE_SIZE(T, command_length<C>::value)
 
 #define define_multiplayer_command(NAME,SIZE)	NAME,
 
@@ -28,13 +41,17 @@
 	VALUE(MULTI_ROBOT_POSITION       , 5+sizeof(shortpos))	\
 	VALUE(MULTI_PLAYER_DERES         , DXX_MP_SIZE_PLAYER_RELATED)	\
 	VALUE(MULTI_DOOR_OPEN            , DXX_MP_SIZE_DOOR_OPEN)	\
-	VALUE(MULTI_ROBOT_EXPLODE        , DXX_MP_SIZE_ROBOT_EXPLODE)	\
+	VALUE(MULTI_ROBOT_EXPLODE        , 7)	\
 	VALUE(MULTI_ROBOT_RELEASE        , 5)	\
 	VALUE(MULTI_ROBOT_FIRE           , 18)	\
 	VALUE(MULTI_SCORE                , 6)	\
 	VALUE(MULTI_CREATE_ROBOT         , 6)	\
 	VALUE(MULTI_TRIGGER              , 3)	\
-	VALUE(MULTI_BOSS_ACTIONS         , 10)	\
+	VALUE(MULTI_BOSS_TELEPORT        , 5)	\
+	VALUE(MULTI_BOSS_CLOAK           , 3)	\
+	VALUE(MULTI_BOSS_START_GATE      , 3)	\
+	VALUE(MULTI_BOSS_STOP_GATE       , 3)	\
+	VALUE(MULTI_BOSS_CREATE_ROBOT    , 8)	\
 	VALUE(MULTI_CREATE_ROBOT_POWERUPS, 27)	\
 	VALUE(MULTI_HOSTAGE_DOOR         , 7)	\
 	VALUE(MULTI_SAVE_GAME            , 2+24)	/* (ubyte slot, uint id, char name[20]) */	\
@@ -56,20 +73,18 @@
 #define DXX_MP_SIZE_PLAYER_RELATED	58
 #define DXX_MP_SIZE_BEGIN_SYNC	37
 #define DXX_MP_SIZE_DOOR_OPEN	4
-#define DXX_MP_SIZE_ROBOT_EXPLODE	8
 #define D2X_MP_COMMANDS(VALUE)
 #elif defined(DXX_BUILD_DESCENT_II)
 #define DXX_MP_SIZE_PLAYER_RELATED	(97+10)
 #define DXX_MP_SIZE_BEGIN_SYNC	41
 #define DXX_MP_SIZE_DOOR_OPEN	5
-#define DXX_MP_SIZE_ROBOT_EXPLODE	9
 #define D2X_MP_COMMANDS(VALUE)	\
 	VALUE(MULTI_MARKER               , 55)	\
-	VALUE(MULTI_DROP_WEAPON          , 12)	\
+	VALUE(MULTI_DROP_WEAPON          , 10)	\
 	VALUE(MULTI_GUIDED               , 3+sizeof(shortpos))	\
 	VALUE(MULTI_STOLEN_ITEMS         , 11)	\
 	VALUE(MULTI_WALL_STATUS          , 6)	/* send to new players */	\
-	VALUE(MULTI_SEISMIC              , 9)	\
+	VALUE(MULTI_SEISMIC              , 5)	\
 	VALUE(MULTI_LIGHT                , 18)	\
 	VALUE(MULTI_START_TRIGGER        , 2)	\
 	VALUE(MULTI_FLAGS                , 6)	\
@@ -77,7 +92,7 @@
 	VALUE(MULTI_SOUND_FUNCTION       , 4)	\
 	VALUE(MULTI_CAPTURE_BONUS        , 2)	\
 	VALUE(MULTI_GOT_FLAG             , 2)	\
-	VALUE(MULTI_DROP_FLAG            , 12)	\
+	VALUE(MULTI_DROP_FLAG            , 8)	\
 	VALUE(MULTI_FINISH_GAME          , 2)	\
 	VALUE(MULTI_ORB_BONUS            , 3)	\
 	VALUE(MULTI_GOT_ORB              , 2)	\
@@ -107,6 +122,39 @@ static inline void multi_send_data(ubyte *buf, unsigned len, int priority)
 	buf[0] = C;
 	unsigned expected = command_length<C>::value;
 	if (len != expected)
+	{
+#ifdef DXX_HAVE_BUILTIN_CONSTANT_P
+		/* Restate (len != expected) for <gcc-4.9.  Otherwise it reports
+		 * failure on valid inputs.
+		 */
+		if (__builtin_constant_p(len != expected) && len != expected)
+			DXX_ALWAYS_ERROR_FUNCTION(dxx_trap_multi_send_data, "wrong packet size");
+#endif
 		Error("multi_send_data: Packet type %i length: %i, expected: %i\n", C, len, expected);
+	}
 	_multi_send_data(buf, len, priority);
+}
+
+template <typename T>
+static inline void multi_serialize_read(const ubyte *buf, T &t)
+{
+	serial::reader::bytebuffer_t b(buf);
+	serial::process_buffer(b, t);
+}
+
+template <typename T>
+static inline void multi_serialize_write(int priority, const T &t)
+{
+	const size_t maximum_size = serial::message_type<T>::maximum_size;
+	uint8_t buf[maximum_size];
+	serial::writer::bytebuffer_t b(buf);
+	serial::process_buffer(b, t);
+	_multi_send_data(buf, maximum_size, priority);
+}
+
+template <multiplayer_command_t C>
+static inline decltype(serial::pad<1, static_cast<uint8_t>(C)>()) multiplayer_command()
+{
+	static_assert(static_cast<uint8_t>(C) == static_cast<unsigned>(C), "command truncated");
+	return serial::pad<1, static_cast<uint8_t>(C)>();
 }

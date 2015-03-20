@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -32,17 +38,16 @@ static int Initialized = 0;
 
 unsigned char CBLACK,CGREY,CWHITE,CBRIGHT,CRED;
 
-grs_font * ui_small_font = NULL;
+grs_font_ptr ui_small_font;
 
 void ui_init()
 {
-	grs_font * org_font;
 
 	if (Initialized) return;
 
 	Initialized = 1;
 
-	org_font = grd_curcanv->cv_font;
+	const grs_font *org_font = grd_curcanv->cv_font;
 	ui_small_font = gr_init_font( "pc6x8.fnt" );
 	grd_curcanv->cv_font =org_font;
 
@@ -71,9 +76,7 @@ void ui_close()
 		menubar_close();
 		
 		ui_pad_close();
-
-		gr_close_font( ui_small_font );
-
+		ui_small_font.reset();
 	}
 
 	return;

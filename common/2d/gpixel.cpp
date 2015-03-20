@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -18,13 +24,12 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "ogl_init.h"
 #endif
 
-unsigned char gr_ugpixel( grs_bitmap * bitmap, int x, int y )
+unsigned char gr_ugpixel(const grs_bitmap &bitmap, int x, int y)
 {
-	switch (bitmap->bm_type)
+	switch (bitmap.bm_type)
 	{
 		case BM_LINEAR:
-			return bitmap->bm_data[ bitmap->bm_rowsize*y + x ];
-		
+			return bitmap.bm_data[ bitmap.bm_rowsize*y + x ];
 #ifdef OGL
 		case BM_OGL:
 			return ogl_ugpixel(bitmap, x, y);
@@ -34,8 +39,9 @@ unsigned char gr_ugpixel( grs_bitmap * bitmap, int x, int y )
 	return 0;
 }
 
-unsigned char gr_gpixel( grs_bitmap * bitmap, int x, int y )
+unsigned char gr_gpixel(const grs_bitmap &bitmap, int x, int y)
 {
-	if ((x<0) || (y<0) || (x>=bitmap->bm_w) || (y>=bitmap->bm_h)) return 0;
+	if (x < 0 || y < 0 || x>=bitmap.bm_w || y>=bitmap.bm_h)
+		return 0;
 	return gr_ugpixel(bitmap, x, y);
 }

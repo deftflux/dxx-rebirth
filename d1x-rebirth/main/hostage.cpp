@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -48,41 +54,37 @@ int hostage_is_valid( int hostage_num )	{
 	return 1;
 }
 
-int hostage_object_is_valid( int objnum )	{
-	if ( objnum < 0 ) return 0;
-	if ( objnum > Highest_object_index ) return 0;
-	if ( Objects[objnum].type != OBJ_HOSTAGE ) return 0;
-	return hostage_is_valid(get_hostage_id(&Objects[objnum]));
+int hostage_object_is_valid(const vobjptridx_t objnum)	{
+	if ( objnum->type != OBJ_HOSTAGE ) return 0;
+	return hostage_is_valid(get_hostage_id(objnum));
 }
 
 
 static int hostage_get_next_slot()	{
-	int i;
-	for (i=0; i<MAX_HOSTAGES; i++ )	{
+	for (int i=0; i<MAX_HOSTAGES; i++ ) {
 		if (!hostage_is_valid(i))
 			return i;
 	}
 	return MAX_HOSTAGES;
 }
 
-void hostage_init_info( int objnum )	{
+void hostage_init_info(const vobjptridx_t objnum)
+{
 	int i;
 
 	i = hostage_get_next_slot();
 	Assert( i > -1 );
 	Hostages[i].objnum = objnum;
-	Hostages[i].objsig = Objects[objnum].signature;
+	Hostages[i].objsig = objnum->signature;
 	//Hostages[i].type = 0;
 	//Hostages[i].sound_num = -1;
-	set_hostage_id(&Objects[objnum], i);
+	set_hostage_id(objnum, i);
 }
 
 void hostage_init_all()
 {
-	int i;
-
 	// Initialize all their values...
-	for (i=0; i<MAX_HOSTAGES; i++ )	{
+	for (int i=0; i<MAX_HOSTAGES; i++ ) {
 		Hostages[i].objnum = object_none;
 		Hostages[i].objsig = -1;
 		//Hostages[i].type = 0;
@@ -93,9 +95,9 @@ void hostage_init_all()
 }
 
 void hostage_compress_all()	{
-	int i,newslot;
+	int newslot;
 	
-	for (i=0; i<MAX_HOSTAGES; i++ )	{
+	for (int i=0; i<MAX_HOSTAGES; i++ ) {
 		if ( hostage_is_valid(i) )	{
 			newslot = hostage_get_next_slot();
 			if ( newslot < i )	{
@@ -107,7 +109,7 @@ void hostage_compress_all()	{
 		}
 	}
 
-	for (i=0; i<MAX_HOSTAGES; i++ )	{
+	for (int i=0; i<MAX_HOSTAGES; i++ ) {
 		if ( hostage_is_valid(i) )	
 			;
 	}

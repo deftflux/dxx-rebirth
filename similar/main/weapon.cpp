@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -33,11 +39,18 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "fireball.h"
 #include "newdemo.h"
 #include "multi.h"
+#include "object.h"
+#include "segment.h"
 #include "newmenu.h"
 #include "gamemine.h"
 #include "ai.h"
 #include "args.h"
 #include "playsave.h"
+#include "physfs-serial.h"
+
+#include "compiler-range_for.h"
+#include "highest_valid.h"
+#include "partial_range.h"
 
 static int POrderList (int num);
 static int SOrderList (int num);
@@ -61,11 +74,6 @@ const ubyte Secondary_weapon_to_weapon_info[MAX_SECONDARY_WEAPONS] = {CONCUSSION
 const ubyte Secondary_weapon_to_gun_num[MAX_SECONDARY_WEAPONS] = {4,4,7,7,7,4,4,7,4,7};
 #endif
 
-const int Primary_ammo_max[MAX_PRIMARY_WEAPONS] = {0, VULCAN_AMMO_MAX, 0, 0, 0,
-#if defined(DXX_BUILD_DESCENT_II)
-	0, VULCAN_AMMO_MAX, 0, 0, 0
-#endif
-};
 const ubyte Secondary_ammo_max[MAX_SECONDARY_WEAPONS] = {20, 10, 10, 5, 5,
 #if defined(DXX_BUILD_DESCENT_II)
 	20, 20, 15, 10, 10
@@ -86,18 +94,18 @@ const ubyte Secondary_weapon_to_powerup[MAX_SECONDARY_WEAPONS] = {POW_MISSILE_1,
 #endif
 };
 
-weapon_info Weapon_info[MAX_WEAPON_TYPES];
-int	N_weapon_types=0;
+weapon_info_array Weapon_info;
+unsigned N_weapon_types;
 sbyte   Primary_weapon, Secondary_weapon;
 
 // autoselect ordering
 
 #if defined(DXX_BUILD_DESCENT_I)
-static const ubyte DefaultPrimaryOrder[] = { 4, 3, 2, 1, 0, 255 };
-static const ubyte DefaultSecondaryOrder[] = { 4, 3, 1, 0, 255, 2 };
+static const array<ubyte, MAX_PRIMARY_WEAPONS + 1> DefaultPrimaryOrder{{ 4, 3, 2, 1, 0, 255 }};
+static const array<ubyte, MAX_SECONDARY_WEAPONS + 1> DefaultSecondaryOrder{{ 4, 3, 1, 0, 255, 2 }};
 #elif defined(DXX_BUILD_DESCENT_II)
-static const ubyte DefaultPrimaryOrder[]={9,8,7,6,5,4,3,2,1,0,255};
-static const ubyte DefaultSecondaryOrder[]={9,8,4,3,1,5,0,255,7,6,2};
+static const array<ubyte, MAX_PRIMARY_WEAPONS + 1> DefaultPrimaryOrder={{9,8,7,6,5,4,3,2,1,0,255}};
+static const array<ubyte, MAX_SECONDARY_WEAPONS + 1> DefaultSecondaryOrder={{9,8,4,3,1,5,0,255,7,6,2}};
 
 //flags whether the last time we use this weapon, it was the 'super' version
 ubyte Primary_last_was_super[MAX_PRIMARY_WEAPONS];
@@ -254,13 +262,8 @@ int player_has_weapon(int weapon_num, int secondary_flag)
 void InitWeaponOrdering ()
  {
   // short routine to setup default weapon priorities for new pilots
-
-  int i;
-
-  for (i=0;i<MAX_PRIMARY_WEAPONS+1;i++)
-	PlayerCfg.PrimaryOrder[i]=DefaultPrimaryOrder[i];
-  for (i=0;i<MAX_SECONDARY_WEAPONS+1;i++)
-	PlayerCfg.SecondaryOrder[i]=DefaultSecondaryOrder[i];
+	PlayerCfg.PrimaryOrder = DefaultPrimaryOrder;
+	PlayerCfg.SecondaryOrder = DefaultSecondaryOrder;
  }
 
 void CyclePrimary ()
@@ -393,7 +396,7 @@ void select_weapon(int weapon_num, int secondary_flag, int print_message, int wa
 		if (Secondary_weapon != weapon_num) {
 			if (wait_for_rearm) digi_play_sample_once( SOUND_GOOD_SELECTION_SECONDARY, F1_0 );
 			if (Game_mode & GM_MULTI)	{
-				if (wait_for_rearm) multi_send_play_sound(SOUND_GOOD_SELECTION_PRIMARY, F1_0);
+				if (wait_for_rearm) multi_send_play_sound(SOUND_GOOD_SELECTION_SECONDARY, F1_0);
 			}
 			if (wait_for_rearm)
 				Next_missile_fire_time = GameTime64 + REARM_TIME;
@@ -712,10 +715,10 @@ void ReorderPrimary ()
 	for (i=0;i<MAX_PRIMARY_WEAPONS+1;i++)
 	{
 		ubyte order = PlayerCfg.PrimaryOrder[i];
-		nm_set_item_menu(&m[i], (order==255) ? DXX_WEAPON_TEXT_NEVER_AUTOSELECT : PRIMARY_WEAPON_NAMES(order));
+		nm_set_item_menu(m[i], (order==255) ? DXX_WEAPON_TEXT_NEVER_AUTOSELECT : PRIMARY_WEAPON_NAMES(order));
 		m[i].value=order;
 	}
-	i = newmenu_doreorder("Reorder Primary","Shift+Up/Down arrow to move item", i, m, NULL, NULL);
+	newmenu_doreorder("Reorder Primary","Shift+Up/Down arrow to move item", i, m);
 
 	for (i=0;i<MAX_PRIMARY_WEAPONS+1;i++)
 		PlayerCfg.PrimaryOrder[i]=m[i].value;
@@ -729,10 +732,10 @@ void ReorderSecondary ()
 	for (i=0;i<MAX_SECONDARY_WEAPONS+1;i++)
 	{
 		ubyte order = PlayerCfg.SecondaryOrder[i];
-		nm_set_item_menu(&m[i], (order==255) ? DXX_WEAPON_TEXT_NEVER_AUTOSELECT : SECONDARY_WEAPON_NAMES(order));
+		nm_set_item_menu(m[i], (order==255) ? DXX_WEAPON_TEXT_NEVER_AUTOSELECT : SECONDARY_WEAPON_NAMES(order));
 		m[i].value=order;
 	}
-	i = newmenu_doreorder("Reorder Secondary","Shift+Up/Down arrow to move item", i, m, NULL, NULL);
+	newmenu_doreorder("Reorder Secondary","Shift+Up/Down arrow to move item", i, m);
 	for (i=0;i<MAX_SECONDARY_WEAPONS+1;i++)
 		PlayerCfg.SecondaryOrder[i]=m[i].value;
 }
@@ -746,7 +749,7 @@ int POrderList (int num)
 	{
 		return (i);
 	}
-	Error ("Primary Weapon is not in order list!!!");
+	throw std::runtime_error("primary weapon list corrupt");
 }
 
 int SOrderList (int num)
@@ -758,7 +761,7 @@ int SOrderList (int num)
 		{
 			return (i);
 		}
-	Error ("Secondary Weapon is not in order list!!!");
+	throw std::runtime_error("secondary weapon list corrupt");
 }
 
 
@@ -825,7 +828,7 @@ int pick_up_ammo(int class_flag,int weapon_index,int ammo_count)
 
 	Assert(class_flag==CLASS_PRIMARY && weapon_index==VULCAN_INDEX);
 
-	max = Primary_ammo_max[weapon_index];
+	max = VULCAN_AMMO_MAX;
 #if defined(DXX_BUILD_DESCENT_II)
 	if (Players[Player_num].flags & PLAYER_FLAGS_AMMO_RACK)
 		max *= 2;
@@ -860,43 +863,41 @@ int pick_up_ammo(int class_flag,int weapon_index,int ammo_count)
 #if defined(DXX_BUILD_DESCENT_II)
 #define	SMEGA_SHAKE_TIME		(F1_0*2)
 #define	MAX_SMEGA_DETONATES	4
-fix64	Smega_detonate_times[MAX_SMEGA_DETONATES];
+static array<fix64, MAX_SMEGA_DETONATES> Smega_detonate_times;
 
 //	Call this to initialize for a new level.
 //	Sets all super mega missile detonation times to 0 which means there aren't any.
 void init_smega_detonates(void)
 {
-	int	i;
-
-	for (i=0; i<MAX_SMEGA_DETONATES; i++)
-		Smega_detonate_times[i] = 0;
+	Smega_detonate_times.fill(0);
 }
 
 fix	Seismic_tremor_magnitude;
-fix64	Next_seismic_sound_time;
-int	Seismic_sound_playing = 0;
 int	Seismic_tremor_volume;
+static fix64 Next_seismic_sound_time;
+static bool Seismic_sound_playing;
 
-int	Seismic_sound = SOUND_SEISMIC_DISTURBANCE_START;
+const int Seismic_sound = SOUND_SEISMIC_DISTURBANCE_START;
+
+static void start_seismic_sound()
+{
+	if (Seismic_sound_playing)
+		return;
+	Seismic_sound_playing = true;
+	Next_seismic_sound_time = GameTime64 + d_rand()/2;
+	digi_play_sample_looping(Seismic_sound, F1_0, -1, -1);
+}
 
 //	If a smega missile been detonated, rock the mine!
 //	This should be called every frame.
 //	Maybe this should affect all robots, being called when they get their physics done.
 void rock_the_mine_frame(void)
 {
-	int	i;
-
-	for (i=0; i<MAX_SMEGA_DETONATES; i++) {
-
-		if (Smega_detonate_times[i] != 0) {
-			fix	delta_time = GameTime64 - Smega_detonate_times[i];
-
-			if (!Seismic_sound_playing) {
-				digi_play_sample_looping(Seismic_sound, F1_0, -1, -1);
-				Seismic_sound_playing = 1;
-				Next_seismic_sound_time = GameTime64 + d_rand()/2;
-			}
-
+	range_for (auto &i, Smega_detonate_times)
+	{
+		if (i != 0) {
+			fix	delta_time = GameTime64 - i;
+			start_seismic_sound();
 			if (delta_time < SMEGA_SHAKE_TIME) {
 
 				//	Control center destroyed, rock the player's ship.
@@ -929,63 +930,49 @@ void rock_the_mine_frame(void)
 					//	Shake a guided missile!
 					Seismic_tremor_magnitude += rx;
 				}
-
 			} else
-				Smega_detonate_times[i] = 0;
-
+				i = 0;
 		}
 	}
 
 	//	Hook in the rumble sound effect here.
 }
 
-#define	SEISMIC_DISTURBANCE_DURATION	(F1_0*5)
-fix64	Seismic_disturbance_start_time = 0, Seismic_disturbance_end_time;
-
-int Seismic_level=0;
-
+fix64 Seismic_disturbance_end_time;
 void init_seismic_disturbances(void)
 {
-	Seismic_disturbance_start_time = 0;
 	Seismic_disturbance_end_time = 0;
 }
 
 //	Return true if time to start a seismic disturbance.
-static int start_seismic_disturbance(void)
+static bool seismic_disturbance_active()
 {
-	int	rval;
-
 	if (Level_shake_duration < 1)
-		return 0;
+		return false;
 
+	if (Seismic_disturbance_end_time && Seismic_disturbance_end_time < GameTime64)
+		return true;
+
+	const fix level_shake_duration = Level_shake_duration;
+	bool rval;
 	rval =  (2 * fixmul(d_rand(), Level_shake_frequency)) < FrameTime;
 
 	if (rval) {
-		Seismic_disturbance_start_time = GameTime64;
-		Seismic_disturbance_end_time = GameTime64 + Level_shake_duration;
-		if (!Seismic_sound_playing) {
-			digi_play_sample_looping(Seismic_sound, F1_0, -1, -1);
-			Seismic_sound_playing = 1;
-			Next_seismic_sound_time = GameTime64 + d_rand()/2;
-		}
-
+		Seismic_disturbance_end_time = GameTime64 + level_shake_duration;
+		start_seismic_sound();
 		if (Game_mode & GM_MULTI)
-			multi_send_seismic (Seismic_disturbance_start_time,Seismic_disturbance_end_time);
+			multi_send_seismic(level_shake_duration);
 	}
-
 	return rval;
 }
 
 static void seismic_disturbance_frame(void)
 {
 	if (Level_shake_frequency) {
-		if (((Seismic_disturbance_start_time < GameTime64) && (Seismic_disturbance_end_time > GameTime64)) || start_seismic_disturbance()) {
-			fix	delta_time;
+		if (seismic_disturbance_active()) {
 			int	fc, rx, rz;
-
-			delta_time = GameTime64 - Seismic_disturbance_start_time;
-
-			fc = abs(delta_time - (Seismic_disturbance_end_time - Seismic_disturbance_start_time)/2);
+			fix delta_time = static_cast<fix>(GameTime64 - Seismic_disturbance_end_time);
+			fc = abs(delta_time - Level_shake_duration / 2);
 			fc /= F1_0/16;
 			if (fc > 16)
 				fc = 16;
@@ -1019,27 +1006,42 @@ static void seismic_disturbance_frame(void)
 //	Call this when a smega detonates to start the process of rocking the mine.
 void smega_rock_stuff(void)
 {
-	int	i;
-
-	for (i=0; i<MAX_SMEGA_DETONATES; i++) {
-		if (Smega_detonate_times[i] + SMEGA_SHAKE_TIME < GameTime64)
-			Smega_detonate_times[i] = 0;
+	fix64 *least = &Smega_detonate_times[0];
+	range_for (auto &i, Smega_detonate_times)
+	{
+		if (i + SMEGA_SHAKE_TIME < GameTime64)
+			i = 0;
+		if (*least > i)
+			least = &i;
 	}
-
-	for (i=0; i<MAX_SMEGA_DETONATES; i++) {
-		if (Smega_detonate_times[i] == 0) {
-			Smega_detonate_times[i] = GameTime64;
-			break;
-		}
-	}
+	*least = GameTime64;
 }
 
-int	Super_mines_yes = 1;
+static int	Super_mines_yes = 1;
+
+static bool immediate_detonate_smart_mine(const vcobjptridx_t smart_mine, const vcobjptridx_t target)
+{
+	if (smart_mine->segnum == target->segnum)
+		return true;
+	//	Object which is close enough to detonate smart mine is not in same segment as smart mine.
+	//	Need to do a more expensive check to make sure there isn't an obstruction.
+	if (likely((d_tick_count ^ (static_cast<vcobjptridx_t::integral_type>(smart_mine) + static_cast<vcobjptridx_t::integral_type>(target))) % 4))
+		// Maybe next frame
+		return false;
+	fvi_query	fq{};
+	fvi_info		hit_data;
+	fq.startseg = smart_mine->segnum;
+	fq.p0						= &smart_mine->pos;
+	fq.p1						= &target->pos;
+	fq.thisobjnum			= smart_mine;
+	auto fate = find_vector_intersection(fq, hit_data);
+	return fate != HIT_WALL;
+}
 
 //	Call this once/frame to process all super mines in the level.
 void process_super_mines_frame(void)
 {
-	int	i, j;
+	int	i;
 	int	start, add;
 
 	//	If we don't know of there being any super mines in the level, just
@@ -1055,71 +1057,47 @@ void process_super_mines_frame(void)
 	Super_mines_yes = 0;
 
 	for (i=start; i<=Highest_object_index; i+=add) {
-		if ((Objects[i].type == OBJ_WEAPON) && (get_powerup_id(&Objects[i]) == SUPERPROX_ID)) {
-			int	parent_num;
-
-			parent_num = Objects[i].ctype.laser_info.parent_num;
-
-			Super_mines_yes = 1;
-			if (Objects[i].lifeleft + F1_0*2 < Weapon_info[SUPERPROX_ID].lifetime) {
-				vms_vector	*bombpos;
-
-				bombpos = &Objects[i].pos;
-
-				for (j=0; j<=Highest_object_index; j++) {
-					if ((Objects[j].type == OBJ_PLAYER) || (Objects[j].type == OBJ_ROBOT)) {
-						fix	dist;
-
-						dist = vm_vec_dist_quick(bombpos, &Objects[j].pos);
-
-						if (j != parent_num)
-							if (dist - Objects[j].size < F1_0*20)
-							{
-								if (Objects[i].segnum == Objects[j].segnum)
-									Objects[i].lifeleft = 1;
-								else {
-									//	Object which is close enough to detonate smart mine is not in same segment as smart mine.
-									//	Need to do a more expensive check to make sure there isn't an obstruction.
-									if (((d_tick_count ^ (i+j)) % 4) == 0) {
-										fvi_query	fq;
-										fvi_info		hit_data;
-										int			fate;
-
-										fq.startseg = Objects[i].segnum;
-										fq.p0						= &Objects[i].pos;
-										fq.p1						= &Objects[j].pos;
-										fq.rad					= 0;
-										fq.thisobjnum			= i;
-										fq.ignore_obj_list	= NULL;
-										fq.flags					= 0;
-
-										fate = find_vector_intersection(&fq, &hit_data);
-										if (fate != HIT_WALL)
-											Objects[i].lifeleft = 1;
-									}
-								}
-							}
-					}
-				}
-			}
+		const auto io = vobjptridx(i);
+		if (likely(io->type != OBJ_WEAPON || get_weapon_id(io) != SUPERPROX_ID))
+			continue;
+		Super_mines_yes = 1;
+		if (unlikely(io->lifeleft + F1_0*2 >= Weapon_info[SUPERPROX_ID].lifetime))
+			continue;
+		const auto parent_num = io->ctype.laser_info.parent_num;
+		const auto &bombpos = io->pos;
+		range_for (const auto j, highest_valid(Objects))
+		{
+			if (unlikely(j == parent_num))
+				continue;
+			const auto jo = vobjptridx(j);
+			if (jo->type != OBJ_PLAYER && jo->type != OBJ_ROBOT)
+				continue;
+			const auto dist_squared = vm_vec_dist2(bombpos, jo->pos);
+			const vm_distance distance_threshold{F1_0 * 20};
+			const auto distance_threshold_squared = distance_threshold * distance_threshold;
+			if (likely(distance_threshold_squared < dist_squared))
+				/* Cheap check, some false negatives */
+				continue;
+			const fix64 j_size = jo->size;
+			const fix64 j_size_squared = j_size * j_size;
+			if (dist_squared - j_size_squared >= distance_threshold_squared)
+				/* Accurate check */
+				continue;
+			if (immediate_detonate_smart_mine(io, jo))
+				io->lifeleft = 1;
 		}
 	}
-
 }
 
 #define SPIT_SPEED 20
 
 //this function is for when the player intentionally drops a powerup
 //this function is based on drop_powerup()
-int spit_powerup(object *spitter, int id,int seed)
+objptridx_t spit_powerup(const vobjptr_t spitter, int id,int seed)
 {
-	int		objnum;
-	object	*obj;
-	vms_vector	new_velocity, new_pos;
-
 	d_srand(seed);
 
-	vm_vec_scale_add(&new_velocity,&spitter->mtype.phys_info.velocity,&spitter->orient.fvec,i2f(SPIT_SPEED));
+	auto new_velocity = vm_vec_scale_add(spitter->mtype.phys_info.velocity,spitter->orient.fvec,i2f(SPIT_SPEED));
 
 	new_velocity.x += (d_rand() - 16384) * SPIT_SPEED * 2;
 	new_velocity.y += (d_rand() - 16384) * SPIT_SPEED * 2;
@@ -1128,14 +1106,14 @@ int spit_powerup(object *spitter, int id,int seed)
 	// Give keys zero velocity so they can be tracked better in multi
 
 	if ((Game_mode & GM_MULTI) && (id >= POW_KEY_BLUE) && (id <= POW_KEY_GOLD))
-		vm_vec_zero(&new_velocity);
+		vm_vec_zero(new_velocity);
 
 	//there's a piece of code which lets the player pick up a powerup if
 	//the distance between him and the powerup is less than 2 time their
 	//combined radii.  So we need to create powerups pretty far out from
 	//the player.
 
-	vm_vec_scale_add(&new_pos,&spitter->pos,&spitter->orient.fvec,spitter->size);
+	const auto new_pos = vm_vec_scale_add(spitter->pos,spitter->orient.fvec,spitter->size);
 
 	if (Game_mode & GM_MULTI)
 	{
@@ -1145,15 +1123,12 @@ int spit_powerup(object *spitter, int id,int seed)
 		}
 	}
 
-	objnum = obj_create( OBJ_POWERUP, id, spitter->segnum, &new_pos, &vmd_identity_matrix, Powerup_info[id].size, CT_POWERUP, MT_PHYSICS, RT_POWERUP);
+	auto obj = obj_create( OBJ_POWERUP, id, spitter->segnum, new_pos, &vmd_identity_matrix, Powerup_info[id].size, CT_POWERUP, MT_PHYSICS, RT_POWERUP);
 
-	if (objnum == object_none ) {
+	if (obj == object_none ) {
 		Int3();
-		return objnum;
+		return obj;
 	}
-
-	obj = &Objects[objnum];
-
 	obj->mtype.phys_info.velocity = new_velocity;
 	obj->mtype.phys_info.drag = 512;	//1024;
 	obj->mtype.phys_info.mass = F1_0;
@@ -1181,13 +1156,12 @@ int spit_powerup(object *spitter, int id,int seed)
 			//	obj->lifeleft = (d_rand() + F1_0*3) * 64;		//	Lives for 5 to 5.5 binary minutes (a binary minute is 64 seconds)
 			break;
 	}
-
-	return objnum;
+	return obj;
 }
 
 void DropCurrentWeapon ()
 {
-	int objnum,ammo=0,seed;
+	int ammo=0,seed;
 
 	if (num_objects >= MAX_USED_OBJECTS)
 		return;
@@ -1203,9 +1177,9 @@ void DropCurrentWeapon ()
 
 	seed = d_rand();
 
-	objnum = spit_powerup(ConsoleObject,Primary_weapon_to_powerup[Primary_weapon],seed);
+	auto objnum = spit_powerup(ConsoleObject,Primary_weapon_to_powerup[Primary_weapon],seed);
 
-   if (objnum<0)
+	if (objnum == object_none)
 		return;
 
 	if (weapon_index_uses_vulcan_ammo(Primary_weapon)) {
@@ -1220,7 +1194,7 @@ void DropCurrentWeapon ()
 		Players[Player_num].vulcan_ammo -= ammo;
 
 		if (objnum!=object_none)
-			Objects[objnum].ctype.powerup_info.count = ammo;
+			objnum->ctype.powerup_info.count = ammo;
 	}
 
 	if (Primary_weapon == OMEGA_INDEX) {
@@ -1228,7 +1202,7 @@ void DropCurrentWeapon ()
 		//dropped weapon has current energy
 
 		if (objnum!=object_none)
-			Objects[objnum].ctype.powerup_info.count = Omega_charge;
+			objnum->ctype.powerup_info.count = Omega_charge;
 	}
 
 	if ((Game_mode & GM_MULTI) && objnum!=object_none)
@@ -1240,7 +1214,7 @@ void DropCurrentWeapon ()
 
 void DropSecondaryWeapon ()
 {
-	int objnum,seed;
+	int seed;
 	ubyte weapon_drop_id=-1;
 	ushort sub_ammo=0;
 
@@ -1297,9 +1271,9 @@ void DropSecondaryWeapon ()
 
 	seed = d_rand();
 
-	objnum = spit_powerup(ConsoleObject,weapon_drop_id,seed);
+	auto objnum = spit_powerup(ConsoleObject,weapon_drop_id,seed);
 
-   if (objnum<0)
+	if (objnum == object_none)
 		return;
 
 
@@ -1331,7 +1305,7 @@ void do_seismic_stuff(void)
 	if (stv_save != 0) {
 		if (Seismic_tremor_volume == 0) {
 			digi_stop_looping_sound();
-			Seismic_sound_playing = 0;
+			Seismic_sound_playing = false;
 		}
 
 		if ((GameTime64 > Next_seismic_sound_time) && Seismic_tremor_volume) {
@@ -1348,124 +1322,56 @@ void do_seismic_stuff(void)
 }
 #endif
 
+DEFINE_BITMAP_SERIAL_UDT();
+
+#if defined(DXX_BUILD_DESCENT_I)
+DEFINE_SERIAL_UDT_TO_MESSAGE(weapon_info, w, (w.render_type, w.model_num, w.model_num_inner, w.persistent, w.flash_vclip, w.flash_sound, w.robot_hit_vclip, w.robot_hit_sound, w.wall_hit_vclip, w.wall_hit_sound, w.fire_count, w.ammo_usage, w.weapon_vclip, w.destroyable, w.matter, w.bounce, w.homing_flag, w.dum1, w.dum2, w.dum3, w.energy_usage, w.fire_wait, w.bitmap, w.blob_size, w.flash_size, w.impact_size, w.strength, w.speed, w.mass, w.drag, w.thrust, w.po_len_to_width_ratio, w.light, w.lifetime, w.damage_radius, w.picture));
+#elif defined(DXX_BUILD_DESCENT_II)
+namespace {
+struct v2_weapon_info : weapon_info {};
+}
+
+template <typename Accessor>
+void postprocess_udt(Accessor &, v2_weapon_info &w)
+{
+	w.children = -1;
+	w.multi_damage_scale = F1_0;
+	w.hires_picture = w.picture;
+}
+
+DEFINE_SERIAL_UDT_TO_MESSAGE(v2_weapon_info, w, (w.render_type, w.persistent, w.model_num, w.model_num_inner, w.flash_vclip, w.robot_hit_vclip, w.flash_sound, w.wall_hit_vclip, w.fire_count, w.robot_hit_sound, w.ammo_usage, w.weapon_vclip, w.wall_hit_sound, w.destroyable, w.matter, w.bounce, w.homing_flag, w.speedvar, w.flags, w.flash, w.afterburner_size, w.energy_usage, w.fire_wait, w.bitmap, w.blob_size, w.flash_size, w.impact_size, w.strength, w.speed, w.mass, w.drag, w.thrust, w.po_len_to_width_ratio, w.light, w.lifetime, w.damage_radius, w.picture));
+DEFINE_SERIAL_UDT_TO_MESSAGE(weapon_info, w, (w.render_type, w.persistent, w.model_num, w.model_num_inner, w.flash_vclip, w.robot_hit_vclip, w.flash_sound, w.wall_hit_vclip, w.fire_count, w.robot_hit_sound, w.ammo_usage, w.weapon_vclip, w.wall_hit_sound, w.destroyable, w.matter, w.bounce, w.homing_flag, w.speedvar, w.flags, w.flash, w.afterburner_size, w.children, w.energy_usage, w.fire_wait, w.multi_damage_scale, w.bitmap, w.blob_size, w.flash_size, w.impact_size, w.strength, w.speed, w.mass, w.drag, w.thrust, w.po_len_to_width_ratio, w.light, w.lifetime, w.damage_radius, w.picture, w.hires_picture));
+#endif
+
+void weapon_info_write(PHYSFS_File *fp, const weapon_info &w)
+{
+	PHYSFSX_serialize_write(fp, w);
+}
+
 /*
  * reads n weapon_info structs from a PHYSFS_file
  */
-int weapon_info_read_n(weapon_info *wi, int n, PHYSFS_file *fp, int file_version)
+void weapon_info_read_n(weapon_info_array &wi, std::size_t count, PHYSFS_File *fp, int file_version, std::size_t offset)
 {
-	int i, j;
-
-	for (i = 0; i < n; i++) {
-		wi[i].render_type = PHYSFSX_readByte(fp);
+	auto r = partial_range(wi, offset, count);
 #if defined(DXX_BUILD_DESCENT_I)
-		wi[i].model_num = PHYSFSX_readByte(fp);
-		wi[i].model_num_inner = PHYSFSX_readByte(fp);
-		wi[i].persistent = PHYSFSX_readByte(fp);
-		wi[i].flash_vclip = PHYSFSX_readByte(fp);
-		wi[i].flash_sound = PHYSFSX_readShort(fp);
-		wi[i].robot_hit_vclip = PHYSFSX_readByte(fp);
-		wi[i].robot_hit_sound = PHYSFSX_readShort(fp);
-		wi[i].wall_hit_vclip = PHYSFSX_readByte(fp);
-		wi[i].wall_hit_sound = PHYSFSX_readShort(fp);
-		wi[i].fire_count = PHYSFSX_readByte(fp);
-		wi[i].ammo_usage = PHYSFSX_readByte(fp);
-		wi[i].weapon_vclip = PHYSFSX_readByte(fp);
-		wi[i].destroyable = PHYSFSX_readByte(fp);
-		wi[i].matter = PHYSFSX_readByte(fp);
-		wi[i].bounce = PHYSFSX_readByte(fp);
-		wi[i].homing_flag = PHYSFSX_readByte(fp);
-		wi[i].dum1 = PHYSFSX_readByte(fp);
-		wi[i].dum2 = PHYSFSX_readByte(fp);
-		wi[i].dum3 = PHYSFSX_readByte(fp);
-		wi[i].energy_usage = PHYSFSX_readFix(fp);
-		wi[i].fire_wait = PHYSFSX_readFix(fp);
+	(void)file_version;
 #elif defined(DXX_BUILD_DESCENT_II)
-		wi[i].persistent = PHYSFSX_readByte(fp);
-		wi[i].model_num = PHYSFSX_readShort(fp);
-		wi[i].model_num_inner = PHYSFSX_readShort(fp);
-
-		wi[i].flash_vclip = PHYSFSX_readByte(fp);
-		wi[i].robot_hit_vclip = PHYSFSX_readByte(fp);
-		wi[i].flash_sound = PHYSFSX_readShort(fp);
-
-		wi[i].wall_hit_vclip = PHYSFSX_readByte(fp);
-		wi[i].fire_count = PHYSFSX_readByte(fp);
-		wi[i].robot_hit_sound = PHYSFSX_readShort(fp);
-
-		wi[i].ammo_usage = PHYSFSX_readByte(fp);
-		wi[i].weapon_vclip = PHYSFSX_readByte(fp);
-		wi[i].wall_hit_sound = PHYSFSX_readShort(fp);
-
-		wi[i].destroyable = PHYSFSX_readByte(fp);
-		wi[i].matter = PHYSFSX_readByte(fp);
-		wi[i].bounce = PHYSFSX_readByte(fp);
-		wi[i].homing_flag = PHYSFSX_readByte(fp);
-
-		wi[i].speedvar = PHYSFSX_readByte(fp);
-		wi[i].flags = PHYSFSX_readByte(fp);
-		wi[i].flash = PHYSFSX_readByte(fp);
-		wi[i].afterburner_size = PHYSFSX_readByte(fp);
-
-		if (file_version >= 3)
-			wi[i].children = PHYSFSX_readByte(fp);
-		else
-			/* Set the type of children correctly when using old
-			 * datafiles.  In earlier descent versions this was simply
-			 * hard-coded in create_smart_children().
-			 */
-			switch (i)
-			{
-			case SMART_ID:
-				wi[i].children = PLAYER_SMART_HOMING_ID;
-				break;
-			case SUPERPROX_ID:
-				wi[i].children = SMART_MINE_HOMING_ID;
-				break;
-#if 0 /* not present in shareware */
-			case ROBOT_SUPERPROX_ID:
-				wi[i].children = ROBOT_SMART_MINE_HOMING_ID;
-				break;
-			case EARTHSHAKER_ID:
-				wi[i].children = EARTHSHAKER_MEGA_ID;
-				break;
-#endif
-			default:
-				wi[i].children = -1;
-				break;
-			}
-
-		wi[i].energy_usage = PHYSFSX_readFix(fp);
-		wi[i].fire_wait = PHYSFSX_readFix(fp);
-
-		if (file_version >= 3)
-			wi[i].multi_damage_scale = PHYSFSX_readFix(fp);
-		else /* FIXME: hack this to set the real values */
-			wi[i].multi_damage_scale = F1_0;
-
-#endif
-		bitmap_index_read(&wi[i].bitmap, fp);
-
-		wi[i].blob_size = PHYSFSX_readFix(fp);
-		wi[i].flash_size = PHYSFSX_readFix(fp);
-		wi[i].impact_size = PHYSFSX_readFix(fp);
-		for (j = 0; j < NDL; j++)
-			wi[i].strength[j] = PHYSFSX_readFix(fp);
-		for (j = 0; j < NDL; j++)
-			wi[i].speed[j] = PHYSFSX_readFix(fp);
-		wi[i].mass = PHYSFSX_readFix(fp);
-		wi[i].drag = PHYSFSX_readFix(fp);
-		wi[i].thrust = PHYSFSX_readFix(fp);
-		wi[i].po_len_to_width_ratio = PHYSFSX_readFix(fp);
-		wi[i].light = PHYSFSX_readFix(fp);
-		wi[i].lifetime = PHYSFSX_readFix(fp);
-		wi[i].damage_radius = PHYSFSX_readFix(fp);
-		bitmap_index_read(&wi[i].picture, fp);
-#if defined(DXX_BUILD_DESCENT_II)
-		if (file_version >= 3)
-			bitmap_index_read(&wi[i].hires_picture, fp);
-		else
-			wi[i].hires_picture.index = wi[i].picture.index;
-#endif
+	if (file_version < 3)
+	{
+		range_for (auto &w, r)
+			PHYSFSX_serialize_read(fp, static_cast<v2_weapon_info &>(w));
+		/* Set the type of children correctly when using old
+		 * datafiles.  In earlier descent versions this was simply
+		 * hard-coded in create_smart_children().
+		 */
+		wi[SMART_ID].children = PLAYER_SMART_HOMING_ID;
+		wi[SUPERPROX_ID].children = SMART_MINE_HOMING_ID;
+		return;
 	}
-	return i;
+#endif
+	range_for (auto &w, r)
+	{
+		PHYSFSX_serialize_read(fp, w);
+	}
 }

@@ -1,15 +1,9 @@
 /*
-THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
-SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
-END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
-ROYALTY-FREE, PERPETUAL LICENSE TO SUCH END-USERS FOR USE BY SUCH END-USERS
-IN USING, DISPLAYING,  AND CREATING DERIVATIVE WORKS THEREOF, SO LONG AS
-SUCH USE, DISPLAY OR CREATION IS FOR NON-COMMERCIAL, ROYALTY OR REVENUE
-FREE PURPOSES.  IN NO EVENT SHALL THE END-USER USE THE COMPUTER CODE
-CONTAINED HEREIN FOR REVENUE-BEARING PURPOSES.  THE END-USER UNDERSTANDS
-AND AGREES TO THE TERMS HEREIN AND ACCEPTS THE SAME BY USE OF THIS FILE.
-COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
-*/
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 /*
  * 
  * Rod routines
@@ -20,31 +14,25 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "3d.h"
 #include "globvars.h"
 #include "maths.h"
+#ifndef OGL
+#include "gr.h"
+#endif
 
-grs_point blob_vertices[4];
+#include "compiler-range_for.h"
 
 struct rod_4point
 {
-	g3s_point *point_list[4];
+	array<cg3s_point *, 4> point_list;
 	g3s_point points[4];
 };
 
-static g3s_uvl uvl_list[4] = { { 0x0200,0x0200,0 },
-			{ 0xfe00,0x0200,0 },
-			{ 0xfe00,0xfe00,0 },
-			{ 0x0200,0xfe00,0 } };
-
 //compute the corners of a rod.  fills in vertbuf.
-static int calc_rod_corners(rod_4point &rod_point_group, g3s_point *bot_point,fix bot_width,g3s_point *top_point,fix top_width)
+static int calc_rod_corners(rod_4point &rod_point_group, const g3s_point &bot_point,fix bot_width,const g3s_point &top_point,fix top_width)
 {
-	vms_vector delta_vec,top,tempv,rod_norm;
-	ubyte codes_and;
-	int i;
-
 	//compute vector from one point to other, do cross product with vector
 	//from eye to get perpendiclar
 
-	vm_vec_sub(&delta_vec,&bot_point->p3_vec,&top_point->p3_vec);
+	auto delta_vec = vm_vec_sub(bot_point.p3_vec,top_point.p3_vec);
 
 	//unscale for aspect
 
@@ -56,13 +44,13 @@ static int calc_rod_corners(rod_4point &rod_point_group, g3s_point *bot_point,fi
 	//do lots of normalizing to prevent overflowing.  When this code works,
 	//it should be optimized
 
-	vm_vec_normalize(&delta_vec);
+	vm_vec_normalize(delta_vec);
 
-	vm_vec_copy_normalize(&top,&top_point->p3_vec);
+	const auto top = vm_vec_normalized(top_point.p3_vec);
 
-	vm_vec_cross(&rod_norm,&delta_vec,&top);
+	auto rod_norm = vm_vec_cross(delta_vec,top);
 
-	vm_vec_normalize(&rod_norm);
+	vm_vec_normalize(rod_norm);
 
 	//scale for aspect
 
@@ -73,7 +61,7 @@ static int calc_rod_corners(rod_4point &rod_point_group, g3s_point *bot_point,fi
 
 	//top points
 
-	vm_vec_copy_scale(&tempv,&rod_norm,top_width);
+	auto tempv = vm_vec_copy_scale(rod_norm,top_width);
 	tempv.z = 0;
 
 	rod_point_group.point_list[0] = &rod_point_group.points[0];
@@ -81,78 +69,72 @@ static int calc_rod_corners(rod_4point &rod_point_group, g3s_point *bot_point,fi
 	rod_point_group.point_list[2] = &rod_point_group.points[2];
 	rod_point_group.point_list[3] = &rod_point_group.points[3];
 	g3s_point (&rod_points)[4] = rod_point_group.points;
-	vm_vec_add(&rod_points[0].p3_vec,&top_point->p3_vec,&tempv);
-	vm_vec_sub(&rod_points[1].p3_vec,&top_point->p3_vec,&tempv);
+	vm_vec_add(rod_points[0].p3_vec,top_point.p3_vec,tempv);
+	vm_vec_sub(rod_points[1].p3_vec,top_point.p3_vec,tempv);
 
-	vm_vec_copy_scale(&tempv,&rod_norm,bot_width);
+	vm_vec_copy_scale(tempv,rod_norm,bot_width);
 	tempv.z = 0;
 
-	vm_vec_sub(&rod_points[2].p3_vec,&bot_point->p3_vec,&tempv);
-	vm_vec_add(&rod_points[3].p3_vec,&bot_point->p3_vec,&tempv);
+	vm_vec_sub(rod_points[2].p3_vec,bot_point.p3_vec,tempv);
+	vm_vec_add(rod_points[3].p3_vec,bot_point.p3_vec,tempv);
 
 
 	//now code the four points
 
-	for (i=0,codes_and=0xff;i<4;i++)
-		codes_and &= g3_code_point(&rod_points[i]);
+	ubyte codes_and = 0xff;
+	range_for (auto &i, rod_points)
+		codes_and &= g3_code_point(i);
 
 	if (codes_and)
 		return 1;		//1 means off screen
 
 	//clear flags for new points (not projected)
 
-	for (i=0;i<4;i++)
-		rod_points[i].p3_flags = 0;
+	range_for (auto &i, rod_points)
+		i.p3_flags = 0;
 
 	return 0;
 }
 
-//draw a polygon that is always facing you
-//returns 1 if off screen, 0 if drew
-bool g3_draw_rod_flat(g3s_point *bot_point,fix bot_width,g3s_point *top_point,fix top_width)
-{
-	rod_4point rod;
-	if (calc_rod_corners(rod,bot_point,bot_width,top_point,top_width))
-		return 0;
-
-	return g3_draw_poly(4,rod.point_list);
-
-}
-
 //draw a bitmap object that is always facing you
 //returns 1 if off screen, 0 if drew
-bool g3_draw_rod_tmap(grs_bitmap *bitmap,g3s_point *bot_point,fix bot_width,g3s_point *top_point,fix top_width,g3s_lrgb light)
+void g3_draw_rod_tmap(grs_bitmap &bitmap,const g3s_point &bot_point,fix bot_width,const g3s_point &top_point,fix top_width,g3s_lrgb light)
 {
 	rod_4point rod;
 	if (calc_rod_corners(rod,bot_point,bot_width,top_point,top_width))
-		return 0;
+		return;
 
-	uvl_list[0].l = uvl_list[1].l = uvl_list[2].l = uvl_list[3].l = (light.r+light.g+light.b)/3;
-	g3s_lrgb lrgb_list[4];
-	lrgb_list[0].r = lrgb_list[1].r = lrgb_list[2].r = lrgb_list[3].r = light.r;
-	lrgb_list[0].g = lrgb_list[1].g = lrgb_list[2].g = lrgb_list[3].g = light.g;
-	lrgb_list[0].b = lrgb_list[1].b = lrgb_list[2].b = lrgb_list[3].b = light.b;
+	const fix average_light = static_cast<unsigned>(light.r+light.g+light.b)/3;
+	const array<g3s_uvl, 4> uvl_list{{
+		{ 0x0200, 0x0200, average_light },
+		{ 0xfe00, 0x0200, average_light },
+		{ 0xfe00, 0xfe00, average_light },
+		{ 0x0200, 0xfe00, average_light }
+	}};
+	const array<g3s_lrgb, 4> lrgb_list{{
+		light,
+		light,
+		light,
+		light,
+	}};
 
-	return g3_draw_tmap(4,rod.point_list,uvl_list,lrgb_list,bitmap);
+	g3_draw_tmap(rod.point_list,uvl_list,lrgb_list,bitmap);
 }
 
 #ifndef OGL
 //draws a bitmap with the specified 3d width & height 
 //returns 1 if off screen, 0 if drew
-bool g3_draw_bitmap(vms_vector *pos,fix width,fix height,grs_bitmap *bm)
+bool g3_draw_bitmap(const vms_vector &pos,fix width,fix height,grs_bitmap &bm)
 {
-#ifndef __powerc
 	g3s_point pnt;
-	fix t,w,h;
-
-	if (g3_rotate_point(&pnt,pos) & CC_BEHIND)
+	fix w,h;
+	if (g3_rotate_point(pnt,pos) & CC_BEHIND)
 		return 1;
-
-	g3_project_point(&pnt);
-
+	g3_project_point(pnt);
 	if (pnt.p3_flags & PF_OVERFLOW)
 		return 1;
-
+#ifndef __powerc
+	fix t;
 	if (checkmuldiv(&t,width,Canv_w2,pnt.p3_z))
 		w = fixmul(t,Matrix_scale.x);
 	else
@@ -162,44 +144,21 @@ bool g3_draw_bitmap(vms_vector *pos,fix width,fix height,grs_bitmap *bm)
 		h = fixmul(t,Matrix_scale.y);
 	else
 		return 1;
-
-	blob_vertices[0].x = pnt.p3_sx - w;
-	blob_vertices[0].y = blob_vertices[1].y = pnt.p3_sy - h;
-	blob_vertices[1].x = blob_vertices[2].x = pnt.p3_sx + w;
-	blob_vertices[2].y = pnt.p3_sy + h;
-
-	scale_bitmap(bm,blob_vertices,0);
-
-	return 0;
 #else
-	g3s_point pnt;
-	fix w,h;
-	double fz;
-
-	if (g3_rotate_point(&pnt,pos) & CC_BEHIND)
-		return 1;
-
-	g3_project_point(&pnt);
-
-	if (pnt.p3_flags & PF_OVERFLOW)
-		return 1;
-
 	if (pnt.p3_z == 0)
 		return 1;
-		
-	fz = f2fl(pnt.p3_z);
+	double fz = f2fl(pnt.p3_z);
 	w = fixmul(fl2f(((f2fl(width)*fCanv_w2) / fz)), Matrix_scale.x);
 	h = fixmul(fl2f(((f2fl(height)*fCanv_h2) / fz)), Matrix_scale.y);
-
-	blob_vertices[0].x = pnt.p3_sx - w;
-	blob_vertices[0].y = blob_vertices[1].y = pnt.p3_sy - h;
-	blob_vertices[1].x = blob_vertices[2].x = pnt.p3_sx + w;
-	blob_vertices[2].y = pnt.p3_sy + h;
-
-	scale_bitmap(bm, blob_vertices, 0);
-
-	return 0;
 #endif
+	const fix blob0y = pnt.p3_sy - h, blob1x = pnt.p3_sx + w;
+	const array<grs_point, 3> blob_vertices{{
+		{pnt.p3_sx - w, blob0y},
+		{blob1x, blob0y},
+		{blob1x, pnt.p3_sy + h},
+	}};
+	scale_bitmap(bm, blob_vertices, 0);
+	return 0;
 }
 #endif
 

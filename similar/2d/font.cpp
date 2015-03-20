@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,6 +23,8 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
+#include <memory>
+#include <stdexcept>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,9 +37,10 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "gr.h"
 #include "grdef.h"
 #include "dxxerror.h"
-#include "byteswap.h"
+#include "byteutil.h"
 #include "common/2d/bitmap.h"
 #include "makesig.h"
+#include "physfsx.h"
 #include "gamefont.h"
 #include "console.h"
 #include "config.h"
@@ -40,6 +49,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "ogl_init.h"
 #endif
 
+#include "compiler-array.h"
+#include "compiler-range_for.h"
+#include "compiler-make_unique.h"
+#include "partial_range.h"
+
 #define FONTSCALE_X(x) ((float)(x)*(FNTScaleX))
 #define FONTSCALE_Y(x) ((float)(x)*(FNTScaleY))
 
@@ -47,13 +61,14 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 struct openfont
 {
-	char filename[FILENAME_LEN];
+	array<char, FILENAME_LEN> filename;
+	// Unowned
 	grs_font *ptr;
-	char *dataptr;
+	std::unique_ptr<uint8_t[]> dataptr;
 };
 
 //list of open fonts, for use (for now) for palette remapping
-openfont open_font[MAX_OPEN_FONTS];
+static array<openfont, MAX_OPEN_FONTS> open_font;
 
 #define BITS_TO_BYTES(x)    (((x)+7)>>3)
 
@@ -201,7 +216,7 @@ static int gr_internal_string0(int x, int y, const char *s )
 {
 	unsigned char * fp;
 	const char * text_ptr, * next_row, * text_ptr1;
-	int r, BitMask, i, bits, width, spacing, letter, underline;
+	int BitMask,bits, width, spacing, letter, underline;
 	int	skip_lines = 0;
 
 	unsigned int VideoOffset, VideoOffset1;
@@ -222,7 +237,7 @@ static int gr_internal_string0(int x, int y, const char *s )
 			VideoOffset1 = y * ROWSIZE + xx;
 		}
 
-		for (r=0; r<grd_curcanv->cv_font->ft_h; r++)
+		for (int r=0; r<grd_curcanv->cv_font->ft_h; r++)
 		{
 
 			text_ptr = text_ptr1;
@@ -273,15 +288,17 @@ static int gr_internal_string0(int x, int y, const char *s )
 					fp = grd_curcanv->cv_font->ft_data + letter * BITS_TO_BYTES(width)*grd_curcanv->cv_font->ft_h;
 
 				if (underline)
-					for (i=0; i< width; i++ )
-						DATA[VideoOffset++] = (unsigned char) grd_curcanv->cv_font_fg_color;
+				{
+					std::fill_n(&DATA[VideoOffset], width, grd_curcanv->cv_font_fg_color);
+					VideoOffset += width;
+				}
 				else
 				{
 					fp += BITS_TO_BYTES(width)*r;
 
 					BitMask = 0;
 
-					for (i=0; i< width; i++ )
+					for (int i=0; i< width; i++ )
 					{
 						if (BitMask==0) {
 							bits = *fp++;
@@ -313,7 +330,7 @@ static int gr_internal_string0m(int x, int y, const char *s )
 {
 	unsigned char * fp;
 	const char * text_ptr, * next_row, * text_ptr1;
-	int r, BitMask, i, bits, width, spacing, letter, underline;
+	int BitMask,bits, width, spacing, letter, underline;
 	int skip_lines = 0;
 
 	unsigned int VideoOffset, VideoOffset1;
@@ -336,7 +353,7 @@ static int gr_internal_string0m(int x, int y, const char *s )
 			VideoOffset1 = y * ROWSIZE + xx;
 		}
 
-		for (r=0; r<grd_curcanv->cv_font->ft_h; r++)
+		for (int r=0; r<grd_curcanv->cv_font->ft_h; r++)
 		{
 
 			text_ptr = text_ptr1;
@@ -390,15 +407,17 @@ static int gr_internal_string0m(int x, int y, const char *s )
 					fp = grd_curcanv->cv_font->ft_data + letter * BITS_TO_BYTES(width)*grd_curcanv->cv_font->ft_h;
 
 				if (underline)
-					for (i=0; i< width; i++ )
-						DATA[VideoOffset++] = (unsigned char) grd_curcanv->cv_font_fg_color;
+				{
+					std::fill_n(&DATA[VideoOffset], width, grd_curcanv->cv_font_fg_color);
+					VideoOffset += width;
+				}
 				else
 				{
 					fp += BITS_TO_BYTES(width)*r;
 
 					BitMask = 0;
 
-					for (i=0; i< width; i++ )
+					for (int i=0; i< width; i++ )
 					{
 						if (BitMask==0) {
 							bits = *fp++;
@@ -432,15 +451,9 @@ static int gr_internal_string0m(int x, int y, const char *s )
 static int gr_internal_color_string(int x, int y, const char *s )
 {
 //a bitmap for the character
-grs_bitmap char_bm = {
-				0,0,0,0,		//x,y,w,h
-				BM_LINEAR,		//type
-				BM_FLAG_TRANSPARENT,	//flags
-				0,			//rowsize
-				NULL,			//data
-				0,			//avg_color
-				0			//unused
-};
+	grs_bitmap char_bm = {};
+	char_bm.bm_type = BM_LINEAR;
+	char_bm.bm_flags = BM_FLAG_TRANSPARENT;
 	unsigned char * fp;
 	const char *text_ptr, *next_row, *text_ptr1;
 	int width, spacing,letter;
@@ -488,8 +501,8 @@ grs_bitmap char_bm = {
 			else
 				fp = grd_curcanv->cv_font->ft_data + letter * BITS_TO_BYTES(width)*grd_curcanv->cv_font->ft_h;
 
-			gr_init_bitmap (&char_bm, BM_LINEAR, 0, 0, width, grd_curcanv->cv_font->ft_h, width, fp);
-			gr_bitmapm(xx,yy,&char_bm);
+			gr_init_bitmap(char_bm, BM_LINEAR, 0, 0, width, grd_curcanv->cv_font->ft_h, width, fp);
+			gr_bitmapm(xx,yy,char_bm);
 
 			xx += spacing;
 
@@ -502,17 +515,23 @@ grs_bitmap char_bm = {
 
 #else //OGL
 
-static int get_font_total_width(grs_font * font){
-	if (font->ft_flags & FT_PROPORTIONAL){
-		int i,w=0,c=font->ft_minchar;
-		for (i=0;c<=font->ft_maxchar;i++,c++){
-			if (font->ft_widths[i]<0)
-				Error("heh?\n");
-			w+=font->ft_widths[i];
+static int get_font_total_width(const grs_font &font)
+{
+	if (font.ft_flags & FT_PROPORTIONAL)
+	{
+		int w=0;
+		const auto b = &font.ft_widths[0];
+		const auto e = &font.ft_widths[font.ft_maxchar - font.ft_minchar + 1];
+		for (auto i = b; i != e; ++i)
+		{
+			auto v = *i;
+			if (v < 0)
+				throw std::underflow_error("negative width");
+			w += v;
 		}
 		return w;
 	}else{
-		return font->ft_w*(font->ft_maxchar-font->ft_minchar+1);
+		return font.ft_w*(font.ft_maxchar-font.ft_minchar+1);
 	}
 }
 
@@ -520,12 +539,12 @@ static void ogl_font_choose_size(grs_font * font,int gap,int *rw,int *rh){
 	int	nchars = font->ft_maxchar-font->ft_minchar+1;
 	int r,x,y,nc=0,smallest=999999,smallr=-1,tries;
 	int smallprop=10000;
-	int h,w;
-	for (h=32;h<=256;h*=2){
+	int w;
+	for (int h=32;h<=256;h*=2){
 //		h=pow2ize(font->ft_h*rows+gap*(rows-1));
 		if (font->ft_h>h)continue;
 		r=(h/(font->ft_h+gap));
-		w=pow2ize((get_font_total_width(font)+(nchars-r)*gap)/r);
+		w=pow2ize((get_font_total_width(*font)+(nchars-r)*gap)/r);
 		tries=0;
 		do {
 			if (tries)
@@ -587,7 +606,7 @@ static void ogl_init_font(grs_font * font)
 {
 	int oglflags = OGL_FLAG_ALPHA;
 	int	nchars = font->ft_maxchar-font->ft_minchar+1;
-	int i,w,h,tw,th,x,y,curx=0,cury=0;
+	int w,h,tw,th,curx=0,cury=0;
 	unsigned char *fp;
 	ubyte *data;
 	int gap=1; // x/y offset between the chars so we can filter
@@ -597,17 +616,17 @@ static void ogl_init_font(grs_font * font)
 	ogl_font_choose_size(font,gap,&tw,&th);
 	MALLOC(data, ubyte, tw*th);
 	memset(data, TRANSPARENCY_COLOR, tw * th); // map the whole data with transparency so we won't have borders if using gap
-	gr_init_bitmap(&font->ft_parent_bitmap,BM_LINEAR,0,0,tw,th,tw,data);
-	gr_set_transparent(&font->ft_parent_bitmap, 1);
+	gr_init_bitmap(font->ft_parent_bitmap,BM_LINEAR,0,0,tw,th,tw,data);
+	gr_set_transparent(font->ft_parent_bitmap, 1);
 
 	if (!(font->ft_flags & FT_COLOR))
 		oglflags |= OGL_FLAG_NOCOLOR;
-	ogl_init_texture(font->ft_parent_bitmap.gltexture = ogl_get_free_texture(), tw, th, oglflags); // have to init the gltexture here so the subbitmaps will find it.
+	ogl_init_texture(*(font->ft_parent_bitmap.gltexture = ogl_get_free_texture()), tw, th, oglflags); // have to init the gltexture here so the subbitmaps will find it.
 
-	MALLOC(font->ft_bitmaps, grs_bitmap, nchars);
+	font->ft_bitmaps = make_unique<grs_bitmap[]>(nchars);
 	h=font->ft_h;
 
-	for(i=0;i<nchars;i++)
+	for(int i=0;i<nchars;i++)
 	{
 		if (font->ft_flags & FT_PROPORTIONAL)
 			w=font->ft_widths[i];
@@ -632,11 +651,11 @@ static void ogl_init_font(grs_font * font)
 				fp = font->ft_chars[i];
 			else
 				fp = font->ft_data + i * w*h;
-			for (y=0;y<h;y++)
+			for (int y=0;y<h;y++)
 			{
-				for (x=0;x<w;x++)
+				for (int x=0;x<w;x++)
 				{
-					font->ft_parent_bitmap.bm_data[curx+x+(cury+y)*tw]=fp[x+y*w];
+					font->ft_parent_bitmap.get_bitmap_data()[curx+x+(cury+y)*tw] = fp[x+y*w];
 					// Let's call this a HACK:
 					// If we filter the fonts, the sliders will be messed up as the border pixels will have an
 					// alpha value while filtering. So the slider bitmaps will not look "connected".
@@ -651,11 +670,11 @@ static void ogl_init_font(grs_font * font)
 
 						// shift left border
 						if (x==0 && i != 99 && i != 102)
-							font->ft_parent_bitmap.bm_data[(curx+x+(cury+y)*tw)-1]=fp[x+y*w];
+							font->ft_parent_bitmap.get_bitmap_data()[(curx+x+(cury+y)*tw)-1] = fp[x+y*w];
 
 						// shift right border
 						if (x==w-1 && i != 100)
-							font->ft_parent_bitmap.bm_data[(curx+x+(cury+y)*tw)+1]=fp[x+y*w];
+							font->ft_parent_bitmap.get_bitmap_data()[(curx+x+(cury+y)*tw)+1] = fp[x+y*w];
 					}
 				}
 			}
@@ -667,9 +686,9 @@ static void ogl_init_font(grs_font * font)
 				fp = font->ft_chars[i];
 			else
 				fp = font->ft_data + i * BITS_TO_BYTES(w)*h;
-			for (y=0;y<h;y++){
+			for (int y=0;y<h;y++){
 				BitMask=0;
-				for (x=0; x< w; x++ )
+				for (int x=0; x< w; x++ )
 				{
 					if (BitMask==0) {
 						bits = *fp++;
@@ -677,17 +696,17 @@ static void ogl_init_font(grs_font * font)
 					}
 
 					if (bits & BitMask)
-						font->ft_parent_bitmap.bm_data[curx+x+(cury+y)*tw]=white;
+						font->ft_parent_bitmap.get_bitmap_data()[curx+x+(cury+y)*tw] = white;
 					else
-						font->ft_parent_bitmap.bm_data[curx+x+(cury+y)*tw]=255;
+						font->ft_parent_bitmap.get_bitmap_data()[curx+x+(cury+y)*tw] = 255;
 					BitMask >>= 1;
 				}
 			}
 		}
-		gr_init_sub_bitmap(&font->ft_bitmaps[i],&font->ft_parent_bitmap,curx,cury,w,h);
+		gr_init_sub_bitmap(font->ft_bitmaps[i],font->ft_parent_bitmap,curx,cury,w,h);
 		curx+=w+gap;
 	}
-	ogl_loadbmtexture_f(&font->ft_parent_bitmap, GameCfg.TexFilt);
+	ogl_loadbmtexture_f(font->ft_parent_bitmap, GameCfg.TexFilt);
 }
 
 static int ogl_internal_string(int x, int y, const char *s )
@@ -757,10 +776,10 @@ static int ogl_internal_string(int x, int y, const char *s )
 				ft_w = grd_curcanv->cv_font->ft_w;
 
 			if (grd_curcanv->cv_font->ft_flags&FT_COLOR)
-				ogl_ubitmapm_cs(xx,yy,FONTSCALE_X(ft_w),FONTSCALE_Y(grd_curcanv->cv_font->ft_h),&grd_curcanv->cv_font->ft_bitmaps[letter],-1,F1_0);
+				ogl_ubitmapm_cs(xx,yy,FONTSCALE_X(ft_w),FONTSCALE_Y(grd_curcanv->cv_font->ft_h),grd_curcanv->cv_font->ft_bitmaps[letter],-1,F1_0);
 			else{
 				if (grd_curcanv->cv_bitmap.bm_type==BM_OGL)
-					ogl_ubitmapm_cs(xx,yy,ft_w*(FONTSCALE_X(grd_curcanv->cv_font->ft_w)/grd_curcanv->cv_font->ft_w),FONTSCALE_Y(grd_curcanv->cv_font->ft_h),&grd_curcanv->cv_font->ft_bitmaps[letter],grd_curcanv->cv_font_fg_color,F1_0);
+					ogl_ubitmapm_cs(xx,yy,ft_w*(FONTSCALE_X(grd_curcanv->cv_font->ft_w)/grd_curcanv->cv_font->ft_w),FONTSCALE_Y(grd_curcanv->cv_font->ft_h),grd_curcanv->cv_font->ft_bitmaps[letter],grd_curcanv->cv_font_fg_color,F1_0);
 				else
 					Error("ogl_internal_string: non-color string to non-ogl dest\n");
 			}
@@ -919,7 +938,7 @@ void (gr_uprintf)( int x, int y, const char * format, ... )
 	va_list args;
 
 	va_start(args, format );
-	vsnprintf(buffer,sizeof(buffer),format,args);
+	vsprintf(buffer,format,args);
 	va_end(args);
 	gr_ustring( x, y, buffer );
 }
@@ -930,67 +949,52 @@ void (gr_printf)( int x, int y, const char * format, ... )
 	va_list args;
 
 	va_start(args, format );
-	vsnprintf(buffer,sizeof(buffer),format,args);
+	vsprintf(buffer,format,args);
 	va_end(args);
 	gr_string( x, y, buffer );
 }
 
-void gr_close_font( grs_font * font )
+void gr_close_font(std::unique_ptr<grs_font> font)
 {
 	if (font)
 	{
-		int fontnum;
-		char * font_data;
-
 		//find font in list
-		for (fontnum=0;fontnum<MAX_OPEN_FONTS && open_font[fontnum].ptr!=font;fontnum++);
-		Assert(fontnum<MAX_OPEN_FONTS);	//did we find slot?
-
-		font_data = open_font[fontnum].dataptr;
-		d_free( font_data );
-
-		open_font[fontnum].ptr = NULL;
-		open_font[fontnum].dataptr = NULL;
-
-		if ( font->ft_chars )
-			d_free( font->ft_chars );
+		auto e = end(open_font);
+		auto i = std::find_if(begin(open_font), e, [&font](const openfont &o) { return o.ptr == font.get(); });
+		if (i == e)
+			throw std::logic_error("closing non-open font");
 #ifdef OGL
-		if (font->ft_bitmaps)
-			d_free( font->ft_bitmaps );
-		gr_free_bitmap_data(&font->ft_parent_bitmap);
+		gr_free_bitmap_data(font->ft_parent_bitmap);
 #endif
-		d_free( font );
+		auto &f = *i;
+		f.dataptr.reset();
+		f.ptr = nullptr;
 	}
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
 //remap a font, re-reading its data & palette
-static void gr_remap_font( grs_font *font, const char * fontname, char *font_data );
+static void gr_remap_font( grs_font *font, const char * fontname, uint8_t *font_data );
 
 //remap (by re-reading) all the color fonts
 void gr_remap_color_fonts()
 {
-	int fontnum;
-
-	for (fontnum=0;fontnum<MAX_OPEN_FONTS;fontnum++) {
-		grs_font *font;
-
-		font = open_font[fontnum].ptr;
-
+	range_for (auto &i, open_font)
+	{
+		auto font = i.ptr;
 		if (font && (font->ft_flags & FT_COLOR))
-			gr_remap_font(font, open_font[fontnum].filename, open_font[fontnum].dataptr);
+			gr_remap_font(font, &i.filename[0], i.dataptr.get());
 	}
 }
 
 void gr_remap_mono_fonts()
 {
-	int fontnum;
 	con_printf (CON_DEBUG, "gr_remap_mono_fonts ()");
-	for (fontnum=0;fontnum<MAX_OPEN_FONTS;fontnum++) {
-		grs_font *font;
-		font = open_font[fontnum].ptr;
+	range_for (auto &i, open_font)
+	{
+		auto font = i.ptr;
 		if (font && !(font->ft_flags & FT_COLOR))
-			gr_remap_font(font, open_font[fontnum].filename, open_font[fontnum].dataptr);
+			gr_remap_font(font, &i.filename[0], i.dataptr.get());
 	}
 }
 #endif
@@ -1008,52 +1012,48 @@ static void grs_font_read(grs_font *gf, PHYSFS_file *fp)
 	gf->ft_maxchar = PHYSFSX_readByte(fp);
 	gf->ft_bytewidth = PHYSFSX_readShort(fp);
 	gf->ft_data = (ubyte *)((size_t)PHYSFSX_readInt(fp) - GRS_FONT_SIZE);
-	gf->ft_chars = (ubyte **)(size_t)PHYSFSX_readInt(fp);
+	PHYSFSX_readInt(fp);
 	gf->ft_widths = (short *)((size_t)PHYSFSX_readInt(fp) - GRS_FONT_SIZE);
 	gf->ft_kerndata = (ubyte *)((size_t)PHYSFSX_readInt(fp) - GRS_FONT_SIZE);
 }
 
-grs_font * gr_init_font( const char * fontname )
+grs_font_ptr gr_init_font( const char * fontname )
 {
-	grs_font *font;
-	char *font_data;
-	int i,fontnum;
 	unsigned char * ptr;
 	int nchars;
-	PHYSFS_file *fontfile;
 	char file_id[4];
 	int datasize;	//size up to (but not including) palette
 
 	//find free font slot
-	for (fontnum=0;fontnum<MAX_OPEN_FONTS && open_font[fontnum].ptr!=NULL;fontnum++);
-	Assert(fontnum<MAX_OPEN_FONTS);	//did we find one?
+	auto e = end(open_font);
+	auto i = std::find_if(begin(open_font), e, [](const openfont &o) { return o.ptr == NULL; });
+	if (i == e)
+		throw std::logic_error("too many open fonts");
+	auto &f = *i;
 
-	strncpy(open_font[fontnum].filename,fontname,FILENAME_LEN);
+	strncpy(&f.filename[0], fontname, FILENAME_LEN);
 
-	fontfile = PHYSFSX_openReadBuffered(fontname);
+	auto fontfile = PHYSFSX_openReadBuffered(fontname);
 
 	if (!fontfile) {
 		con_printf(CON_VERBOSE, "Can't open font file %s", fontname);
-		return NULL;
+		return {};
 	}
 
 	PHYSFS_read(fontfile, file_id, 4, 1);
 	if (memcmp( file_id, "PSFN", 4 )) {
 		con_printf(CON_NORMAL, "File %s is not a font file", fontname);
-		return NULL;
+		return {};
 	}
 
 	datasize = PHYSFSX_readInt(fontfile);
 	datasize -= GRS_FONT_SIZE; // subtract the size of the header.
 
-	MALLOC(font, grs_font, 1);
-	grs_font_read(font, fontfile);
+	auto font = make_unique<grs_font>();
+	grs_font_read(font.get(), fontfile);
 
-	MALLOC(font_data, char, datasize);
+	auto font_data = make_unique<uint8_t[]>(datasize);
 	PHYSFS_read(fontfile, font_data, 1, datasize);
-
-	open_font[fontnum].ptr = font;
-	open_font[fontnum].dataptr = font_data;
 
 	nchars = font->ft_maxchar - font->ft_minchar + 1;
 
@@ -1061,11 +1061,11 @@ grs_font * gr_init_font( const char * fontname )
 
 		font->ft_widths = (short *) &font_data[(size_t)font->ft_widths];
 		font->ft_data = (unsigned char *) &font_data[(size_t)font->ft_data];
-		MALLOC(font->ft_chars, unsigned char *, nchars);
+		font->ft_chars = make_unique<uint8_t *[]>(nchars);
 
 		ptr = font->ft_data;
 
-		for (i=0; i< nchars; i++ ) {
+		for (int i=0; i < nchars; i++ ) {
 			font->ft_widths[i] = INTEL_SHORT(font->ft_widths[i]);
 			font->ft_chars[i] = ptr;
 			if (font->ft_flags & FT_COLOR)
@@ -1076,8 +1076,8 @@ grs_font * gr_init_font( const char * fontname )
 
 	} else  {
 
-		font->ft_data   = (unsigned char *) font_data;
-		font->ft_chars  = NULL;
+		font->ft_data   = font_data.get();
+		font->ft_chars.reset();
 		font->ft_widths = NULL;
 
 		ptr = font->ft_data + (nchars * font->ft_w * font->ft_h);
@@ -1088,8 +1088,8 @@ grs_font * gr_init_font( const char * fontname )
 
 	if (font->ft_flags & FT_COLOR) {		//remap palette
 		palette_array_t palette;
-		ubyte colormap[256];
-		int freq[256];
+		array<uint8_t, 256> colormap;
+		array<unsigned, 256> freq;
 
 		PHYSFS_read(fontfile,&palette[0],sizeof(palette[0]),palette.size());		//read the palette
 
@@ -1099,29 +1099,27 @@ grs_font * gr_init_font( const char * fontname )
 
 		decode_data(font->ft_data, ptr - font->ft_data, colormap, freq );
 	}
-
-	PHYSFS_close(fontfile);
-
+	fontfile.reset();
 	//set curcanv vars
 
-	grd_curcanv->cv_font        = font;
+	grd_curcanv->cv_font        = font.get();
 	grd_curcanv->cv_font_fg_color    = 0;
 	grd_curcanv->cv_font_bg_color    = 0;
 
 #ifdef OGL
-	ogl_init_font(font);
+	ogl_init_font(font.get());
 #endif
 
-	return font;
+	f.ptr = font.get();
+	f.dataptr = move(font_data);
+	return grs_font_ptr(font.release());
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
 //remap a font by re-reading its data & palette
-void gr_remap_font( grs_font *font, const char * fontname, char *font_data )
+void gr_remap_font( grs_font *font, const char * fontname, uint8_t *font_data )
 {
-	int i;
 	int nchars;
-	PHYSFS_file *fontfile;
 	char file_id[4];
 	int datasize;        //size up to (but not including) palette
 	unsigned char *ptr;
@@ -1129,7 +1127,7 @@ void gr_remap_font( grs_font *font, const char * fontname, char *font_data )
 	if (! (font->ft_flags & FT_COLOR))
 		return;
 
-	fontfile = PHYSFSX_openReadBuffered(fontname);
+	auto fontfile = PHYSFSX_openReadBuffered(fontname);
 
 	if (!fontfile)
 		Error( "Can't open font file %s", fontname );
@@ -1141,7 +1139,7 @@ void gr_remap_font( grs_font *font, const char * fontname, char *font_data )
 	datasize = PHYSFSX_readInt(fontfile);
 	datasize -= GRS_FONT_SIZE; // subtract the size of the header.
 
-	d_free(font->ft_chars);
+	font->ft_chars.reset();
 	grs_font_read(font, fontfile); // have to reread in case mission hogfile overrides font.
 
 	PHYSFS_read(fontfile, font_data, 1, datasize);  //read raw data
@@ -1152,11 +1150,11 @@ void gr_remap_font( grs_font *font, const char * fontname, char *font_data )
 
 		font->ft_widths = (short *) &font_data[(size_t)font->ft_widths];
 		font->ft_data = (unsigned char *) &font_data[(size_t)font->ft_data];
-		MALLOC(font->ft_chars, unsigned char *, nchars);
+		font->ft_chars = make_unique<uint8_t *[]>(nchars);
 
 		ptr = font->ft_data;
 
-		for (i=0; i< nchars; i++ ) {
+		for (int i=0; i< nchars; i++ ) {
 			font->ft_widths[i] = INTEL_SHORT(font->ft_widths[i]);
 			font->ft_chars[i] = ptr;
 			if (font->ft_flags & FT_COLOR)
@@ -1168,7 +1166,7 @@ void gr_remap_font( grs_font *font, const char * fontname, char *font_data )
 	} else  {
 
 		font->ft_data   = (unsigned char *) font_data;
-		font->ft_chars  = NULL;
+		font->ft_chars.reset();
 		font->ft_widths = NULL;
 
 		ptr = font->ft_data + (nchars * font->ft_w * font->ft_h);
@@ -1179,8 +1177,8 @@ void gr_remap_font( grs_font *font, const char * fontname, char *font_data )
 
 	if (font->ft_flags & FT_COLOR) {		//remap palette
 		palette_array_t palette;
-		ubyte colormap[256];
-		int freq[256];
+		array<uint8_t, 256> colormap;
+		array<unsigned, 256> freq;
 
 		PHYSFS_read(fontfile,&palette[0],sizeof(palette[0]),palette.size());		//read the palette
 		build_colormap_good( palette, colormap, freq );
@@ -1190,20 +1188,14 @@ void gr_remap_font( grs_font *font, const char * fontname, char *font_data )
 		decode_data(font->ft_data, ptr - font->ft_data, colormap, freq );
 
 	}
-
-	PHYSFS_close(fontfile);
-
 #ifdef OGL
-	if (font->ft_bitmaps)
-		d_free( font->ft_bitmaps );
-	gr_free_bitmap_data(&font->ft_parent_bitmap);
-
+	gr_free_bitmap_data(font->ft_parent_bitmap);
 	ogl_init_font(font);
 #endif
 }
 #endif
 
-void gr_set_curfont( grs_font * n)
+void gr_set_curfont(const grs_font *n)
 {
 	grd_curcanv->cv_font = n;
 }
@@ -1218,7 +1210,7 @@ static int gr_internal_string_clipped(int x, int y, const char *s )
 {
 	unsigned char * fp;
 	const char * text_ptr, * next_row, * text_ptr1;
-	int r, BitMask, i, bits, width, spacing, letter, underline;
+	int BitMask,bits, width, spacing, letter, underline;
 	int x1 = x, last_x;
 
         bits = 0;
@@ -1236,7 +1228,7 @@ static int gr_internal_string_clipped(int x, int y, const char *s )
 
 		last_x = x;
 
-		for (r=0; r<grd_curcanv->cv_font->ft_h; r++)	{
+		for (int r=0; r<grd_curcanv->cv_font->ft_h; r++) {
 			text_ptr = text_ptr1;
 			x = last_x;
 
@@ -1282,7 +1274,7 @@ static int gr_internal_string_clipped(int x, int y, const char *s )
 					fp = grd_curcanv->cv_font->ft_data + letter * BITS_TO_BYTES(width)*grd_curcanv->cv_font->ft_h;
 
 				if (underline)	{
-					for (i=0; i< width; i++ )	{
+					for (int i=0; i< width; i++ ) {
 						gr_setcolor(grd_curcanv->cv_font_fg_color);
 						gr_pixel( x++, y );
 					}
@@ -1291,7 +1283,7 @@ static int gr_internal_string_clipped(int x, int y, const char *s )
 
 					BitMask = 0;
 
-					for (i=0; i< width; i++ )	{
+					for (int i=0; i< width; i++ ) {
 						if (BitMask==0) {
 							bits = *fp++;
 							BitMask = 0x80;
@@ -1319,7 +1311,7 @@ static int gr_internal_string_clipped_m(int x, int y, const char *s )
 {
 	unsigned char * fp;
 	const char * text_ptr, * next_row, * text_ptr1;
-	int r, BitMask, i, bits, width, spacing, letter, underline;
+	int BitMask,bits, width, spacing, letter, underline;
 	int x1 = x, last_x;
 
         bits = 0;
@@ -1337,7 +1329,7 @@ static int gr_internal_string_clipped_m(int x, int y, const char *s )
 
 		last_x = x;
 
-		for (r=0; r<grd_curcanv->cv_font->ft_h; r++)	{
+		for (int r=0; r<grd_curcanv->cv_font->ft_h; r++) {
 			x = last_x;
 
 			text_ptr = text_ptr1;
@@ -1384,7 +1376,7 @@ static int gr_internal_string_clipped_m(int x, int y, const char *s )
 					fp = grd_curcanv->cv_font->ft_data + letter * BITS_TO_BYTES(width)*grd_curcanv->cv_font->ft_h;
 
 				if (underline)	{
-					for (i=0; i< width; i++ )	{
+					for (int i=0; i< width; i++ ) {
 						gr_setcolor(grd_curcanv->cv_font_fg_color);
 						gr_pixel( x++, y );
 					}
@@ -1393,7 +1385,7 @@ static int gr_internal_string_clipped_m(int x, int y, const char *s )
 
 					BitMask = 0;
 
-					for (i=0; i< width; i++ )	{
+					for (int i=0; i< width; i++ ) {
 						if (BitMask==0) {
 							bits = *fp++;
 							BitMask = 0x80;

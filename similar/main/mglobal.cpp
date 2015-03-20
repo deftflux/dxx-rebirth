@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -25,11 +31,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "bm.h"
 #include "3d.h"
 #include "game.h"
-
+#include "textures.h"
 
 // Global array of vertices, common to one mine.
-vms_vector Vertices[MAX_VERTICES];
-g3s_point Segment_points[MAX_VERTICES];
+array<vertex, MAX_VERTICES> Vertices;
+array<g3s_point, MAX_VERTICES> Segment_points;
 
 fix FrameTime = 0x1000;	// Time since last frame, in seconds
 fix64 GameTime64 = 0;			//	Time in game, in seconds
@@ -38,18 +44,19 @@ int d_tick_count = 0; // increments every 50ms
 int d_tick_step = 0;  // true once every 50ms
 
 //	This is the global mine which create_new_mine returns.
-array<segment, MAX_SEGMENTS>	Segments;
+segment_array_t	Segments;
 //lsegment	Lsegments[MAX_SEGMENTS];
 
 // Number of vertices in current mine (ie, Vertices, pointed to by Vp)
-int		Num_vertices = 0;
-int		Num_segments = 0;
+unsigned Num_vertices;
+unsigned Num_segments;
 
-int		Highest_vertex_index=0;
-int		Highest_segment_index=0;
+unsigned Highest_vertex_index;
 
 //	Translate table to get opposite side of a face on a segment.
-const char	Side_opposite[MAX_SIDES_PER_SEGMENT] = {WRIGHT, WBOTTOM, WLEFT, WTOP, WFRONT, WBACK};
+const array<char, MAX_SIDES_PER_SEGMENT> Side_opposite{{
+	WRIGHT, WBOTTOM, WLEFT, WTOP, WFRONT, WBACK
+}};
 
 #define TOLOWER(c) ((((c)>='A') && ((c)<='Z'))?((c)+('a'-'A')):(c))
 
@@ -62,29 +69,26 @@ const char	Side_opposite[MAX_SIDES_PER_SEGMENT] = {WRIGHT, WBOTTOM, WLEFT, WTOP,
 #define encrypt(a,b,c,d) a,b,c,d
 #endif
 
-const sbyte Side_to_verts[MAX_SIDES_PER_SEGMENT][4] = {
+const array<array<sbyte, 4>, MAX_SIDES_PER_SEGMENT> Side_to_verts{{
 			{ encrypt(7,6,2,3) },			// left
 			{ encrypt(0,4,7,3) },			// top
 			{ encrypt(0,1,5,4) },			// right
 			{ encrypt(2,6,5,1) },			// bottom
 			{ encrypt(4,5,6,7) },			// back
 			{ encrypt(3,2,1,0) },			// front
-};		
+}};
 
 //	Note, this MUST be the same as Side_to_verts, it is an int for speed reasons.
-const int Side_to_verts_int[MAX_SIDES_PER_SEGMENT][4] = {
+const array<array<int, 4>, MAX_SIDES_PER_SEGMENT>  Side_to_verts_int{{
 			{ encrypt(7,6,2,3) },			// left
 			{ encrypt(0,4,7,3) },			// top
 			{ encrypt(0,1,5,4) },			// right
 			{ encrypt(2,6,5,1) },			// bottom
 			{ encrypt(4,5,6,7) },			// back
 			{ encrypt(3,2,1,0) },			// front
-};		
+}};
 
 // Texture map stuff
-
-int NumTextures = 0;
-bitmap_index Textures[MAX_TEXTURES];		// All textures.
 
 fix64	Next_laser_fire_time;			//	Time at which player can next fire his selected laser.
 fix64	Next_missile_fire_time;			//	Time at which player can next fire his selected missile.

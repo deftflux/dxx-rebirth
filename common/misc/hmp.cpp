@@ -1,10 +1,17 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  * This code handles HMP files. It can:
  * - Open/read/close HMP files
  * - Play HMP via Windows MIDI
  * - Convert HMP to MIDI for further use
  * Based on work of Arne de Bruijn and the JFFEE project
  */
+#include <stdexcept>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -13,6 +20,10 @@
 #include "u_mem.h"
 #include "console.h"
 #include "timer.h"
+#include "serial.h"
+
+#include "dxxsconf.h"
+#include "compiler-make_unique.h"
 
 #ifdef WORDS_BIGENDIAN
 #define MIDIINT(x) (x)
@@ -30,115 +41,76 @@ void hmp_stop(hmp_file *hmp);
 
 // READ/OPEN/CLOSE HMP
 
-void hmp_close(hmp_file *hmp)
+hmp_file::~hmp_file()
 {
-	int i;
-
 #ifdef _WIN32
-	hmp_stop(hmp);
+	hmp_stop(this);
 #endif
-	for (i = 0; i < hmp->num_trks; i++)
-		if (hmp->trks[i].data)
-			d_free(hmp->trks[i].data);
-	d_free(hmp);
 }
 
-hmp_file *hmp_open(const char *filename) {
-	int i, data, num_tracks, tempo;
+std::unique_ptr<hmp_file> hmp_open(const char *filename) {
+	int data, num_tracks, tempo;
 	char buf[256];
-	PHYSFS_file *fp;
-	hmp_file *hmp;
-	unsigned char *p;
+	auto fp = PHYSFSX_openReadBuffered(filename);
 
-	if (!(fp = PHYSFSX_openReadBuffered(filename)))
+	if (!fp)
 		return NULL;
 
-	CALLOC(hmp, hmp_file, 1);
-	if (!hmp) {
-		PHYSFS_close(fp);
-		return NULL;
-	}
-
+	std::unique_ptr<hmp_file> hmp(new hmp_file{});
 	if ((PHYSFS_read(fp, buf, 1, 8) != 8) || (memcmp(buf, "HMIMIDIP", 8)))
 	{
-		PHYSFS_close(fp);
-		hmp_close(hmp);
 		return NULL;
 	}
 
 	if (PHYSFSX_fseek(fp, 0x30, SEEK_SET))
 	{
-		PHYSFS_close(fp);
-		hmp_close(hmp);
 		return NULL;
 	}
 
 	if (PHYSFS_read(fp, &num_tracks, 4, 1) != 1)
 	{
-		PHYSFS_close(fp);
-		hmp_close(hmp);
 		return NULL;
 	}
 
 	if ((num_tracks < 1) || (num_tracks > HMP_TRACKS))
 	{
-		PHYSFS_close(fp);
-		hmp_close(hmp);
 		return NULL;
 	}
 	hmp->num_trks = num_tracks;
 
 	if (PHYSFSX_fseek(fp, 0x38, SEEK_SET))
 	{
-		PHYSFS_close(fp);
-		hmp_close(hmp);
 		return NULL;
 	}
 	if (PHYSFS_read(fp, &tempo, 4, 1) != 1)
 	{
-		PHYSFS_close(fp);
-		hmp_close(hmp);
 		return NULL;
 	}
 	hmp->tempo = INTEL_INT(tempo);
 
 	if (PHYSFSX_fseek(fp, 0x308, SEEK_SET))
 	{
-		PHYSFS_close(fp);
-		hmp_close(hmp);
 		return NULL;
 	}
 
-	for (i = 0; i < num_tracks; i++) {
+	for (int i = 0; i < num_tracks; i++) {
 		if ((PHYSFSX_fseek(fp, 4, SEEK_CUR)) || (PHYSFS_read(fp, &data, 4, 1) != 1))
 		{
-			PHYSFS_close(fp);
-			hmp_close(hmp);
 			return NULL;
 		}
 
 		data -= 12;
 		hmp->trks[i].len = data;
 
-		MALLOC(p, unsigned char, data);
-		if (!(hmp->trks[i].data = p))
-		{
-			PHYSFS_close(fp);
-			hmp_close(hmp);
-			return NULL;
-		}
-
+		hmp->trks[i].data = make_unique<uint8_t[]>(data);
 		/* finally, read track data */
-		if ((PHYSFSX_fseek(fp, 4, SEEK_CUR)) || (PHYSFS_read(fp, p, data, 1) != 1))
+		if ((PHYSFSX_fseek(fp, 4, SEEK_CUR)) || (PHYSFS_read(fp, hmp->trks[i].data.get(), data, 1) != 1))
 		{
-			PHYSFS_close(fp);
-			hmp_close(hmp);
 			return NULL;
 		}
 		hmp->trks[i].loop_set = 0;
 	}
 	hmp->filesize = PHYSFS_fileLength(fp);
-	PHYSFS_close(fp);
 	return hmp;
 }
 
@@ -315,9 +287,7 @@ static int fill_buffer(hmp_file *hmp) {
 	unsigned int *p = (unsigned int *)(mhdr->lpData + mhdr->dwBytesRecorded);
 	unsigned int *pend = (unsigned int *)(mhdr->lpData + mhdr->dwBufferLength);
 	unsigned int i;
-	event ev;
-
-	memset(&ev, 0, sizeof(event));
+	event ev{};
 
 	while (p + 4 <= pend) {
 		if (hmp->pending_size) {
@@ -353,11 +323,10 @@ static int fill_buffer(hmp_file *hmp) {
 }
 
 static int setup_buffers(hmp_file *hmp) {
-	int i;
 	MIDIHDR *buf, *lastbuf;
 
 	lastbuf = NULL;
-	for (i = 0; i < HMP_BUFFERS; i++) {
+	for (int i = 0; i < HMP_BUFFERS; i++) {
 		if (!(buf = (MIDIHDR *)d_malloc(HMP_BUFSIZE + sizeof(MIDIHDR))))
 			return HMP_OUT_OF_MEM;
 		memset(buf, 0, sizeof(MIDIHDR));
@@ -373,13 +342,11 @@ static int setup_buffers(hmp_file *hmp) {
 
 static void reset_tracks(struct hmp_file *hmp)
 {
-	int i;
-
-	for (i = 0; i < hmp->num_trks; i++) {
+	for (int i = 0; i < hmp->num_trks; i++) {
 		if (hmp->trks[i].loop_set)
 			hmp->trks[i].cur = hmp->trks[i].loop;
 		else
-			hmp->trks[i].cur = hmp->trks[i].data;
+			hmp->trks[i].cur = hmp->trks[i].data.get();
 		hmp->trks[i].left = hmp->trks[i].len;
 		hmp->trks[i].cur_time = 0;
 	}
@@ -436,10 +403,8 @@ static void setup_tempo(hmp_file *hmp, unsigned long tempo) {
 
 void hmp_setvolume(hmp_file *hmp, int volume)
 {
-	int channel;
-
 	if (hmp)
-		for (channel = 0; channel < 16; channel++)
+		for (int channel = 0; channel < 16; channel++)
 			midiOutShortMsg((HMIDIOUT)hmp->hmidi, (DWORD)(channel | MIDI_CONTROL_CHANGE << 4 | MIDI_VOLUME << 8 | (channel_volume[channel] * volume / MIDI_VOLUME_SCALE) << 16));
 
 	midi_volume = volume;
@@ -458,7 +423,7 @@ int hmp_play(hmp_file *hmp, int bLoop)
 
 	if ((rc = setup_buffers(hmp)))
 		return rc;
-	if ((midiStreamOpen(&hmp->hmidi, &hmp->devid,1, (DWORD_PTR) midi_callback, 0, CALLBACK_FUNCTION)) != MMSYSERR_NOERROR) {
+	if ((midiStreamOpen(&hmp->hmidi, &hmp->devid,1, (DWORD) (size_t) midi_callback, 0, CALLBACK_FUNCTION)) != MMSYSERR_NOERROR) {
 		hmp->hmidi = NULL;
 		return HMP_MM_ERR;
 	}
@@ -512,7 +477,6 @@ void hmp_reset()
 	HMIDIOUT hmidi;
 	MIDIHDR mhdr;
 	MMRESULT rval;
-	int channel;
 	char GS_Reset[] = { 0xF0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, 0xF7 };
 
 
@@ -542,7 +506,7 @@ void hmp_reset()
 		return;
 	}
 
-	for (channel = 0; channel < 16; channel++)
+	for (int channel = 0; channel < 16; channel++)
 	{
 		midiOutShortMsg(hmidi, (DWORD)(channel | MIDI_CONTROL_CHANGE << 4 | MIDI_ALL_SOUNDS_OFF << 8 | 0 << 16));
 		midiOutShortMsg(hmidi, (DWORD)(channel | MIDI_CONTROL_CHANGE << 4 | MIDI_RESET_ALL_CONTROLLERS << 8 | 0 << 16));
@@ -568,8 +532,8 @@ void hmp_reset()
 			fix64 wait_done = timer_query();
 			while (!(mhdr.dwFlags & MHDR_DONE))
 			{
-				timer_update();
-				if (timer_query() >= wait_done + F1_0)
+				auto timer = timer_update();
+				if (timer >= wait_done + F1_0)
 				{
 					con_printf(CON_DEBUG, "hmp_reset: Timeout waiting for MHDR_DONE");
 					break;
@@ -620,7 +584,7 @@ void hmp_reset()
 		}
 	}
 
-	for (channel = 0; channel < 16; channel++)
+	for (int channel = 0; channel < 16; channel++)
 		midiOutShortMsg(hmidi, (DWORD)(channel | MIDI_CONTROL_CHANGE << 4 | MIDI_VOLUME << 8 | (100 * midi_volume / MIDI_VOLUME_SCALE) << 16));
 	midiOutClose(hmidi);
 }
@@ -628,21 +592,18 @@ void hmp_reset()
 
 // CONVERSION FROM HMP TO MIDI
 
-static unsigned int hmptrk2mid(ubyte* data, int size, unsigned char **midbuf, unsigned int *midlen)
+static void hmptrk2mid(ubyte* data, int size, std::vector<uint8_t> &midbuf)
 {
 	ubyte *dptr = data;
 	ubyte lc1 = 0,last_com = 0;
 	uint d;
-	int n1, n2;
-	unsigned int offset = *midlen;
+	int n1;
 
 	while (data < dptr + size)
 	{
 		if (data[0] & 0x80) {
 			ubyte b = (data[0] & 0x7F);
-			*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + 1);
-			memcpy(&(*midbuf)[*midlen], &b, 1);
-			*midlen += 1;
+			midbuf.emplace_back(b);
 		}
 		else {
 			d = (data[0] & 0x7F);
@@ -655,31 +616,27 @@ static unsigned int hmptrk2mid(ubyte* data, int size, unsigned char **midbuf, un
 			while ((data[n1] & 0x80) == 0) {
 				n1++;
 				if (n1 == 4)
-					return 0;
+					throw std::runtime_error("bad HMP");
 				}
-			for(n2 = 0; n2 <= n1; n2++) {
+			for(int n2 = 0; n2 <= n1; n2++) {
 				ubyte b = (data[n1 - n2] & 0x7F);
 
 				if (n2 != n1)
 					b |= 0x80;
-				*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + 1);
-				memcpy(&(*midbuf)[*midlen], &b, 1);
-				*midlen += 1;
+				midbuf.emplace_back(b);
 				}
 			data += n1;
 		}
 		data++;
 		if (*data == 0xFF) { //meta?
-			*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + 3 + data[2]);
-			memcpy(&(*midbuf)[*midlen], data, 3 + data[2]);
-			*midlen += 3 + data[2];
+			midbuf.insert(midbuf.end(), data, data + 3 + data[2]);
 			if (data[1] == 0x2F)
 				break;
 		}
 		else {
 			lc1=data[0] ;
 			if ((lc1&0x80) == 0)
-				return 0;
+				throw std::runtime_error("bad HMP");
 			switch (lc1 & 0xF0) {
 				case 0x80:
 				case 0x90:
@@ -688,92 +645,71 @@ static unsigned int hmptrk2mid(ubyte* data, int size, unsigned char **midbuf, un
 				case 0xE0:
 					if (lc1 != last_com)
 					{
-						*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + 1);
-						memcpy(&(*midbuf)[*midlen], &lc1, 1);
-						*midlen += 1;
+						midbuf.emplace_back(lc1);
 					}
-					*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + 2);
-					memcpy(&(*midbuf)[*midlen], data + 1, 2);
-					*midlen += 2;
+					midbuf.insert(midbuf.end(), data + 1, data + 3);
 					data += 3;
 					break;
 				case 0xC0:
 				case 0xD0:
 					if (lc1 != last_com)
 					{
-						*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + 1);
-						memcpy(&(*midbuf)[*midlen], &lc1, 1);
-						*midlen += 1;
+						midbuf.emplace_back(lc1);
 					}
-					*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + 1);
-					memcpy(&(*midbuf)[*midlen], data + 1, 1);
-					*midlen += 1;
+					midbuf.emplace_back(data[1]);
 					data += 2;
 					break;
 				default:
-					return 0;
+					throw std::runtime_error("bad HMP");
 				}
 			last_com = lc1;
 		}
 	}
-	return (*midlen - offset);
 }
 
-static const ubyte tempo [19] = {'M','T','r','k',0,0,0,11,0,0xFF,0x51,0x03,0x18,0x80,0x00,0,0xFF,0x2F,0};
-
-void hmp2mid(const char *hmp_name, unsigned char **midbuf, unsigned int *midlen)
+struct be_bytebuffer_t : serial::writer::bytebuffer_t
 {
-	int mi, i;
-	short ms, time_div = 0xC0;
-	hmp_file *hmp=NULL;
+	be_bytebuffer_t(pointer u) : bytebuffer_t(u) {}
+	static uint16_t endian() { return big_endian; }
+};
 
-	hmp = hmp_open(hmp_name);
-	if (hmp == NULL)
+const array<uint8_t, 4> magic_header{{'M', 'T', 'h', 'd'}};
+const array<uint8_t, 19> tempo{{'M','T','r','k',0,0,0,11,0,0xFF,0x51,0x03,0x18,0x80,0x00,0,0xFF,0x2F,0}};
+const array<uint8_t, 8> track_header{{'M', 'T', 'r', 'k', 0, 0, 0, 0}};
+
+struct midhdr
+{
+	int16_t num_trks;
+	int16_t time_div;
+	midhdr(hmp_file *hmp) :
+		num_trks(hmp->num_trks), time_div(hmp->tempo*1.6)
+	{
+	}
+};
+
+DEFINE_SERIAL_CONST_UDT_TO_MESSAGE(midhdr, m, (magic_header, static_cast<int32_t>(6), static_cast<int16_t>(1), m.num_trks, m.time_div, tempo));
+
+void hmp2mid(const char *hmp_name, std::vector<uint8_t> &midbuf)
+{
+	std::unique_ptr<hmp_file> hmp = hmp_open(hmp_name);
+	if (!hmp)
 		return;
 
-	*midlen = 0;
-	time_div = hmp->tempo*1.6;
-
+	const midhdr mh(hmp.get());
 	// write MIDI-header
-	*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + 4);
-	memcpy(&(*midbuf)[*midlen], "MThd", 4);
-	*midlen += 4;
-	mi = MIDIINT(6);
-	*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + sizeof(mi));
-	memcpy(&(*midbuf)[*midlen], &mi, sizeof(mi));
-	*midlen += sizeof(mi);
-	ms = MIDISHORT((short)1);
-	*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + sizeof(ms));
-	memcpy(&(*midbuf)[*midlen], &ms, sizeof(ms));
-	*midlen += sizeof(ms);
-	ms = MIDIINT(hmp->num_trks);
-	*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + sizeof(ms));
-	memcpy(&(*midbuf)[*midlen], &ms, sizeof(ms));
-	*midlen += sizeof(ms);
-	ms = MIDISHORT(time_div);
-	*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + sizeof(ms));
-	memcpy(&(*midbuf)[*midlen], &ms, sizeof(ms));
-	*midlen += sizeof(ms);
-	*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + sizeof(tempo));
-	memcpy(&(*midbuf)[*midlen], &tempo, sizeof(tempo));
-	*midlen += sizeof(tempo);
+	midbuf.resize(serial::message_type<decltype(mh)>::maximum_size);
+	be_bytebuffer_t bb(&midbuf[0]);
+	serial::process_buffer(bb, mh);
 
 	// tracks
-	for (i = 1; i < hmp->num_trks; i++)
+	for (int i = 1; i < hmp->num_trks; i++)
 	{
-		int midtrklenpos = 0;
-
-		*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + 4);
-		memcpy(&(*midbuf)[*midlen], "MTrk", 4);
-		*midlen += 4;
-		midtrklenpos = *midlen;
-		mi = 0;
-		*midbuf = (unsigned char *) d_realloc(*midbuf, *midlen + sizeof(mi));
-		*midlen += sizeof(mi);
-		mi = hmptrk2mid(hmp->trks[i].data, hmp->trks[i].len, midbuf, midlen);
-		mi = MIDIINT(mi);
-		memcpy(&(*midbuf)[midtrklenpos], &mi, 4);
+		midbuf.insert(midbuf.end(), track_header.begin(), track_header.end());
+		auto size_before = midbuf.size();
+		auto midtrklenpos = midbuf.size() - 4;
+		hmptrk2mid(hmp->trks[i].data.get(), hmp->trks[i].len, midbuf);
+		auto size_after = midbuf.size();
+		be_bytebuffer_t bbmi(&midbuf[midtrklenpos]);
+		serial::process_buffer(bbmi, static_cast<int32_t>(size_after - size_before));
 	}
-
-	hmp_close(hmp);
 }

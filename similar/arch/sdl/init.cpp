@@ -1,3 +1,9 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 // Holds the main init and de-init functions for arch-related program parts
 
 #include <SDL.h>
@@ -43,10 +49,8 @@ void arch_init(void)
 	key_init();
 
 	int system = SDLAUDIO_SYSTEM;
-#ifdef USE_SDLMIXER
 	if (!GameArg.SndDisableSdlMixer)
 		system = SDLMIXER_SYSTEM;
-#endif
 	digi_select_system( system );
 
 	if (!GameArg.SndNoSound)

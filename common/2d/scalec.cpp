@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -13,39 +19,33 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #include <stdlib.h>
 #include "rle.h"
+#include "compiler-array.h"
 
 // John's new stuff below here....
 
-int scale_error_term;
-int scale_initial_pixel_count;
-int scale_adj_up;
-int scale_adj_down;
-int scale_final_pixel_count;
-int scale_ydelta_minus_1;
-int scale_whole_step;
-ubyte * scale_source_ptr;
-ubyte * scale_dest_ptr;
-
-
-ubyte scale_rle_data[640];
+static int scale_error_term;
+static int scale_initial_pixel_count;
+static int scale_adj_up;
+static int scale_adj_down;
+static int scale_final_pixel_count;
+static int scale_ydelta_minus_1;
+static int scale_whole_step;
 
 static void rls_stretch_scanline_setup( int XDelta, int YDelta );
-static void rls_stretch_scanline(void);
+static void rls_stretch_scanline(const uint8_t *, uint8_t *);
 
-static void decode_row( grs_bitmap * bmp, int y )
+static void decode_row(const grs_bitmap &bmp, array<ubyte, 640> &scale_rle_data, const uint_fast32_t y)
 {
-	int i, offset=4+bmp->bm_h;
+	int offset=4+bmp.bm_h;
 
-	for (i=0; i<y; i++ )
-		offset += bmp->bm_data[4+i];
-	gr_rle_decode( &bmp->bm_data[offset], scale_rle_data );
+	for (uint_fast32_t i = 0; i != y; ++i)
+		offset += bmp.bm_data[4+i];
+	gr_rle_decode({&bmp.bm_data[offset], begin(scale_rle_data)}, rle_end(bmp, scale_rle_data));
 }
 
-static void scale_up_bitmap(grs_bitmap *source_bmp, grs_bitmap *dest_bmp, int x0, int y0, int x1, int y1, fix u0, fix v0,  fix u1, fix v1, int orientation  )
+static void scale_up_bitmap(const grs_bitmap &source_bmp, grs_bitmap &dest_bmp, int x0, int y0, int x1, int y1, fix u0, fix v0,  fix u1, fix v1, int orientation  )
 {
 	fix dv, v;
-	int y;
-
 	if (orientation & 1) {
 		int	t;
 		t = u0;	u0 = u1;	u1 = t;
@@ -67,21 +67,16 @@ static void scale_up_bitmap(grs_bitmap *source_bmp, grs_bitmap *dest_bmp, int x0
 
 	v = v0;
 
-	for (y=y0; y<=y1; y++ )			{
-		scale_source_ptr = &source_bmp->bm_data[source_bmp->bm_rowsize*f2i(v)+f2i(u0)];
-		scale_dest_ptr = &dest_bmp->bm_data[dest_bmp->bm_rowsize*y+x0];
-		rls_stretch_scanline();
+	for (int y=y0; y<=y1; y++ ) {
+		rls_stretch_scanline(&source_bmp.get_bitmap_data()[source_bmp.bm_rowsize*f2i(v)+f2i(u0)], &dest_bmp.get_bitmap_data()[dest_bmp.bm_rowsize*y+x0]);
 		v += dv;
 	}
 }
 
-
-
-
-static void scale_up_bitmap_rle(grs_bitmap *source_bmp, grs_bitmap *dest_bmp, int x0, int y0, int x1, int y1, fix u0, fix v0,  fix u1, fix v1, int orientation  )
+static void scale_up_bitmap_rle(const grs_bitmap &source_bmp, grs_bitmap &dest_bmp, int x0, int y0, int x1, int y1, fix u0, fix v0,  fix u1, fix v1, int orientation  )
 {
 	fix dv, v;
-	int y, last_row = -1;
+	int last_row = -1;
 
 	if (orientation & 1) {
 		int	t;
@@ -102,14 +97,13 @@ static void scale_up_bitmap_rle(grs_bitmap *source_bmp, grs_bitmap *dest_bmp, in
 
 	v = v0;
 
-	for (y=y0; y<=y1; y++ )			{
+	array<ubyte, 640> scale_rle_data;
+	for (int y=y0; y<=y1; y++ ) {
 		if ( f2i(v) != last_row )	{
 			last_row = f2i(v);
-			decode_row( source_bmp, last_row );
+			decode_row(source_bmp, scale_rle_data, last_row );
 		}
-		scale_source_ptr = &scale_rle_data[f2i(u0)];
-		scale_dest_ptr = &dest_bmp->bm_data[dest_bmp->bm_rowsize*y+x0];
-		rls_stretch_scanline( );
+		rls_stretch_scanline(&scale_rle_data[f2i(u0)], &dest_bmp.get_bitmap_data()[dest_bmp.bm_rowsize*y+x0]);
 		v += dv;
 	}
 }
@@ -159,14 +153,14 @@ static void rls_stretch_scanline_setup( int XDelta, int YDelta )
 
 }
 
-static void rls_stretch_scanline( )
+static void rls_stretch_scanline(const uint8_t *scale_source_ptr, uint8_t *scale_dest_ptr)
 {
-	ubyte   c, *src_ptr, *dest_ptr;
-	int i, j, len, ErrorTerm, initial_count, final_count;
+	ubyte   c, *dest_ptr;
+	int len, ErrorTerm, initial_count, final_count;
 
 	// Draw the first, partial run of pixels
 
-	src_ptr = scale_source_ptr;
+	auto src_ptr = scale_source_ptr;
 	dest_ptr = scale_dest_ptr;
 	ErrorTerm = scale_error_term;
 	initial_count = scale_initial_pixel_count;
@@ -174,7 +168,7 @@ static void rls_stretch_scanline( )
 
 	c = *src_ptr++;
 	if ( c != TRANSPARENCY_COLOR ) {
-		for (i=0; i<initial_count; i++ )
+		for (int i=0; i<initial_count; i++ )
 			*dest_ptr++ = c;
 	} else {
 		dest_ptr += initial_count;
@@ -182,7 +176,7 @@ static void rls_stretch_scanline( )
 
 	// Draw all full runs
 
-	for (j=0; j<scale_ydelta_minus_1; j++) {
+	for (int j=0; j<scale_ydelta_minus_1; j++) {
 		len = scale_whole_step;     // run is at least this long
 
  		// Advance the error term and add an extra pixel if the error term so indicates
@@ -194,7 +188,7 @@ static void rls_stretch_scanline( )
 		// Draw this run o' pixels
 		c = *src_ptr++;
 		if ( c != TRANSPARENCY_COLOR )  {
-			for (i=len; i>0; i-- )
+			for (int i=len; i>0; i-- )
 				*dest_ptr++ = c;
 		} else {
 			dest_ptr += len;
@@ -204,7 +198,7 @@ static void rls_stretch_scanline( )
 	// Draw the final run of pixels
 	c = *src_ptr++;
 	if ( c != TRANSPARENCY_COLOR ) {
-		for (i=0; i<final_count; i++ )
+		for (int i=0; i<final_count; i++ )
 			*dest_ptr++ = c;
 	} else {
 		dest_ptr += final_count;
@@ -213,11 +207,9 @@ static void rls_stretch_scanline( )
 
 // old stuff here...
 
-static void scale_bitmap_c(grs_bitmap *source_bmp, grs_bitmap *dest_bmp, int x0, int y0, int x1, int y1, fix u0, fix v0,  fix u1, fix v1, int orientation  )
+static void scale_bitmap_c(const grs_bitmap &source_bmp, grs_bitmap &dest_bmp, int x0, int y0, int x1, int y1, fix u0, fix v0,  fix u1, fix v1, int orientation  )
 {
 	fix u, v, du, dv;
-	int x, y;
-	ubyte * sbits, * dbits, c;
 
 	du = (u1-u0) / (x1-x0);
 	dv = (v1-v0) / (y1-y0);
@@ -236,13 +228,13 @@ static void scale_bitmap_c(grs_bitmap *source_bmp, grs_bitmap *dest_bmp, int x0,
 
 	v = v0;
 
-	for (y=y0; y<=y1; y++ )			{
-		sbits = &source_bmp->bm_data[source_bmp->bm_rowsize*f2i(v)];
-		dbits = &dest_bmp->bm_data[dest_bmp->bm_rowsize*y+x0];
+	for (int y=y0; y<=y1; y++ ) {
+		auto sbits = &source_bmp.get_bitmap_data()[source_bmp.bm_rowsize*f2i(v)];
+		auto dbits = &dest_bmp.get_bitmap_data()[dest_bmp.bm_rowsize*y+x0];
 		u = u0;
 		v += dv;
-		for (x=x0; x<=x1; x++ )			{
-			c = sbits[u >> 16];
+		for (int x=x0; x<=x1; x++ ) {
+			auto c = sbits[u >> 16];
 			if (c != TRANSPARENCY_COLOR)
 				*dbits = c;
 			dbits++;
@@ -251,9 +243,8 @@ static void scale_bitmap_c(grs_bitmap *source_bmp, grs_bitmap *dest_bmp, int x0,
 	}
 }
 
-static void scale_row_transparent( ubyte * sbits, ubyte * dbits, int width, fix u, fix du )
+static void scale_row_transparent(const array<ubyte, 640> &sbits, ubyte * dbits, int width, fix u, fix du )
 {
-	int i;
 	ubyte c;
 	ubyte *dbits_end = &dbits[width-1];
 
@@ -298,7 +289,7 @@ NonTransparent:
 
 
 	} else {
-		for ( i=0; i<width; i++ )	{
+		for ( int i=0; i<width; i++ ) {
 			c = sbits[ f2i(u) ];
 
 			if ( c != TRANSPARENCY_COLOR )
@@ -310,10 +301,10 @@ NonTransparent:
 	}
 }
 
-static void scale_bitmap_c_rle(grs_bitmap *source_bmp, grs_bitmap *dest_bmp, int x0, int y0, int x1, int y1, fix u0, fix v0,  fix u1, fix v1, int orientation  )
+static void scale_bitmap_c_rle(const grs_bitmap &source_bmp, grs_bitmap &dest_bmp, int x0, int y0, int x1, int y1, fix u0, fix v0,  fix u1, fix v1, int orientation  )
 {
 	fix du, dv, v;
-	int y, last_row=-1;
+	int last_row=-1;
 
 //	Rotation doesn't work because explosions are not square!
 // -- 	if (orientation & 4) {
@@ -344,12 +335,13 @@ static void scale_bitmap_c_rle(grs_bitmap *source_bmp, grs_bitmap *dest_bmp, int
 		return;
 	}
 
-	for (y=y0; y<=y1; y++ )			{
+	array<ubyte, 640> scale_rle_data;
+	for (int y=y0; y<=y1; y++ ) {
 		if ( f2i(v) != last_row )	{
 			last_row = f2i(v);
-			decode_row( source_bmp, last_row );
+			decode_row(source_bmp, scale_rle_data, last_row );
 		}
-		scale_row_transparent( scale_rle_data, &dest_bmp->bm_data[dest_bmp->bm_rowsize*y+x0], x1-x0+1, u0, du );
+		scale_row_transparent( scale_rle_data, &dest_bmp.get_bitmap_data()[dest_bmp.bm_rowsize*y+x0], x1-x0+1, u0, du );
 		v += dv;
 	}
 }
@@ -357,9 +349,9 @@ static void scale_bitmap_c_rle(grs_bitmap *source_bmp, grs_bitmap *dest_bmp, int
 #define FIND_SCALED_NUM(x,x0,x1,y0,y1) (fixmuldiv((x)-(x0),(y1)-(y0),(x1)-(x0))+(y0))
 
 // Scales bitmap, bp, into vertbuf[0] to vertbuf[1]
-void scale_bitmap(grs_bitmap *bp, grs_point *vertbuf, int orientation )
+void scale_bitmap(const grs_bitmap &bp, const array<grs_point, 3> &vertbuf, int orientation )
 {
-	grs_bitmap * dbp = &grd_curcanv->cv_bitmap;
+	auto &dbp = grd_curcanv->cv_bitmap;
 	fix x0, y0, x1, y1;
 	fix u0, v0, u1, v1;
 	fix clipped_x0, clipped_y0, clipped_x1, clipped_y1;
@@ -373,10 +365,10 @@ void scale_bitmap(grs_bitmap *bp, grs_point *vertbuf, int orientation )
 	x1 = vertbuf[2].x; y1 = vertbuf[2].y;
 
 	xmin = 0; ymin = 0;
-	xmax = i2f(dbp->bm_w)-fl2f(.5); ymax = i2f(dbp->bm_h)-fl2f(.5);
+	xmax = i2f(dbp.bm_w)-fl2f(.5); ymax = i2f(dbp.bm_h)-fl2f(.5);
 
 	u0 = i2f(0); v0 = i2f(0);
-	u1 = i2f(bp->bm_w-1); v1 = i2f(bp->bm_h-1);
+	u1 = i2f(bp.bm_w-1); v1 = i2f(bp.bm_h-1);
 
 	// Check for obviously offscreen bitmaps...
 	if ( (y1<=y0) || (x1<=x0) ) return;
@@ -421,7 +413,7 @@ void scale_bitmap(grs_bitmap *bp, grs_point *vertbuf, int orientation )
 
 	dtemp = f2i(clipped_u1)-f2i(clipped_u0);
 
-	if ( bp->bm_flags & BM_FLAG_RLE )	{
+	if ( bp.bm_flags & BM_FLAG_RLE )	{
 		if ( (dtemp < (f2i(clipped_x1)-f2i(clipped_x0))) && (dtemp>0) )
 			scale_up_bitmap_rle(bp, dbp, dx0, dy0, dx1, dy1, clipped_u0, clipped_v0, clipped_u1, clipped_v1, orientation  );
 		else

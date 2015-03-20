@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,13 +23,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-
-#ifndef _SCREEN_H
-#define _SCREEN_H
-
-#include "gr.h"
+#pragma once
 
 #ifdef __cplusplus
+
+struct grs_canvas;
 
 // What graphics modes the game & editor open
 
@@ -43,5 +47,3 @@ extern int set_screen_mode(int sm);	// True = editor screen
 extern grs_canvas		Screen_3d_window;		// The rectangle for rendering the mine to
 
 #endif
-
-#endif /* _SCREENS_H */

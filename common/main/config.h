@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -25,8 +31,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "mission.h"
 
 #ifdef __cplusplus
+#include "pack.h"
+#include "compiler-array.h"
+#include "ntstring.h"
 
-struct Cfg
+struct Cfg : prohibit_void_ptr<Cfg>
 {
 	ubyte DigiVolume;
 	ubyte MusicVolume;
@@ -35,10 +44,10 @@ struct Cfg
 	int MusicType;
 	int CMLevelMusicPlayOrder;
 	int CMLevelMusicTrack[2];
-	char CMLevelMusicPath[PATH_MAX+1];
-	char CMMiscMusic[5][PATH_MAX+1];
+	ntstring<PATH_MAX - 1> CMLevelMusicPath;
+	array<ntstring<PATH_MAX - 1>, 5> CMMiscMusic;
 	int GammaLevel;
-	char LastPlayer[CALLSIGN_LEN+1];
+	callsign_t LastPlayer;
 	char LastMission[MISSION_NAME_LEN+1];
 	int ResolutionX;
 	int ResolutionY;
@@ -54,7 +63,7 @@ struct Cfg
 	int MovieTexFilt;
 	int MovieSubtitles;
 #endif
-} __pack__;
+};
 
 extern struct Cfg GameCfg;
 

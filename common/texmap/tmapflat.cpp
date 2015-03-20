@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -25,11 +31,14 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "texmapl.h"
 #include "scanline.h"
 
+#include "compiler-range_for.h"
+#include "partial_range.h"
+
 //#include "tmapext.h"
 
 #ifndef OGL
 
-void (*scanline_func)(int,fix,fix);
+static void gr_upoly_tmap_ylr(uint_fast32_t nverts, const int *vert);
 
 // -------------------------------------------------------------------------------------
 //	Texture map current scanline.
@@ -75,41 +84,33 @@ static void tmap_scanline_flat(int y, fix xleft, fix xright)
 //	Render a texture map.
 // Linear in outer loop, linear in inner loop.
 // -------------------------------------------------------------------------------------
-void texture_map_flat(g3ds_tmap *t, int color)
+static void texture_map_flat(const g3ds_tmap &t, int color, void (*scanline_func)(int,fix,fix))
 {
 	int	vlt,vrt,vlb,vrb;	// vertex left top, vertex right top, vertex left bottom, vertex right bottom
-	int	topy,boty,y, dy;
+	int	topy,boty,dy;
 	fix	dx_dy_left,dx_dy_right;
 	int	max_y_vertex;
 	fix	xleft,xright;
 	fix	recip_dy;
-	g3ds_vertex *v3d;
-
-	v3d = t->verts;
+	auto &v3d = t.verts;
 
 	tmap_flat_color = color;
 
 	// Determine top and bottom y coords.
-	compute_y_bounds(t,&vlt,&vlb,&vrt,&vrb,&max_y_vertex);
+	compute_y_bounds(t,vlt,vlb,vrt,vrb,max_y_vertex);
 
 	// Set top and bottom (of entire texture map) y coordinates.
 	topy = f2i(v3d[vlt].y2d);
 	boty = f2i(v3d[max_y_vertex].y2d);
 
 	// Set amount to change x coordinate for each advance to next scanline.
-	dy = f2i(t->verts[vlb].y2d) - f2i(t->verts[vlt].y2d);
-	if (dy < FIX_RECIP_TABLE_SIZE)
-		recip_dy = fix_recip[dy];
-	else
-		recip_dy = F1_0/dy;
+	dy = f2i(t.verts[vlb].y2d) - f2i(t.verts[vlt].y2d);
+	recip_dy = fix_recip(dy);
 
 	dx_dy_left = compute_dx_dy(t,vlt,vlb, recip_dy);
 
-	dy = f2i(t->verts[vrb].y2d) - f2i(t->verts[vrt].y2d);
-	if (dy < FIX_RECIP_TABLE_SIZE)
-		recip_dy = fix_recip[dy];
-	else
-		recip_dy = F1_0/dy;
+	dy = f2i(t.verts[vrb].y2d) - f2i(t.verts[vrt].y2d);
+	recip_dy = fix_recip(dy);
 
 	dx_dy_right = compute_dx_dy(t,vrt,vrb, recip_dy);
 
@@ -120,7 +121,7 @@ void texture_map_flat(g3ds_tmap *t, int color)
 	// scan all rows in texture map from top through first break.
 	// @mk: Should we render the scanline for y==boty?  This violates Matt's spec.
 
-	for (y = topy; y < boty; y++) {
+	for (int y = topy; y < boty; y++) {
 
 		// See if we have reached the end of the current left edge, and if so, set
 		// new values for dx_dy and x,u,v
@@ -130,13 +131,10 @@ void texture_map_flat(g3ds_tmap *t, int color)
 			// because in the for loop, we don't scan all spanlines.
 			while (y == f2i(v3d[vlb].y2d)) {
 				vlt = vlb;
-				vlb = prevmod(vlb,t->nv);
+				vlb = prevmod(vlb,t.nv);
 			}
-			dy = f2i(t->verts[vlb].y2d) - f2i(t->verts[vlt].y2d);
-			if (dy < FIX_RECIP_TABLE_SIZE)
-				recip_dy = fix_recip[dy];
-			else
-				recip_dy = F1_0/dy;
+			dy = f2i(t.verts[vlb].y2d) - f2i(t.verts[vlt].y2d);
+			recip_dy = fix_recip(dy);
 
 			dx_dy_left = compute_dx_dy(t,vlt,vlb, recip_dy);
 
@@ -148,14 +146,11 @@ void texture_map_flat(g3ds_tmap *t, int color)
 		if (y == f2i(v3d[vrb].y2d)) {
 			while (y == f2i(v3d[vrb].y2d)) {
 				vrt = vrb;
-				vrb = succmod(vrb,t->nv);
+				vrb = succmod(vrb,t.nv);
 			}
 
-			dy = f2i(t->verts[vrb].y2d) - f2i(t->verts[vrt].y2d);
-			if (dy < FIX_RECIP_TABLE_SIZE)
-				recip_dy = fix_recip[dy];
-			else
-				recip_dy = F1_0/dy;
+			dy = f2i(t.verts[vrb].y2d) - f2i(t.verts[vrt].y2d);
+			recip_dy = fix_recip(dy);
 
 			dx_dy_right = compute_dx_dy(t,vrt,vrb, recip_dy);
 
@@ -171,16 +166,16 @@ void texture_map_flat(g3ds_tmap *t, int color)
 
 	}
 	//tmap_scanline_flat(y, xleft, xright);
-	(*scanline_func)(y, xleft, xright);
+	(*scanline_func)(boty, xleft, xright);
 }
 
 
 //	-----------------------------------------------------------------------------------------
 //	This is the gr_upoly-like interface to the texture mapper which uses texture-mapper compatible
 //	(ie, avoids cracking) edge/delta computation.
-void gr_upoly_tmap(int nverts, const int *vert )
+void gr_upoly_tmap(uint_fast32_t nverts, const array<fix, MAX_POINTS_IN_POLY*2> &vert)
 {
-	gr_upoly_tmap_ylr(nverts, vert, tmap_scanline_flat);
+	gr_upoly_tmap_ylr(nverts, vert.data());
 }
 
 #include "3d.h"
@@ -190,22 +185,18 @@ struct pnt2d {
 	fix x,y;
 };
 
-#ifdef __WATCOMC__
-#pragma off (unreferenced)		//bp not referenced
-#endif
-
 //this takes the same partms as draw_tmap, but draws a flat-shaded polygon
-void draw_tmap_flat(grs_bitmap *bp,int nverts,g3s_point **vertbuf)
+void draw_tmap_flat(const grs_bitmap &bp,uint_fast32_t nverts,const g3s_point *const *vertbuf)
 {
-	pnt2d	points[MAX_TMAP_VERTS];
-	int	i;
+	union {
+		array<pnt2d, MAX_TMAP_VERTS> points;
+		array<int, MAX_TMAP_VERTS * (sizeof(pnt2d) / sizeof(int))> ipoints;
+	};
+	static_assert(sizeof(points) == sizeof(ipoints), "array size mismatch");
 	fix	average_light;
-	int	color;
-
 	Assert(nverts < MAX_TMAP_VERTS);
-
 	average_light = vertbuf[0]->p3_l;
-	for (i=1; i<nverts; i++)
+	for (int i=1; i<nverts; i++)
 		average_light += vertbuf[i]->p3_l;
 
 	if (nverts == 4)
@@ -218,41 +209,31 @@ void draw_tmap_flat(grs_bitmap *bp,int nverts,g3s_point **vertbuf)
 	else if (average_light > NUM_LIGHTING_LEVELS-1)
 		average_light = NUM_LIGHTING_LEVELS-1;
 
-	color = gr_fade_table[average_light*256 + bp->avg_color];
+	color_t color = gr_fade_table[average_light][bp.avg_color];
 	gr_setcolor(color);
 
-	for (i=0;i<nverts;i++) {
+	for (int i=0;i<nverts;i++) {
 		points[i].x = vertbuf[i]->p3_sx;
 		points[i].y = vertbuf[i]->p3_sy;
 	}
-
-	gr_upoly_tmap(nverts,(int *) points);
-
+	gr_upoly_tmap_ylr(nverts, ipoints.data());
 }
-#ifdef __WATCOMC__
-#pragma on (unreferenced)
-#endif
 
 //	-----------------------------------------------------------------------------------------
 //This is like gr_upoly_tmap() but instead of drawing, it calls the specified
 //function with ylr values
-void gr_upoly_tmap_ylr(int nverts, const int *vert, void (*ylr_func)(int,fix,fix) )
+static void gr_upoly_tmap_ylr(uint_fast32_t nverts, const int *vert)
 {
+	auto &ylr_func = tmap_scanline_flat;
 	g3ds_tmap	my_tmap;
-	int			i;
-
-	//--now called from g3_start_frame-- init_interface_vars_to_assembler();
-
 	my_tmap.nv = nverts;
 
-	for (i=0; i<nverts; i++) {
-		my_tmap.verts[i].x2d = *vert++;
-		my_tmap.verts[i].y2d = *vert++;
+	range_for (auto &i, partial_range(my_tmap.verts, nverts))
+	{
+		i.x2d = *vert++;
+		i.y2d = *vert++;
 	}
-
-	scanline_func = ylr_func;
-
-	texture_map_flat(&my_tmap, COLOR);
+	texture_map_flat(my_tmap, COLOR, ylr_func);
 }
 
 #endif //!OGL

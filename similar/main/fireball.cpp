@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -55,7 +61,12 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "cntrlcen.h"
 #include "gameseg.h"
 #include "automap.h"
-#include "byteswap.h"
+#include "byteutil.h"
+
+#include "compiler-range_for.h"
+#include "highest_valid.h"
+#include "partial_range.h"
+#include "segiter.h"
 
 using std::min;
 
@@ -68,9 +79,9 @@ fix	Flash_effect=0;
 static const int	PK1=1, PK2=8;
 #endif
 
-static objptridx_t object_create_explosion_sub(objptridx_t objp, short segnum, vms_vector * position, fix size, int vclip_type, fix maxdamage, fix maxdistance, fix maxforce, objptridx_t parent )
+static objptridx_t object_create_explosion_sub(const objptridx_t objp, const vsegptridx_t segnum, const vms_vector &position, fix size, int vclip_type, fix maxdamage, fix maxdistance, fix maxforce, const cobjptridx_t parent )
 {
-	objptridx_t obj = obj_create( OBJ_FIREBALL,vclip_type,segnum,position,&vmd_identity_matrix,size,
+	auto obj = obj_create( OBJ_FIREBALL,vclip_type,segnum,position,&vmd_identity_matrix,size,
 					CT_EXPLOSION,MT_NONE,RT_FIREBALL);
 
 	if (obj == object_none) {
@@ -85,15 +96,14 @@ static objptridx_t object_create_explosion_sub(objptridx_t objp, short segnum, v
 	obj->ctype.expl_info.delete_time = -1;
 
 	if (maxdamage > 0) {
-		fix dist, force;
+		fix force;
 		vms_vector pos_hit, vforce;
 		fix damage;
-		int i;
-
 		// -- now legal for badass explosions on a wall. Assert(objp != NULL);
 
-		for (i=0; i<=Highest_object_index; i++ )	{
-			objptridx_t obj0p = &Objects[i];
+		range_for (const auto i, highest_valid(Objects))
+		{
+			auto obj0p = vobjptridx(i);
 			sbyte parent_check = 0;
 
 			//	Weapons used to be affected by badass explosions, but this introduces serious problems.
@@ -101,7 +111,7 @@ static objptridx_t object_create_explosion_sub(objptridx_t objp, short segnum, v
 			//	blow up, blowing up all the children.  So I remove it.  MK, 09/11/94
 
 			if (parent != object_none)
-				if ((Objects[parent].type != OBJ_ROBOT) || (get_robot_id(&Objects[parent]) != obj0p->id))
+				if ((parent->type != OBJ_ROBOT) || (get_robot_id(parent) != obj0p->id))
 					parent_check = 1;
 
 #if defined(DXX_BUILD_DESCENT_I)
@@ -118,7 +128,7 @@ static objptridx_t object_create_explosion_sub(objptridx_t objp, short segnum, v
 				 ))
 #endif
 			{
-				dist = vm_vec_dist_quick( &obj0p->pos, &obj->pos );
+				const auto dist = vm_vec_dist_quick( obj0p->pos, obj->pos );
 				// Make damage be from 'maxdamage' to 0.0, where 0.0 is 'maxdistance' away;
 				if ( dist < maxdistance ) {
 					if (object_to_object_visibility(obj, obj0p, FQ_TRANSWALL)) {
@@ -127,33 +137,33 @@ static objptridx_t object_create_explosion_sub(objptridx_t objp, short segnum, v
 						force = maxforce - fixmuldiv( dist, maxforce, maxdistance );
 
 						// Find the force vector on the object
-						vm_vec_normalized_dir_quick( &vforce, &obj0p->pos, &obj->pos );
-						vm_vec_scale(&vforce, force );
+						vm_vec_normalized_dir_quick( vforce, obj0p->pos, obj->pos );
+						vm_vec_scale(vforce, force );
 	
 						// Find where the point of impact is... ( pos_hit )
-						vm_vec_scale(vm_vec_sub(&pos_hit, &obj->pos, &obj0p->pos), fixdiv(obj0p->size, obj0p->size + dist));
+						vm_vec_scale(vm_vec_sub(pos_hit, obj->pos, obj0p->pos), fixdiv(obj0p->size, obj0p->size + dist));
 	
 						switch ( obj0p->type )	{
 #if defined(DXX_BUILD_DESCENT_II)
 							case OBJ_WEAPON:
-								phys_apply_force(obj0p,&vforce);
+								phys_apply_force(obj0p,vforce);
 
 								if (obj0p->id == PROXIMITY_ID || obj0p->id == SUPERPROX_ID) {		//prox bombs have chance of blowing up
 									if (fixmul(dist,force) > i2f(8000)) {
 										obj0p->flags |= OF_SHOULD_BE_DEAD;
-										explode_badass_weapon(obj0p,&obj0p->pos);
+										explode_badass_weapon(obj0p, obj0p->pos);
 									}
 								}
 								break;
 #endif
 							case OBJ_ROBOT:
 								{
-								phys_apply_force(obj0p,&vforce);
+								phys_apply_force(obj0p,vforce);
 #if defined(DXX_BUILD_DESCENT_II)
 								//	If not a boss, stun for 2 seconds at 32 force, 1 second at 16 force
 								if ((objp != object_none) && (!Robot_info[obj0p->id].boss_flag) && (Weapon_info[objp->id].flash)) {
 									ai_static	*aip = &obj0p->ctype.ai_info;
-									int			force_val = f2i(fixdiv(vm_vec_mag_quick(&vforce) * Weapon_info[objp->id].flash, FrameTime)/128) + 2;
+									int			force_val = f2i(fixdiv(vm_vec_mag_quick(vforce) * Weapon_info[objp->id].flash, FrameTime)/128) + 2;
 
 									if (obj->ctype.ai_info.SKIP_AI_COUNT * FrameTime < F1_0) {
 										aip->SKIP_AI_COUNT += force_val;
@@ -175,7 +185,7 @@ static objptridx_t object_create_explosion_sub(objptridx_t objp, short segnum, v
 									neg_vforce.x = vforce.x * -2 * (7 - Difficulty_level)/8;
 									neg_vforce.y = vforce.y * -2 * (7 - Difficulty_level)/8;
 									neg_vforce.z = vforce.z * -2 * (7 - Difficulty_level)/8;
-									phys_apply_rot(obj0p,&neg_vforce);
+									phys_apply_rot(obj0p,neg_vforce);
 								}
 								if ( obj0p->shields >= 0 ) {
 #if defined(DXX_BUILD_DESCENT_II)
@@ -208,7 +218,7 @@ static objptridx_t object_create_explosion_sub(objptridx_t objp, short segnum, v
 								}
 								break;
 							case OBJ_PLAYER:	{
-								object * killer=NULL;
+								cobjptridx_t killer = object_none;
 								vms_vector	vforce2;
 #if defined(DXX_BUILD_DESCENT_II)
 								//	Hack! Warning! Test code!
@@ -232,14 +242,14 @@ static objptridx_t object_create_explosion_sub(objptridx_t objp, short segnum, v
 								}
 								vforce2 = vforce;
 								if (parent != object_none ) {
-									killer = &Objects[parent];
+									killer = parent;
 									if (killer != ConsoleObject)		// if someone else whacks you, cut force by 2x
 										vforce2.x /= 2;	vforce2.y /= 2;	vforce2.z /= 2;
 								}
 								vforce2.x /= 2;	vforce2.y /= 2;	vforce2.z /= 2;
 
-								phys_apply_force(obj0p,&vforce);
-								phys_apply_rot(obj0p,&vforce2);
+								phys_apply_force(obj0p,vforce);
+								phys_apply_rot(obj0p,vforce2);
 #if defined(DXX_BUILD_DESCENT_II)
 								if (Difficulty_level == 0)
 									damage /= 4;
@@ -264,20 +274,19 @@ static objptridx_t object_create_explosion_sub(objptridx_t objp, short segnum, v
 
 }
 
-
-void object_create_muzzle_flash(short segnum, vms_vector * position, fix size, int vclip_type )
+void object_create_muzzle_flash(const vsegptridx_t segnum, const vms_vector &position, fix size, int vclip_type )
 {
 	object_create_explosion_sub(object_none, segnum, position, size, vclip_type, 0, 0, 0, object_none );
 }
 
-objptridx_t object_create_explosion(short segnum, vms_vector * position, fix size, int vclip_type )
+objptridx_t object_create_explosion(const vsegptridx_t segnum, const vms_vector &position, fix size, int vclip_type )
 {
 	return object_create_explosion_sub(object_none, segnum, position, size, vclip_type, 0, 0, 0, object_none );
 }
 
-objptridx_t object_create_badass_explosion(objptridx_t objp, short segnum, vms_vector * position, fix size, int vclip_type, fix maxdamage, fix maxdistance, fix maxforce, objptridx_t parent )
+objptridx_t object_create_badass_explosion(const objptridx_t objp, const vsegptridx_t segnum, const vms_vector &position, fix size, int vclip_type, fix maxdamage, fix maxdistance, fix maxforce, const cobjptridx_t parent )
 {
-	objptridx_t rval = object_create_explosion_sub(objp, segnum, position, size, vclip_type, maxdamage, maxdistance, maxforce, parent );
+	const objptridx_t rval = object_create_explosion_sub(objp, segnum, position, size, vclip_type, maxdamage, maxdistance, maxforce, parent );
 
 	if ((objp != object_none) && (objp->type == OBJ_WEAPON))
 		create_smart_children(objp, NUM_SMART_CHILDREN);
@@ -287,7 +296,7 @@ objptridx_t object_create_badass_explosion(objptridx_t objp, short segnum, vms_v
 
 //blows up a badass weapon, creating the badass explosion
 //return the explosion object
-void explode_badass_weapon(objptridx_t obj,vms_vector *pos)
+void explode_badass_weapon(const vobjptridx_t obj,const vms_vector &pos)
 {
 	weapon_info *wi = &Weapon_info[get_weapon_id(obj)];
 
@@ -303,13 +312,13 @@ void explode_badass_weapon(objptridx_t obj,vms_vector *pos)
 	                                      wi->robot_hit_vclip,
 	                                      wi->strength[Difficulty_level],
 	                                      wi->damage_radius,wi->strength[Difficulty_level],
-	                                      obj->ctype.laser_info.parent_num);
+	                                      objptridx(obj->ctype.laser_info.parent_num));
 
 }
 
-static void explode_badass_object(objptridx_t objp, fix damage, fix distance, fix force)
+static void explode_badass_object(const vobjptridx_t objp, fix damage, fix distance, fix force)
 {
-	objptridx_t rval = object_create_badass_explosion(objp, objp->segnum, &objp->pos, objp->size,
+	const objptridx_t rval = object_create_badass_explosion(objp, objp->segnum, objp->pos, objp->size,
 					get_explosion_vclip(objp, 0),
 					damage, distance, force,
 					objp);
@@ -319,7 +328,7 @@ static void explode_badass_object(objptridx_t objp, fix damage, fix distance, fi
 
 //blows up the player with a badass explosion
 //return the explosion object
-void explode_badass_player(object *objp)
+void explode_badass_player(const vobjptridx_t objp)
 {
 	explode_badass_object(objp, F1_0*50, F1_0*40, F1_0*150);
 }
@@ -327,11 +336,11 @@ void explode_badass_player(object *objp)
 
 #define DEBRIS_LIFE (f1_0 * (PERSISTENT_DEBRIS?60:2))		//lifespan in seconds
 
-static void object_create_debris(object *parent, int subobj_num)
+static void object_create_debris(const vobjptr_t parent, int subobj_num)
 {
 	Assert((parent->type == OBJ_ROBOT) || (parent->type == OBJ_PLAYER)  );
 
-	objptridx_t obj = obj_create(OBJ_DEBRIS,0,parent->segnum,&parent->pos,
+	auto obj = obj_create(OBJ_DEBRIS,0,parent->segnum,parent->pos,
 				&parent->orient,Polygon_models[parent->rtype.pobj_info.model_num].submodel_rads[subobj_num],
 				CT_DEBRIS,MT_PHYSICS,RT_POLYOBJ);
 
@@ -355,14 +364,14 @@ static void object_create_debris(object *parent, int subobj_num)
 	obj->mtype.phys_info.velocity.x = D_RAND_MAX/2 - d_rand();
 	obj->mtype.phys_info.velocity.y = D_RAND_MAX/2 - d_rand();
 	obj->mtype.phys_info.velocity.z = D_RAND_MAX/2 - d_rand();
-	vm_vec_normalize_quick(&obj->mtype.phys_info.velocity);
-	vm_vec_scale(&obj->mtype.phys_info.velocity,i2f(10 + (30 * d_rand() / D_RAND_MAX)));
+	vm_vec_normalize_quick(obj->mtype.phys_info.velocity);
+	vm_vec_scale(obj->mtype.phys_info.velocity,i2f(10 + (30 * d_rand() / D_RAND_MAX)));
 
-	vm_vec_add2(&obj->mtype.phys_info.velocity,&parent->mtype.phys_info.velocity);
+	vm_vec_add2(obj->mtype.phys_info.velocity,parent->mtype.phys_info.velocity);
 
 	// -- used to be: Notice, not random! vm_vec_make(&obj->mtype.phys_info.rotvel,10*0x2000/3,10*0x4000/3,10*0x7000/3);
-	vm_vec_make(&obj->mtype.phys_info.rotvel, d_rand() + 0x1000, d_rand()*2 + 0x4000, d_rand()*3 + 0x2000);
-	vm_vec_zero(&obj->mtype.phys_info.rotthrust);
+	obj->mtype.phys_info.rotvel = {d_rand() + 0x1000, d_rand()*2 + 0x4000, d_rand()*3 + 0x2000};
+	vm_vec_zero(obj->mtype.phys_info.rotthrust);
 
 	obj->lifeleft = 3*DEBRIS_LIFE/4 + fixmul(d_rand(), DEBRIS_LIFE);	//	Some randomness, so they don't all go away at the same time.
 
@@ -376,7 +385,7 @@ static void object_create_debris(object *parent, int subobj_num)
 	}
 }
 
-void draw_fireball(object *obj)
+void draw_fireball(const vobjptridx_t obj)
 {
 	if ( obj->lifeleft > 0 )
 		draw_vclip_object(obj,obj->lifeleft,0, obj->id);
@@ -386,14 +395,14 @@ void draw_fireball(object *obj)
 // --------------------------------------------------------------------------------------------------------------------
 //	Return true if there is a door here and it is openable
 //	It is assumed that the player has all keys.
-static int door_is_openable_by_player(segment *segp, int sidenum)
+static int door_is_openable_by_player(const vcsegptr_t segp, int sidenum)
 {
-	int	wall_num, wall_type;
+	int	wall_type;
 
-	wall_num = segp->sides[sidenum].wall_num;
+	auto wall_num = segp->sides[sidenum].wall_num;
 	wall_type = Walls[wall_num].type;
 
-	if (wall_num == -1)
+	if (wall_num == wall_none)
 		return 0;						//	no wall here.
 
 	//	Can't open locked doors.
@@ -409,19 +418,19 @@ static int door_is_openable_by_player(segment *segp, int sidenum)
 // --------------------------------------------------------------------------------------------------------------------
 //	Return a segment %i segments away from initial segment.
 //	Returns -1 if can't find a segment that distance away.
-int pick_connected_segment(object *objp, int max_depth)
+int pick_connected_segment(const vobjptr_t objp, int max_depth)
 {
+	using std::swap;
 	int		i;
 	int		cur_depth;
 	int		start_seg;
 	int		head, tail;
-	int		seg_queue[QUEUE_SIZE*2];
+	int		seg_queue[QUEUE_SIZE*2]{};
 	sbyte   depth[MAX_SEGMENTS];
 	sbyte   side_rand[MAX_SIDES_PER_SEGMENT];
 
 	visited_segment_bitarray_t visited;
 	memset(depth, 0, Highest_segment_index+1);
-	memset(seg_queue,0,QUEUE_SIZE*2);
 
 	start_seg = objp->segnum;
 	head = 0;
@@ -435,18 +444,16 @@ int pick_connected_segment(object *objp, int max_depth)
 
 	//	Now, randomize a bit to start, so we don't always get started in the same direction.
 	for (i=0; i<4; i++) {
-		int	ind1, temp;
+		int	ind1;
 
 		ind1 = (d_rand() * MAX_SIDES_PER_SEGMENT) >> 15;
-		temp = side_rand[ind1];
-		side_rand[ind1] = side_rand[i];
-		side_rand[i] = temp;
+		swap(side_rand[ind1], side_rand[i]);
 	}
 
 	while (tail != head) {
 		int		sidenum, count;
 		segment	*segp;
-		int		ind1, ind2, temp;
+		int		ind1, ind2;
 
 		if (cur_depth >= max_depth) {
 			return seg_queue[tail];
@@ -458,22 +465,19 @@ int pick_connected_segment(object *objp, int max_depth)
 		//	to make random, switch a pair of entries in side_rand.
 		ind1 = (d_rand() * MAX_SIDES_PER_SEGMENT) >> 15;
 		ind2 = (d_rand() * MAX_SIDES_PER_SEGMENT) >> 15;
-		temp = side_rand[ind1];
-		side_rand[ind1] = side_rand[ind2];
-		side_rand[ind2] = temp;
-
+		swap(side_rand[ind1], side_rand[ind2]);
 		count = 0;
 		for (sidenum=ind1; count<MAX_SIDES_PER_SEGMENT; count++) {
-			int	snrand, wall_num;
+			int	snrand;
 
 			if (sidenum == MAX_SIDES_PER_SEGMENT)
 				sidenum = 0;
 
 			snrand = side_rand[sidenum];
-			wall_num = segp->sides[snrand].wall_num;
+			auto wall_num = segp->sides[snrand].wall_num;
 			sidenum++;
 
-			if ((wall_num == -1 || door_is_openable_by_player(segp, snrand)) && segp->children[snrand] > -1)
+			if ((wall_num == wall_none || door_is_openable_by_player(segp, snrand)) && segp->children[snrand] > -1)
 			{
 				if (!visited[segp->children[snrand]]) {
 					seg_queue[head++] = segp->children[snrand];
@@ -511,22 +515,21 @@ int pick_connected_segment(object *objp, int max_depth)
 //	For all active net players, try to create a N segment path from the player.  If possible, return that
 //	segment.  If not possible, try another player.  After a few tries, use a random segment.
 //	Don't drop if control center in segment.
-static int choose_drop_segment()
+static segnum_t choose_drop_segment()
 {
-	int	pnum = 0;
-	short	segnum = segment_none;
+	playernum_t	pnum = 0;
 	int	cur_drop_depth;
 	int	count;
-	int	player_seg;
-	vms_vector tempv,*player_pos;
+	vms_vector *player_pos;
 
 	d_srand((fix)timer_query());
 
 	cur_drop_depth = BASE_NET_DROP_DEPTH + ((d_rand() * BASE_NET_DROP_DEPTH*2) >> 15);
 
 	player_pos = &Objects[Players[Player_num].objnum].pos;
-	player_seg = Objects[Players[Player_num].objnum].segnum;
+	auto player_seg = Objects[Players[Player_num].objnum].segnum;
 
+	segnum_t	segnum = segment_none;
 	while ((segnum == segment_none) && (cur_drop_depth > BASE_NET_DROP_DEPTH/2)) {
 		pnum = (d_rand() * N_players) >> 15;
 		count = 0;
@@ -558,7 +561,7 @@ static int choose_drop_segment()
 		else {	//don't drop in any children of control centers
 			int i;
 			for (i=0;i<6;i++) {
-				int ch = Segments[segnum].children[i];
+				auto ch = Segments[segnum].children[i];
 				if (IS_CHILD(ch) && Segments[ch].special == SEGMENT_IS_CONTROLCEN) {
 					segnum = segment_none;
 					break;
@@ -568,8 +571,8 @@ static int choose_drop_segment()
 
 		//bail if not far enough from original position
 		if (segnum != segment_none) {
-			compute_segment_center(&tempv, &Segments[segnum]);
-			if (find_connected_distance(player_pos,player_seg,&tempv,segnum,-1,WID_FLY_FLAG) < i2f(20)*cur_drop_depth) {
+			const auto tempv = compute_segment_center(&Segments[segnum]);
+			if (find_connected_distance(*player_pos,player_seg,tempv,segnum,-1,WID_FLY_FLAG) < i2f(20)*cur_drop_depth) {
 				segnum = segment_none;
 			}
 		}
@@ -596,19 +599,16 @@ static int choose_drop_segment()
 void maybe_drop_net_powerup(int powerup_type)
 {
 	if ((Game_mode & GM_MULTI) && !(Game_mode & GM_MULTI_COOP)) {
-		int	segnum, objnum;
-		vms_vector	new_pos;
-
 		if (Game_mode & GM_NETWORK)
 		{
 			if (PowerupsInMine[powerup_type]>=MaxPowerupsAllowed[powerup_type])
 				return;
 		}
 
-		if (Control_center_destroyed || Endlevel_sequence)
+		if (Control_center_destroyed || (Network_status == NETSTAT_ENDLEVEL))
 			return;
 
-		segnum = choose_drop_segment();
+		auto segnum = choose_drop_segment();
 //--old-- 		segnum = (d_rand() * Highest_segment_index) >> 15;
 //--old-- 		Assert((segnum >= 0) && (segnum <= Highest_segment_index));
 //--old-- 		if (segnum < 0)
@@ -617,59 +617,43 @@ void maybe_drop_net_powerup(int powerup_type)
 //--old-- 			segnum /= 2;
 
 		Net_create_loc = 0;
-		objnum = call_object_create_egg(&Objects[Players[Player_num].objnum], 1, OBJ_POWERUP, powerup_type);
+		const objptridx_t objnum = call_object_create_egg(&Objects[Players[Player_num].objnum], 1, OBJ_POWERUP, powerup_type);
 
-		if (objnum < 0)
+		if (objnum == object_none)
 			return;
 
-		pick_random_point_in_seg(&new_pos, segnum);
-
-		multi_send_create_powerup(powerup_type, segnum, objnum, &new_pos);
-
-		Objects[objnum].pos = new_pos;
-		vm_vec_zero(&Objects[objnum].mtype.phys_info.velocity);
+		const auto new_pos = pick_random_point_in_seg(&Segments[segnum]);
+		multi_send_create_powerup(powerup_type, segnum, objnum, new_pos);
+		objnum->pos = new_pos;
+		vm_vec_zero(objnum->mtype.phys_info.velocity);
 		obj_relink(objnum, segnum);
 
-		object_create_explosion(segnum, &new_pos, i2f(5), VCLIP_POWERUP_DISAPPEARANCE );
+		object_create_explosion(segnum, new_pos, i2f(5), VCLIP_POWERUP_DISAPPEARANCE );
 	}
 }
 
 //	------------------------------------------------------------------------------------------------------
 //	Return true if current segment contains some object.
-static int segment_contains_object(int obj_type, int obj_id, int segnum)
+static int segment_contains_object(int obj_type, int obj_id, const vcsegptridx_t segnum)
 {
-	int	objnum;
-
-	if (segnum == segment_none)
-		return 0;
-
-	objnum = Segments[segnum].objects;
-
-	while (objnum != object_none)
-		if ((Objects[objnum].type == obj_type) && (Objects[objnum].id == obj_id))
+	range_for (const auto objp, objects_in(segnum))
+		if ((objp->type == obj_type) && (objp->id == obj_id))
 			return 1;
-		else
-			objnum = Objects[objnum].next;
 
 	return 0;
 }
 
 //	------------------------------------------------------------------------------------------------------
-static int object_nearby_aux(int segnum, int object_type, int object_id, int depth)
+static int object_nearby_aux(const vcsegptridx_t segnum, int object_type, int object_id, uint_fast32_t depth)
 {
-	int	i;
-
-	if (depth == 0)
-		return 0;
-
 	if (segment_contains_object(object_type, object_id, segnum))
 		return 1;
-
-	for (i=0; i<MAX_SIDES_PER_SEGMENT; i++) {
-		int	seg2 = Segments[segnum].children[i];
-
+	if (! -- depth)
+		return 0;
+	range_for (const auto seg2, segnum->children)
+	{
 		if (seg2 != segment_none)
-			if (object_nearby_aux(seg2, object_type, object_id, depth-1))
+			if (object_nearby_aux(seg2, object_type, object_id, depth))
 				return 1;
 	}
 
@@ -679,13 +663,13 @@ static int object_nearby_aux(int segnum, int object_type, int object_id, int dep
 
 //	------------------------------------------------------------------------------------------------------
 //	Return true if some powerup is nearby (within 3 segments).
-static int weapon_nearby(object *objp, int weapon_id)
+static int weapon_nearby(const vobjptr_t objp, int weapon_id)
 {
 	return object_nearby_aux(objp->segnum, OBJ_POWERUP, weapon_id, 3);
 }
 
 //	------------------------------------------------------------------------------------------------------
-void maybe_replace_powerup_with_energy(object *del_obj)
+void maybe_replace_powerup_with_energy(const vobjptr_t del_obj)
 {
 	int	weapon_index=-1;
 
@@ -770,20 +754,18 @@ void maybe_replace_powerup_with_energy(object *del_obj)
 #if defined(DXX_BUILD_DESCENT_I)
 static
 #endif
-int drop_powerup(int type, int id, int num, vms_vector *init_vel, vms_vector *pos, int segnum)
+objptridx_t drop_powerup(int type, int id, int num, const vms_vector &init_vel, const vms_vector &pos, const vsegptridx_t segnum)
 {
-	short		objnum=object_none;
-	object	*obj;
+	objptridx_t	objnum = object_none;
 	vms_vector	new_velocity, new_pos;
-	fix		old_mag;
    int             count;
 
 	switch (type) {
 		case OBJ_POWERUP:
 			for (count=0; count<num; count++) {
 				int	rand_scale;
-				new_velocity = *init_vel;
-				old_mag = vm_vec_mag_quick(init_vel);
+				new_velocity = init_vel;
+				const auto old_mag = vm_vec_mag_quick(init_vel);
 
 				//	We want powerups to move more in network mode.
 				if ((Game_mode & GM_MULTI) && !(Game_mode & GM_MULTI_ROBOTS)) {
@@ -801,9 +783,9 @@ int drop_powerup(int type, int id, int num, vms_vector *init_vel, vms_vector *po
 				// Give keys zero velocity so they can be tracked better in multi
 
 				if ((Game_mode & GM_MULTI) && (id >= POW_KEY_BLUE) && (id <= POW_KEY_GOLD))
-					vm_vec_zero(&new_velocity);
+					vm_vec_zero(new_velocity);
 
-				new_pos = *pos;
+				new_pos = pos;
 //				new_pos.x += (d_rand()-16384)*8;
 //				new_pos.y += (d_rand()-16384)*8;
 //				new_pos.z += (d_rand()-16384)*8;
@@ -819,7 +801,8 @@ int drop_powerup(int type, int id, int num, vms_vector *init_vel, vms_vector *po
 					 return object_none;
 #endif
 				}
-				objnum = obj_create( OBJ_POWERUP, id, segnum, &new_pos, &vmd_identity_matrix, Powerup_info[id].size, CT_POWERUP, MT_PHYSICS, RT_POWERUP);
+				auto		obj = obj_create( OBJ_POWERUP, id, segnum, new_pos, &vmd_identity_matrix, Powerup_info[id].size, CT_POWERUP, MT_PHYSICS, RT_POWERUP);
+				objnum = obj;
 
 				if (objnum == object_none ) {
 					Int3();
@@ -830,9 +813,6 @@ int drop_powerup(int type, int id, int num, vms_vector *init_vel, vms_vector *po
 				{
 					Net_create_objnums[Net_create_loc++] = objnum;
 				}
-
-				obj = &Objects[objnum];
-
 				obj->mtype.phys_info.velocity = new_velocity;
 
 				obj->mtype.phys_info.drag = 512;	//1024;
@@ -864,10 +844,8 @@ int drop_powerup(int type, int id, int num, vms_vector *init_vel, vms_vector *po
 		case OBJ_ROBOT:
 			for (count=0; count<num; count++) {
 				int	rand_scale;
-				new_velocity = *init_vel;
-				old_mag = vm_vec_mag_quick(init_vel);
-
-				vm_vec_normalize_quick(&new_velocity);
+				auto new_velocity = vm_vec_normalized_quick(init_vel);
+				const auto old_mag = vm_vec_mag_quick(init_vel);
 
 				//	We want powerups to move more in network mode.
 //				if (Game_mode & GM_MULTI)
@@ -879,20 +857,21 @@ int drop_powerup(int type, int id, int num, vms_vector *init_vel, vms_vector *po
 				new_velocity.y += (d_rand()-16384)*2;
 				new_velocity.z += (d_rand()-16384)*2;
 
-				vm_vec_normalize_quick(&new_velocity);
-				vm_vec_scale(&new_velocity, (F1_0*32 + old_mag) * rand_scale);
-				new_pos = *pos;
+				vm_vec_normalize_quick(new_velocity);
+				vm_vec_scale(new_velocity, (F1_0*32 + old_mag) * rand_scale);
+				new_pos = pos;
 				//	This is dangerous, could be outside mine.
 //				new_pos.x += (d_rand()-16384)*8;
 //				new_pos.y += (d_rand()-16384)*7;
 //				new_pos.z += (d_rand()-16384)*6;
 
 #if defined(DXX_BUILD_DESCENT_I)
-				objnum = obj_create(OBJ_ROBOT, id, segnum, &new_pos, &vmd_identity_matrix, Polygon_models[Robot_info[ObjId[type]].model_num].rad, CT_AI, MT_PHYSICS, RT_POLYOBJ);
+				auto obj = obj_create(OBJ_ROBOT, id, segnum, new_pos, &vmd_identity_matrix, Polygon_models[Robot_info[ObjId[type]].model_num].rad, CT_AI, MT_PHYSICS, RT_POLYOBJ);
 #elif defined(DXX_BUILD_DESCENT_II)
-				objnum = obj_create(OBJ_ROBOT, id, segnum, &new_pos, &vmd_identity_matrix, Polygon_models[Robot_info[id].model_num].rad, CT_AI, MT_PHYSICS, RT_POLYOBJ);
+				auto obj = obj_create(OBJ_ROBOT, id, segnum, new_pos, &vmd_identity_matrix, Polygon_models[Robot_info[id].model_num].rad, CT_AI, MT_PHYSICS, RT_POLYOBJ);
 #endif
 
+				objnum = obj;
 				if ( objnum == object_none ) {
 					Int3();
 					return objnum;
@@ -902,9 +881,6 @@ int drop_powerup(int type, int id, int num, vms_vector *init_vel, vms_vector *po
 				{
 					Net_create_objnums[Net_create_loc++] = objnum;
 				}
-
-				obj = &Objects[objnum];
-
 				//Set polygon-object-specific data
 
 				obj->rtype.pobj_info.model_num = Robot_info[get_robot_id(obj)].model_num;
@@ -948,9 +924,8 @@ int drop_powerup(int type, int id, int num, vms_vector *init_vel, vms_vector *po
 // ----------------------------------------------------------------------------
 // Returns created object number.
 // If object dropped by player, set flag.
-int object_create_egg(object *objp)
+objptridx_t object_create_egg(const vobjptr_t objp)
 {
-	int	rval;
 #if defined(DXX_BUILD_DESCENT_II)
 	if (!(Game_mode & GM_MULTI) & (objp->type != OBJ_PLAYER))
 	{
@@ -980,19 +955,19 @@ int object_create_egg(object *objp)
 		}
 	}
 #endif
-	rval = drop_powerup(objp->contains_type, objp->contains_id, objp->contains_count, &objp->mtype.phys_info.velocity, &objp->pos, objp->segnum);
+	const objptridx_t rval = drop_powerup(objp->contains_type, objp->contains_id, objp->contains_count, objp->mtype.phys_info.velocity, objp->pos, objp->segnum);
 #if defined(DXX_BUILD_DESCENT_II)
 	if (rval != object_none)
 	{
 		if ((objp->type == OBJ_PLAYER) && (objp->id == Player_num))
-			Objects[rval].flags |= OF_PLAYER_DROPPED;
+			rval->flags |= OF_PLAYER_DROPPED;
 
 		if (objp->type == OBJ_ROBOT && objp->contains_type==OBJ_POWERUP)
 		{
 			if (objp->contains_id==POW_VULCAN_WEAPON || objp->contains_id==POW_GAUSS_WEAPON)
-				Objects[rval].ctype.powerup_info.count = VULCAN_WEAPON_AMMO_AMOUNT;
+				rval->ctype.powerup_info.count = VULCAN_WEAPON_AMMO_AMOUNT;
 			else if (objp->contains_id==POW_OMEGA_WEAPON)
-				Objects[rval].ctype.powerup_info.count = MAX_OMEGA_CHARGE;
+				rval->ctype.powerup_info.count = MAX_OMEGA_CHARGE;
 		}
 	}
 #endif
@@ -1004,7 +979,7 @@ int object_create_egg(object *objp)
 //	-------------------------------------------------------------------------------------------------------
 //	Put count objects of type type (eg, powerup), id = id (eg, energy) into *objp, then drop them!  Yippee!
 //	Returns created object number.
-int call_object_create_egg(object *objp, int count, int type, int id)
+objptridx_t call_object_create_egg(const vobjptr_t objp, int count, int type, int id)
 {
 	if (count > 0) {
 		objp->contains_count = count;
@@ -1017,7 +992,7 @@ int call_object_create_egg(object *objp, int count, int type, int id)
 }
 
 //what vclip does this explode with?
-int get_explosion_vclip(object *obj,int stage)
+int get_explosion_vclip(const vcobjptr_t obj,int stage)
 {
 	if (obj->type==OBJ_ROBOT) {
 
@@ -1034,7 +1009,7 @@ int get_explosion_vclip(object *obj,int stage)
 }
 
 //blow up a polygon model
-static void explode_model(object *obj)
+static void explode_model(const vobjptr_t obj)
 {
 	Assert(obj->render_type == RT_POLYOBJ);
 
@@ -1056,7 +1031,7 @@ static void explode_model(object *obj)
 }
 
 //if the object has a destroyed model, switch to it.  Otherwise, delete it.
-static void maybe_delete_object(object *del_obj)
+static void maybe_delete_object(const vobjptr_t del_obj)
 {
 	if (Dead_modelnums[del_obj->rtype.pobj_info.model_num] != -1) {
 		del_obj->rtype.pobj_info.model_num = Dead_modelnums[del_obj->rtype.pobj_info.model_num];
@@ -1072,27 +1047,19 @@ static void maybe_delete_object(object *del_obj)
 
 //	-------------------------------------------------------------------------------------------------------
 //blow up an object.  Takes the object to destroy, and the point of impact
-void explode_object(objptridx_t hitobj,fix delay_time)
+void explode_object(const vobjptridx_t hitobj,fix delay_time)
 {
 	if (hitobj->flags & OF_EXPLODING) return;
 
 	if (delay_time) {		//wait a little while before creating explosion
-		int objnum;
-		object *obj;
-
 		//create a placeholder object to do the delay, with id==-1
-
-		objnum = obj_create( OBJ_FIREBALL,-1,hitobj->segnum,&hitobj->pos,&vmd_identity_matrix,0,
+		auto obj = obj_create( OBJ_FIREBALL,-1,hitobj->segnum,hitobj->pos,&vmd_identity_matrix,0,
 						CT_EXPLOSION,MT_NONE,RT_NONE);
-	
-		if (objnum == object_none ) {
+		if (obj == object_none ) {
 			maybe_delete_object(hitobj);		//no explosion, die instantly
 			Int3();
 			return;
 		}
-	
-		obj = &Objects[objnum];
-	
 		//now set explosion-specific data
 	
 		obj->lifeleft = delay_time;
@@ -1106,12 +1073,11 @@ void explode_object(objptridx_t hitobj,fix delay_time)
 
 	}
 	else {
-		object *expl_obj;
 		int vclip_num;
 
 		vclip_num = get_explosion_vclip(hitobj,0);
 
-		expl_obj = object_create_explosion(hitobj->segnum, &hitobj->pos, fixmul(hitobj->size,EXPLOSION_SCALE), vclip_num );
+		auto expl_obj = object_create_explosion(hitobj->segnum, hitobj->pos, fixmul(hitobj->size,EXPLOSION_SCALE), vclip_num );
 	
 		if (! expl_obj) {
 			maybe_delete_object(hitobj);		//no explosion, die instantly
@@ -1139,7 +1105,7 @@ void explode_object(objptridx_t hitobj,fix delay_time)
 
 
 //do whatever needs to be done for this piece of debris for this frame
-void do_debris_frame(objptridx_t obj)
+void do_debris_frame(const vobjptridx_t obj)
 {
 	Assert(obj->control_type == CT_DEBRIS);
 
@@ -1149,7 +1115,7 @@ void do_debris_frame(objptridx_t obj)
 }
 
 //do whatever needs to be done for this explosion for this frame
-void do_explosion_sequence(object *obj)
+void do_explosion_sequence(const vobjptr_t obj)
 {
 	Assert(obj->control_type == CT_EXPLOSION);
 
@@ -1161,24 +1127,21 @@ void do_explosion_sequence(object *obj)
 
 	//See if we should create a secondary explosion
 	if (obj->lifeleft <= obj->ctype.expl_info.spawn_time) {
-		object *expl_obj;
 		int vclip_num;
-		vms_vector *spawn_pos;
 
 		if ((obj->ctype.expl_info.delete_objnum < 0) || (obj->ctype.expl_info.delete_objnum > Highest_object_index)) {
 			Int3(); // get Rob, please... thanks
 			return;
 		}
 
-		objptridx_t del_obj = &Objects[obj->ctype.expl_info.delete_objnum];
-
-		spawn_pos = &del_obj->pos;
-
+		auto del_obj = vobjptridx(obj->ctype.expl_info.delete_objnum);
+		auto &spawn_pos = del_obj->pos;
 		Assert(del_obj->type==OBJ_ROBOT || del_obj->type==OBJ_CLUTTER || del_obj->type==OBJ_CNTRLCEN || del_obj->type == OBJ_PLAYER);
 		Assert(del_obj->segnum != segment_none);
 
 		vclip_num = get_explosion_vclip(del_obj,1);
 
+		objptridx_t expl_obj = object_none;
 #if defined(DXX_BUILD_DESCENT_II)
 		if (del_obj->type == OBJ_ROBOT && Robot_info[del_obj->id].badass)
 			expl_obj = object_create_badass_explosion( object_none, del_obj->segnum, spawn_pos, fixmul(del_obj->size, EXPLOSION_SCALE), vclip_num, F1_0*Robot_info[del_obj->id].badass, i2f(4)*Robot_info[del_obj->id].badass, i2f(35)*Robot_info[del_obj->id].badass, object_none );
@@ -1264,38 +1227,37 @@ void do_explosion_sequence(object *obj)
 #define EXPL_WALL_FIREBALL_SIZE 		(0x48000*6/10)	//smallest size
 #endif
 
-expl_wall expl_wall_list[MAX_EXPLODING_WALLS];
+array<expl_wall, MAX_EXPLODING_WALLS> expl_wall_list;
 
 void init_exploding_walls()
 {
-	int i;
-
-	for (i=0;i<MAX_EXPLODING_WALLS;i++)
-		expl_wall_list[i].segnum = segment_none;
+	range_for (auto &i, expl_wall_list)
+		i.segnum = segment_none;
 }
 
 //explode the given wall
-void explode_wall(int segnum,int sidenum)
+void explode_wall(const vsegptridx_t segnum,int sidenum)
 {
-	int i;
-	vms_vector pos;
-
 	//find a free slot
-
-	for (i=0;i<MAX_EXPLODING_WALLS && expl_wall_list[i].segnum != segment_none;i++);
-
-	if (i==MAX_EXPLODING_WALLS) {		//didn't find slot.
+	const auto e = end(expl_wall_list);
+	const auto predicate = [](expl_wall &e) {
+		return e.segnum == segment_none;
+	};
+	const auto i = std::find_if(begin(expl_wall_list), e, predicate);
+	if (i == e)
+	{		//didn't find slot.
 		Int3();
 		return;
 	}
 
-	expl_wall_list[i].segnum	= segnum;
-	expl_wall_list[i].sidenum	= sidenum;
-	expl_wall_list[i].time		= 0;
+	auto &w = *i;
+	w.segnum	= segnum;
+	w.sidenum	= sidenum;
+	w.time		= 0;
 
 	//play one long sound for whole door wall explosion
-	compute_center_point_on_side(&pos,&Segments[segnum],sidenum);
-	digi_link_sound_to_pos( SOUND_EXPLODING_WALL,segnum, sidenum, &pos, 0, F1_0 );
+	const auto pos = compute_center_point_on_side(segnum,sidenum);
+	digi_link_sound_to_pos( SOUND_EXPLODING_WALL,segnum, sidenum, pos, 0, F1_0 );
 
 }
 
@@ -1303,33 +1265,29 @@ void explode_wall(int segnum,int sidenum)
 //note: this wall code assumes the wall is not triangulated
 void do_exploding_wall_frame()
 {
-	int i;
-
-	for (i=0;i<MAX_EXPLODING_WALLS;i++) {
-		int segnum = expl_wall_list[i].segnum;
+	range_for (auto &i, expl_wall_list)
+	{
+		auto segnum = i.segnum;
 
 		if (segnum != segment_none) {
-			int sidenum = expl_wall_list[i].sidenum;
+			int sidenum = i.sidenum;
 			fix oldfrac,newfrac;
 			int old_count,new_count,e;		//n,
 
-			oldfrac = fixdiv(expl_wall_list[i].time,EXPL_WALL_TIME);
+			oldfrac = fixdiv(i.time,EXPL_WALL_TIME);
 
-			expl_wall_list[i].time += FrameTime;
-			if (expl_wall_list[i].time > EXPL_WALL_TIME)
-				expl_wall_list[i].time = EXPL_WALL_TIME;
+			i.time += FrameTime;
+			if (i.time > EXPL_WALL_TIME)
+				i.time = EXPL_WALL_TIME;
 
-			if (expl_wall_list[i].time>(EXPL_WALL_TIME*3)/4) {
-				segment *seg,*csegp;
-				int cside,a,n;
-
-				seg = &Segments[segnum];
-
+			const auto seg = vsegptridx(segnum);
+			if (i.time>(EXPL_WALL_TIME*3)/4) {
+				int a,n;
 				a = Walls[seg->sides[sidenum].wall_num].clip_num;
 				n = WallAnims[a].num_frames;
 
-				csegp = &Segments[seg->children[sidenum]];
-				cside = find_connect_side(seg, csegp);
+				auto csegp = &Segments[seg->children[sidenum]];
+				auto cside = find_connect_side(seg, csegp);
 
 				wall_set_tmap_num(seg,sidenum,csegp,cside,a,n-1);
 
@@ -1338,7 +1296,7 @@ void do_exploding_wall_frame()
 
 			}
 
-			newfrac = fixdiv(expl_wall_list[i].time,EXPL_WALL_TIME);
+			newfrac = fixdiv(i.time,EXPL_WALL_TIME);
 
 			old_count = f2i(EXPL_WALL_TOTAL_FIREBALLS * fixmul(oldfrac,oldfrac));
 			new_count = f2i(EXPL_WALL_TOTAL_FIREBALLS * fixmul(newfrac,newfrac));
@@ -1348,34 +1306,31 @@ void do_exploding_wall_frame()
 			//now create all the next explosions
 
 			for (e=old_count;e<new_count;e++) {
-				int			vertnum_list[4];
-				vms_vector	*v0,*v1,*v2;
-				vms_vector	vv0,vv1,pos;
 				fix			size;
 
 				//calc expl position
 
-				get_side_verts(vertnum_list,segnum,sidenum);
+				const auto vertnum_list = get_side_verts(seg,sidenum);
 
-				v0 = &Vertices[vertnum_list[0]];
-				v1 = &Vertices[vertnum_list[1]];
-				v2 = &Vertices[vertnum_list[2]];
+				const auto &v0 = Vertices[vertnum_list[0]];
+				const auto &v1 = Vertices[vertnum_list[1]];
+				const auto &v2 = Vertices[vertnum_list[2]];
 
-				vm_vec_sub(&vv0,v0,v1);
-				vm_vec_sub(&vv1,v2,v1);
+				const auto vv0 = vm_vec_sub(v0,v1);
+				const auto vv1 = vm_vec_sub(v2,v1);
 
-				vm_vec_scale_add(&pos,v1,&vv0,d_rand()*2);
-				vm_vec_scale_add2(&pos,&vv1,d_rand()*2);
+				auto pos = vm_vec_scale_add(v1,vv0,d_rand()*2);
+				vm_vec_scale_add2(pos,vv1,d_rand()*2);
 
 				size = EXPL_WALL_FIREBALL_SIZE + (2*EXPL_WALL_FIREBALL_SIZE * e / EXPL_WALL_TOTAL_FIREBALLS);
 
 				//fireballs start away from door, with subsequent ones getting closer
-					vm_vec_scale_add2(&pos,&Segments[segnum].sides[sidenum].normals[0],size*(EXPL_WALL_TOTAL_FIREBALLS-e)/EXPL_WALL_TOTAL_FIREBALLS);
+					vm_vec_scale_add2(pos,Segments[segnum].sides[sidenum].normals[0],size*(EXPL_WALL_TOTAL_FIREBALLS-e)/EXPL_WALL_TOTAL_FIREBALLS);
 
 				if (e & 3)		//3 of 4 are normal
-					object_create_explosion(expl_wall_list[i].segnum,&pos,size,VCLIP_SMALL_EXPLOSION);
+					object_create_explosion(i.segnum,pos,size,VCLIP_SMALL_EXPLOSION);
 				else
-					object_create_badass_explosion( object_none, expl_wall_list[i].segnum, &pos,
+					object_create_badass_explosion( object_none, i.segnum, pos,
 					size,
 					VCLIP_SMALL_EXPLOSION,
 					i2f(4),		// damage strength
@@ -1383,13 +1338,9 @@ void do_exploding_wall_frame()
 					i2f(50),		//	damage force
 					object_none		//	parent id
 					);
-
-
 			}
-
-			if (expl_wall_list[i].time >= EXPL_WALL_TIME)
-				expl_wall_list[i].segnum = segment_none;	//flag this slot as free
-
+			if (i.time >= EXPL_WALL_TIME)
+				i.segnum = segment_none;	//flag this slot as free
 		}
 	}
 
@@ -1397,54 +1348,47 @@ void do_exploding_wall_frame()
 
 #if defined(DXX_BUILD_DESCENT_II)
 //creates afterburner blobs behind the specified object
-void drop_afterburner_blobs(object *obj, int count, fix size_scale, fix lifetime)
+void drop_afterburner_blobs(const vobjptr_t obj, int count, fix size_scale, fix lifetime)
 {
-	vms_vector pos_left,pos_right;
-	int segnum;
-
-	vm_vec_scale_add(&pos_left, &obj->pos, &obj->orient.fvec, -obj->size);
-	vm_vec_scale_add2(&pos_left, &obj->orient.rvec, -obj->size/4);
-	vm_vec_scale_add(&pos_right, &pos_left, &obj->orient.rvec, obj->size/2);
+	auto pos_left = vm_vec_scale_add(obj->pos, obj->orient.fvec, -obj->size);
+	vm_vec_scale_add2(pos_left, obj->orient.rvec, -obj->size/4);
+	const auto pos_right = vm_vec_scale_add(pos_left, obj->orient.rvec, obj->size/2);
 
 	if (count == 1)
-		vm_vec_avg(&pos_left, &pos_left, &pos_right);
+		vm_vec_avg(pos_left, pos_left, pos_right);
 
-	segnum = find_point_seg(&pos_left, obj->segnum);
+	auto segnum = find_point_seg(pos_left, obj->segnum);
 	if (segnum != segment_none)
-		object_create_explosion(segnum, &pos_left, size_scale, VCLIP_AFTERBURNER_BLOB );
+		object_create_explosion(segnum, pos_left, size_scale, VCLIP_AFTERBURNER_BLOB );
 
 	if (count > 1) {
-		segnum = find_point_seg(&pos_right, obj->segnum);
+		segnum = find_point_seg(pos_right, obj->segnum);
 		if (segnum != segment_none) {
-			object	*blob_obj;
-			blob_obj = object_create_explosion(segnum, &pos_right, size_scale, VCLIP_AFTERBURNER_BLOB );
-			if (lifetime != -1)
+			auto blob_obj = object_create_explosion(segnum, pos_right, size_scale, VCLIP_AFTERBURNER_BLOB );
+			if (lifetime != -1 && blob_obj != object_none)
 				blob_obj->lifeleft = lifetime;
 		}
 	}
 }
 
-static void expl_wall_swap(expl_wall *ew, int swap)
-{
-	if (!swap)
-		return;
-	
-	ew->segnum = SWAPINT(ew->segnum);
-	ew->sidenum = SWAPINT(ew->sidenum);
-	ew->time = SWAPINT(ew->time);
-}
-
 /*
  * reads n expl_wall structs from a PHYSFS_file and swaps if specified
  */
-void expl_wall_read_n_swap(expl_wall *ew, int n, int swap, PHYSFS_file *fp)
+void expl_wall_read_n_swap(PHYSFS_file *fp, int swap, partial_range_t<expl_wall *> r)
 {
-	int i;
-	
-	PHYSFS_read(fp, ew, sizeof(expl_wall), n);
-	
-	if (swap)
-		for (i = 0; i < n; i++)
-			expl_wall_swap(&ew[i], swap);
+	range_for (auto &e, r)
+	{
+		disk_expl_wall d;
+		PHYSFS_read(fp, &d, sizeof(d), 1);
+		if (swap)
+		{
+			d.segnum = SWAPINT(d.segnum);
+			d.sidenum = SWAPINT(d.sidenum);
+			d.time = SWAPINT(d.time);
+		}
+		e.segnum = d.segnum;
+		e.sidenum = d.sidenum;
+		e.time = d.time;
+	}
 }
 #endif

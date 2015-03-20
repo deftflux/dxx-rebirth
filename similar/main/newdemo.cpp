@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,11 +23,10 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-
+#include <ctime>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
-#include <string.h> // for memset
 #include <errno.h>
 #include <ctype.h>
 
@@ -77,8 +82,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "aistruct.h"
 #include "mission.h"
 #include "piggy.h"
-#include "byteswap.h"
-#include "physfsx.h"
+#include "byteutil.h"
 #include "console.h"
 #include "controls.h"
 #include "playsave.h"
@@ -89,6 +93,9 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #include "dxxsconf.h"
 #include "compiler-type_traits.h"
+#include "compiler-range_for.h"
+#include "highest_valid.h"
+#include "partial_range.h"
 
 #define ND_EVENT_EOF				0	// EOF
 #define ND_EVENT_START_DEMO			1	// Followed by 16 character, NULL terminated filename of .SAV file to use
@@ -167,11 +174,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #define DEMO_MAX_LEVELS				29
 
-const file_extension_t demo_file_extensions[2] = { DEMO_EXT, "" };
+const array<file_extension_t, 1> demo_file_extensions{DEMO_EXT};
 
 // In- and Out-files
-PHYSFS_file *infile;
-PHYSFS_file *outfile = NULL;
+static RAIIPHYSFS_File infile;
+static RAIIPHYSFS_File outfile;
 
 // Some globals
 int Newdemo_state = 0;
@@ -184,7 +191,7 @@ int Newdemo_num_written;
 ubyte DemoDoRight=0,DemoDoLeft=0;
 object DemoRightExtra,DemoLeftExtra;
 
-static void nd_render_extras (ubyte which,object *obj);
+static void nd_render_extras (ubyte which,const vcobjptr_t obj);
 #endif
 
 // local var used for swapping endian demos
@@ -192,7 +199,7 @@ static int swap_endian = 0;
 
 // playback variables
 static unsigned int nd_playback_v_demosize;
-static char nd_playback_v_save_callsign[CALLSIGN_LEN+1];
+static callsign_t nd_playback_v_save_callsign;
 static sbyte nd_playback_v_at_eof;
 static sbyte nd_playback_v_cntrlcen_destroyed = 0;
 static sbyte nd_playback_v_bad_read;
@@ -248,9 +255,9 @@ int newdemo_get_percent_done()	{
 
 #define VEL_PRECISION 12
 
-static void my_extract_shortpos(object *objp, shortpos *spp)
+static void my_extract_shortpos(const vobjptr_t objp, shortpos *spp)
 {
-	int segnum;
+	segnum_t segnum;
 	sbyte *sp;
 
 	sp = spp->bytemat;
@@ -294,14 +301,15 @@ static typename tt::enable_if<tt::is_integral<T>::value, int>::type newdemo_read
 	return _newdemo_read(buffer, elsize, nelem);
 }
 
-int newdemo_find_object( int signature )
+objnum_t newdemo_find_object( int signature )
 {
-	for (unsigned i=0; i<=Highest_object_index; i++) {
+	range_for (const auto i, highest_valid(Objects))
+	{
 		object * objp = &Objects[i];
 		if ( (objp->type != OBJ_NONE) && (objp->signature == signature))
 			return i;
 	}
-	return -1;
+	return object_none;
 }
 
 static int _newdemo_write(const void *buffer, int elsize, int nelem )
@@ -311,7 +319,7 @@ static int _newdemo_write(const void *buffer, int elsize, int nelem )
 	total_size = elsize * nelem;
 	nd_record_v_framebytes_written += total_size;
 	Newdemo_num_written += total_size;
-	Assert(outfile != NULL);
+	Assert(outfile);
 	num_written = (PHYSFS_write)(outfile, buffer, elsize, nelem);
 
 	if (num_written == nelem && !nd_record_v_no_space)
@@ -365,23 +373,22 @@ static void nd_write_fixang(fixang f)
 	newdemo_write(&f, sizeof(fixang), 1);
 }
 
-static void nd_write_vector(vms_vector *v)
+static void nd_write_vector(const vms_vector &v)
 {
-	nd_write_fix(v->x);
-	nd_write_fix(v->y);
-	nd_write_fix(v->z);
+	nd_write_fix(v.x);
+	nd_write_fix(v.y);
+	nd_write_fix(v.z);
 }
 
-static void nd_write_angvec(vms_angvec *v)
+static void nd_write_angvec(const vms_angvec &v)
 {
-	nd_write_fixang(v->p);
-	nd_write_fixang(v->b);
-	nd_write_fixang(v->h);
+	nd_write_fixang(v.p);
+	nd_write_fixang(v.b);
+	nd_write_fixang(v.h);
 }
 
-static void nd_write_shortpos(object *obj)
+static void nd_write_shortpos(const vcobjptr_t obj)
 {
-	int i;
 	shortpos sp;
 	ubyte render_type;
 
@@ -389,13 +396,14 @@ static void nd_write_shortpos(object *obj)
 
 	render_type = obj->render_type;
 	if (((render_type == RT_POLYOBJ) || (render_type == RT_HOSTAGE) || (render_type == RT_MORPH)) || (obj->type == OBJ_CAMERA)) {
-		for (i = 0; i < 9; i++)
-			nd_write_byte(sp.bytemat[i]);
-		for (i = 0; i < 9; i++) {
-			if (sp.bytemat[i] != 0)
-				break;
+		uint8_t mask = 0;
+		range_for (auto &i, sp.bytemat)
+		{
+			nd_write_byte(i);
+			mask |= i;
 		}
-		if (i == 9) {
+		if (!mask)
+		{
 			Int3();         // contact Allender about this.
 		}
 	}
@@ -421,11 +429,41 @@ static void nd_read_short(short *s)
 		*s = SWAPSHORT(*s);
 }
 
+static void nd_read_objnum16(objnum_t &o)
+{
+	short s;
+	nd_read_short(&s);
+	o = s;
+}
+
 static void nd_read_int(int *i)
 {
 	newdemo_read(i, 4, 1);
 	if (swap_endian)
 		*i = SWAPINT(*i);
+}
+
+#if defined(DXX_BUILD_DESCENT_II)
+static void nd_read_int(unsigned *i)
+{
+	newdemo_read(i, 4, 1);
+	if (swap_endian)
+		*i = SWAPINT(*i);
+}
+#endif
+
+static void nd_read_segnum32(segnum_t &s)
+{
+	int i;
+	nd_read_int(&i);
+	s = i;
+}
+
+static void nd_read_objnum32(objnum_t &o)
+{
+	int i;
+	nd_read_int(&i);
+	o = i;
 }
 
 static void nd_read_string(char *str)
@@ -450,32 +488,30 @@ static void nd_read_fixang(fixang *f)
 		*f = SWAPSHORT(*f);
 }
 
-static void nd_read_vector(vms_vector *v)
+static void nd_read_vector(vms_vector &v)
 {
-	nd_read_fix(&(v->x));
-	nd_read_fix(&(v->y));
-	nd_read_fix(&(v->z));
+	nd_read_fix(&v.x);
+	nd_read_fix(&v.y);
+	nd_read_fix(&v.z);
 }
 
-static void nd_read_angvec(vms_angvec *v)
+static void nd_read_angvec(vms_angvec &v)
 {
-	nd_read_fixang(&(v->p));
-	nd_read_fixang(&(v->b));
-	nd_read_fixang(&(v->h));
+	nd_read_fixang(&v.p);
+	nd_read_fixang(&v.b);
+	nd_read_fixang(&v.h);
 }
 
-static void nd_read_shortpos(object *obj)
+static void nd_read_shortpos(const vobjptr_t obj)
 {
-	shortpos sp;
-	int i;
 	ubyte render_type;
 
-	memset(&sp,0,sizeof(shortpos));
+	shortpos sp{};
 
 	render_type = obj->render_type;
 	if (((render_type == RT_POLYOBJ) || (render_type == RT_HOSTAGE) || (render_type == RT_MORPH)) || (obj->type == OBJ_CAMERA)) {
-		for (i = 0; i < 9; i++)
-			nd_read_byte(&(sp.bytemat[i]));
+		range_for (auto &i, sp.bytemat)
+			nd_read_byte(&(i));
 	}
 
 	nd_read_short(&(sp.xo));
@@ -494,11 +530,13 @@ static void nd_read_shortpos(object *obj)
 
 object *prev_obj=NULL;      //ptr to last object read in
 
-static void nd_read_object(object *obj)
+static void nd_read_object(const vobjptridx_t obj)
 {
 	short shortsig = 0;
 
-	memset(obj, 0, sizeof(object));
+	*obj = {};
+	obj->next = obj->prev = object_none;
+	obj->segnum = segment_none;
 
 	/*
 	 * Do render type first, since with render_type == RT_NONE, we
@@ -576,7 +614,7 @@ static void nd_read_object(object *obj)
 	}
 
 
-	nd_read_vector(&(obj->last_pos));
+	nd_read_vector(obj->last_pos);
 	if ((obj->type == OBJ_WEAPON) && (obj->render_type == RT_WEAPON_VCLIP))
 		nd_read_fix(&(obj->lifeleft));
 	else {
@@ -603,12 +641,12 @@ static void nd_read_object(object *obj)
 	switch (obj->movement_type) {
 
 	case MT_PHYSICS:
-		nd_read_vector(&(obj->mtype.phys_info.velocity));
-		nd_read_vector(&(obj->mtype.phys_info.thrust));
+		nd_read_vector(obj->mtype.phys_info.velocity);
+		nd_read_vector(obj->mtype.phys_info.thrust);
 		break;
 
 	case MT_SPINNING:
-		nd_read_vector(&(obj->mtype.spin_rate));
+		nd_read_vector(obj->mtype.spin_rate);
 		break;
 
 	case MT_NONE:
@@ -624,7 +662,7 @@ static void nd_read_object(object *obj)
 
 		nd_read_fix(&(obj->ctype.expl_info.spawn_time));
 		nd_read_fix(&(obj->ctype.expl_info.delete_time));
-		nd_read_short(&(obj->ctype.expl_info.delete_objnum));
+		nd_read_objnum16(obj->ctype.expl_info.delete_objnum);
 
 		obj->ctype.expl_info.next_attach = obj->ctype.expl_info.prev_attach = obj->ctype.expl_info.attach_parent = object_none;
 
@@ -632,12 +670,12 @@ static void nd_read_object(object *obj)
 			Assert(prev_obj!=NULL);
 			if (prev_obj->control_type == CT_EXPLOSION) {
 				if (prev_obj->flags & OF_ATTACHED && prev_obj->ctype.expl_info.attach_parent!=object_none)
-					obj_attach(&Objects[prev_obj->ctype.expl_info.attach_parent],obj);
+					obj_attach(vobjptridx(prev_obj->ctype.expl_info.attach_parent),obj);
 				else
 					obj->flags &= ~OF_ATTACHED;
 			}
 			else
-				obj_attach(prev_obj,obj);
+				obj_attach(vobjptridx(prev_obj),obj);
 		}
 
 		break;
@@ -672,7 +710,7 @@ static void nd_read_object(object *obj)
 
 	case RT_MORPH:
 	case RT_POLYOBJ: {
-		int i, tmo;
+		int tmo;
 
 		if ((obj->type != OBJ_ROBOT) && (obj->type != OBJ_PLAYER) && (obj->type != OBJ_CLUTTER)) {
 			nd_read_int(&(obj->rtype.pobj_info.model_num));
@@ -681,11 +719,11 @@ static void nd_read_object(object *obj)
 
 		if ((obj->type != OBJ_PLAYER) && (obj->type != OBJ_DEBRIS))
 #if 0
-			for (i=0;i<MAX_SUBMODELS;i++)
-				nd_read_angvec(&(obj->pobj_info.anim_angles[i]));
+			range_for (auto &i, obj->pobj_info.anim_angles)
+				nd_read_angvec(&(i));
 #endif
-		for (i = 0; i < Polygon_models[obj->rtype.pobj_info.model_num].n_models; i++)
-			nd_read_angvec(&obj->rtype.pobj_info.anim_angles[i]);
+		range_for (auto &i, partial_range(obj->rtype.pobj_info.anim_angles, Polygon_models[obj->rtype.pobj_info.model_num].n_models))
+			nd_read_angvec(i);
 
 		nd_read_int(&tmo);
 
@@ -727,7 +765,7 @@ static void nd_read_object(object *obj)
 	prev_obj = obj;
 }
 
-static void nd_write_object(object *obj)
+static void nd_write_object(const vcobjptr_t obj)
 {
 	int life;
 	short shortsig = 0;
@@ -760,7 +798,7 @@ static void nd_write_object(object *obj)
 	if (obj->type == OBJ_POWERUP)
 		nd_write_byte(obj->movement_type);
 
-	nd_write_vector(&obj->last_pos);
+	nd_write_vector(obj->last_pos);
 
 	if ((obj->type == OBJ_WEAPON) && (obj->render_type == RT_WEAPON_VCLIP))
 		nd_write_fix(obj->lifeleft);
@@ -784,12 +822,12 @@ static void nd_write_object(object *obj)
 	switch (obj->movement_type) {
 
 	case MT_PHYSICS:
-		nd_write_vector(&obj->mtype.phys_info.velocity);
-		nd_write_vector(&obj->mtype.phys_info.thrust);
+		nd_write_vector(obj->mtype.phys_info.velocity);
+		nd_write_vector(obj->mtype.phys_info.thrust);
 		break;
 
 	case MT_SPINNING:
-		nd_write_vector(&obj->mtype.spin_rate);
+		nd_write_vector(obj->mtype.spin_rate);
 		break;
 
 	case MT_NONE:
@@ -842,8 +880,6 @@ static void nd_write_object(object *obj)
 
 	case RT_MORPH:
 	case RT_POLYOBJ: {
-		int i;
-
 		if ((obj->type != OBJ_ROBOT) && (obj->type != OBJ_PLAYER) && (obj->type != OBJ_CLUTTER)) {
 			nd_write_int(obj->rtype.pobj_info.model_num);
 			nd_write_int(obj->rtype.pobj_info.subobj_flags);
@@ -851,11 +887,11 @@ static void nd_write_object(object *obj)
 
 		if ((obj->type != OBJ_PLAYER) && (obj->type != OBJ_DEBRIS))
 #if 0
-			for (i=0;i<MAX_SUBMODELS;i++)
-				nd_write_angvec(&obj->pobj_info.anim_angles[i]);
+			range_for (auto &i, obj->pobj_info.anim_angles)
+				nd_write_angvec(&i);
 #endif
-		for (i = 0; i < Polygon_models[obj->rtype.pobj_info.model_num].n_models; i++)
-			nd_write_angvec(&obj->rtype.pobj_info.anim_angles[i]);
+		range_for (auto &i, partial_range(obj->rtype.pobj_info.anim_angles, Polygon_models[obj->rtype.pobj_info.model_num].n_models))
+			nd_write_angvec(i);
 
 		nd_write_int(obj->rtype.pobj_info.tmap_override);
 
@@ -883,8 +919,6 @@ static void nd_write_object(object *obj)
 
 void newdemo_record_start_demo()
 {
-	int i;
-
 	nd_record_v_recordframe_last_time=GameTime64-REC_DELAY; // make sure first frame is recorded!
 
 	stop_time();
@@ -907,15 +941,15 @@ void newdemo_record_start_demo()
 
 	if (Game_mode & GM_MULTI) {
 		nd_write_byte((sbyte)N_players);
-		for (i = 0; i < N_players; i++) {
-			nd_write_string(Players[i].callsign);
-			nd_write_byte(Players[i].connected);
+		range_for (auto &i, partial_range(Players, N_players)) {
+			nd_write_string(static_cast<const char *>(i.callsign));
+			nd_write_byte(i.connected);
 
 			if (Game_mode & GM_MULTI_COOP) {
-				nd_write_int(Players[i].score);
+				nd_write_int(i.score);
 			} else {
-				nd_write_short((short)Players[i].net_killed_total);
-				nd_write_short((short)Players[i].net_kills_total);
+				nd_write_short(i.net_killed_total);
+				nd_write_short(i.net_kills_total);
 			}
 		}
 	} else
@@ -928,11 +962,11 @@ void newdemo_record_start_demo()
 	nd_record_v_primary_ammo = -1;
 	nd_record_v_secondary_ammo = -1;
 
-	for (i = 0; i < MAX_PRIMARY_WEAPONS; i++)
+	for (int i = 0; i < MAX_PRIMARY_WEAPONS; i++)
 		nd_write_short(i == VULCAN_INDEX ? Players[Player_num].vulcan_ammo : 0);
 
-	for (i = 0; i < MAX_SECONDARY_WEAPONS; i++)
-		nd_write_short((short)Players[Player_num].secondary_ammo[i]);
+	range_for (auto &i, Players[Player_num].secondary_ammo)
+		nd_write_short(i);
 
 	nd_write_byte((sbyte)Players[Player_num].laser_level);
 
@@ -992,8 +1026,8 @@ void newdemo_record_start_frame(fix frame_time )
 			nd_record_v_objs[i]=0;
 			nd_record_v_viewobjs[i]=0;
 		}
-		for (int i=0;i<32;i++)
-			nd_record_v_rendering[i]=0;
+		range_for (auto &i, nd_record_v_rendering)
+			i=0;
 
 #endif
 		nd_record_v_frame_number -= nd_record_v_start_frame;
@@ -1013,7 +1047,7 @@ void newdemo_record_start_frame(fix frame_time )
 
 }
 
-void newdemo_record_render_object(objptridx_t obj)
+void newdemo_record_render_object(const vobjptridx_t obj)
 {
 	if (!nd_record_v_recordframe)
 		return;
@@ -1031,7 +1065,7 @@ void newdemo_record_render_object(objptridx_t obj)
 	start_time();
 }
 
-void newdemo_record_viewer_object(objptridx_t obj)
+void newdemo_record_viewer_object(const vobjptridx_t obj)
 {
 	if (!nd_record_v_recordframe)
 		return;
@@ -1095,16 +1129,16 @@ void newdemo_record_link_sound_to_object3( int soundno, short objnum, fix max_vo
 	start_time();
 }
 
-void newdemo_record_kill_sound_linked_to_object( int objnum )
+void newdemo_record_kill_sound_linked_to_object(const vcobjptridx_t objp)
 {
 	stop_time();
 	nd_write_byte( ND_EVENT_KILL_SOUND_TO_OBJ );
-	nd_write_int( Objects[objnum].signature );
+	nd_write_int(objp->signature );
 	start_time();
 }
 
 
-void newdemo_record_wall_hit_process( int segnum, int side, int damage, int playernum )
+void newdemo_record_wall_hit_process( segnum_t segnum, int side, int damage, int playernum )
 {
 	stop_time();
 	nd_write_byte( ND_EVENT_WALL_HIT_PROCESS );
@@ -1134,7 +1168,7 @@ void newdemo_record_secret_exit_blown(int truth)
 	start_time();
 }
 
-void newdemo_record_trigger( int segnum, int side, int objnum,int shot )
+void newdemo_record_trigger( segnum_t segnum, int side, objnum_t objnum,int shot )
 {
 	stop_time();
 	nd_write_byte( ND_EVENT_TRIGGER );
@@ -1164,7 +1198,7 @@ void newdemo_record_morph_frame(morph_data *md)
 	start_time();
 }
 
-void newdemo_record_wall_toggle( int segnum, int side )
+void newdemo_record_wall_toggle( segnum_t segnum, int side )
 {
 	stop_time();
 	nd_write_byte( ND_EVENT_WALL_TOGGLE );
@@ -1269,7 +1303,7 @@ void newdemo_record_player_weapon(int weapon_type, int weapon_num)
 	start_time();
 }
 
-void newdemo_record_effect_blowup(short segment, int side, vms_vector *pnt)
+void newdemo_record_effect_blowup(short segment, int side, const vms_vector &pnt)
 {
 	stop_time();
 	nd_write_byte (ND_EVENT_EFFECT_BLOWUP);
@@ -1382,7 +1416,7 @@ void newdemo_record_multi_connect(int pnum, int new_player, const char *new_call
 	nd_write_byte((sbyte)pnum);
 	nd_write_byte((sbyte)new_player);
 	if (!new_player) {
-		nd_write_string(Players[pnum].callsign);
+		nd_write_string(static_cast<const char *>(Players[pnum].callsign));
 		nd_write_int(Players[pnum].net_killed_total);
 		nd_write_int(Players[pnum].net_kills_total);
 	}
@@ -1453,11 +1487,11 @@ void newdemo_record_secondary_ammo(int new_ammo)
 	start_time();
 }
 
-void newdemo_record_door_opening(int segnum, int side)
+void newdemo_record_door_opening(segnum_t segnum, int side)
 {
 	stop_time();
 	nd_write_byte(ND_EVENT_DOOR_OPENING);
-	nd_write_short((short)segnum);
+	nd_write_short(segnum);
 	nd_write_byte((sbyte)side);
 	start_time();
 }
@@ -1501,14 +1535,14 @@ void newdemo_set_new_level(int level_num)
 	if (nd_record_v_juststarted==1)
 	{
 		nd_write_int(Num_walls);
-		for (int i=0;i<Num_walls;i++)
+		range_for (auto &w, partial_range(Walls, Num_walls))
 		{
-			nd_write_byte (Walls[i].type);
-			nd_write_byte (Walls[i].flags);
-			nd_write_byte (Walls[i].state);
+			nd_write_byte (w.type);
+			nd_write_byte (w.flags);
+			nd_write_byte (w.state);
 
-			int side = Walls[i].sidenum;
-			segment *seg = &Segments[Walls[i].segnum];
+			int side = w.sidenum;
+			segment *seg = &Segments[w.segnum];
 			nd_write_short (seg->sides[side].tmap_num);
 			nd_write_short (seg->sides[side].tmap_num2);
 			nd_record_v_juststarted=0;
@@ -1540,18 +1574,16 @@ static void newdemo_record_oneframeevent_update(int wallupdate)
 	// This will record tmaps for all walls and properly show doors which were opened before demo recording started.
 	if (wallupdate)
 	{
-		for (int i = 0; i < Num_walls; i++)
+		range_for (auto &w, partial_range(Walls, Num_walls))
 		{
 			int side;
-			segment *seg;
-
-			seg = &Segments[Walls[i].segnum];
-			side = Walls[i].sidenum;
+			auto seg = &Segments[w.segnum];
+			side = w.sidenum;
 			// actually this is kinda stupid: when playing ther same tmap will be put on front and back side of the wall ... for doors this is stupid so just record the front side which will do for doors just fine ...
 			if (seg->sides[side].tmap_num != 0)
-				newdemo_record_wall_set_tmap_num1(Walls[i].segnum,side,Walls[i].segnum,side,seg->sides[side].tmap_num);
+				newdemo_record_wall_set_tmap_num1(w.segnum,side,w.segnum,side,seg->sides[side].tmap_num);
 			if (seg->sides[side].tmap_num2 != 0)
-				newdemo_record_wall_set_tmap_num2(Walls[i].segnum,side,Walls[i].segnum,side,seg->sides[side].tmap_num2);
+				newdemo_record_wall_set_tmap_num2(w.segnum,side,w.segnum,side,seg->sides[side].tmap_num2);
 		}
 	}
 #elif defined(DXX_BUILD_DESCENT_II)
@@ -1607,7 +1639,7 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 		nd_write_byte(game_type);
 #if defined(DXX_BUILD_DESCENT_I)
 	if ((game_type == DEMO_GAME_TYPE_SHAREWARE) && shareware)
-		shareware = shareware;	// all good
+		;	// all good
 	else if (game_type != DEMO_GAME_TYPE) {
 		nm_messagebox( NULL, 1, TXT_OK, "%s %s", TXT_CANT_PLAYBACK, TXT_DEMO_OLD );
 
@@ -1652,17 +1684,18 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 				nd_write_byte(Netgame.team_vector);
 		}
 
-		for (i =0 ; i < MAX_PLAYERS; i++) {
-			Players[i].cloak_time = 0;
-			Players[i].invulnerable_time = 0;
+		range_for (auto &i, Players)
+		{
+			i.cloak_time = 0;
+			i.invulnerable_time = 0;
 		}
 	}
 	else
 	{
 		if (Newdemo_game_mode & GM_TEAM) {
 			nd_read_byte((sbyte *) &(Netgame.team_vector));
-			nd_read_string(Netgame.team_name[0]);
-			nd_read_string(Netgame.team_name[1]);
+			nd_read_string(Netgame.team_name[0].buffer());
+			nd_read_string(Netgame.team_name[1].buffer());
 			if (purpose == PURPOSE_REWRITE)
 			{
 				nd_write_byte(Netgame.team_vector);
@@ -1681,28 +1714,28 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 			//		nd_read_byte((sbyte *)&N_players);
 			if (purpose == PURPOSE_REWRITE)
 				nd_write_byte(N_players);
-			for (i = 0 ; i < N_players; i++) {
-				Players[i].cloak_time = 0;
-				Players[i].invulnerable_time = 0;
-				nd_read_string(Players[i].callsign);
-				nd_read_byte(&(Players[i].connected));
+			range_for (auto &i, partial_range(Players, N_players)) {
+				i.cloak_time = 0;
+				i.invulnerable_time = 0;
+				nd_read_string(i.callsign.buffer());
+				nd_read_byte(&(i.connected));
 				if (purpose == PURPOSE_REWRITE)
 				{
-					nd_write_string(Players[i].callsign);
-					nd_write_byte(Players[i].connected);
+					nd_write_string(static_cast<const char *>(i.callsign));
+					nd_write_byte(i.connected);
 				}
 
 				if (Newdemo_game_mode & GM_MULTI_COOP) {
-					nd_read_int(&(Players[i].score));
+					nd_read_int(&(i.score));
 					if (purpose == PURPOSE_REWRITE)
-						nd_write_int(Players[i].score);
+						nd_write_int(i.score);
 				} else {
-					nd_read_short((short *)&(Players[i].net_killed_total));
-					nd_read_short((short *)&(Players[i].net_kills_total));
+					nd_read_short((short *)&(i.net_killed_total));
+					nd_read_short((short *)&(i.net_kills_total));
 					if (purpose == PURPOSE_REWRITE)
 					{
-						nd_write_short(Players[i].net_killed_total);
-						nd_write_short(Players[i].net_kills_total);
+						nd_write_short(i.net_killed_total);
+						nd_write_short(i.net_kills_total);
 					}
 				}
 			}
@@ -1738,11 +1771,11 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 			nd_write_short(s);
 	}
 
-	for (i = 0; i < MAX_SECONDARY_WEAPONS; i++)
+	range_for (auto &i, Players[Player_num].secondary_ammo)
 	{
-		nd_read_short((short*)&(Players[Player_num].secondary_ammo[i]));
+		nd_read_short((short*)&(i));
 		if (purpose == PURPOSE_REWRITE)
-			nd_write_short(Players[Player_num].secondary_ammo[i]);
+			nd_write_short(i);
 	}
 
 	nd_read_byte(&laser_level);
@@ -1837,15 +1870,13 @@ static int newdemo_read_demo_start(enum purpose_type purpose)
 
 static void newdemo_pop_ctrlcen_triggers()
 {
-	int anim_num, n, i;
-	int side, cside;
-	segment *seg, *csegp;
-
-	for (i = 0; i < ControlCenterTriggers.num_links; i++)	{
-		seg = &Segments[ControlCenterTriggers.seg[i]];
+	int anim_num, n;
+	int side;
+	for (int i = 0; i < ControlCenterTriggers.num_links; i++) {
+		auto seg = &Segments[ControlCenterTriggers.seg[i]];
 		side = ControlCenterTriggers.side[i];
-		csegp = &Segments[seg->children[side]];
-		cside = find_connect_side(seg, csegp);
+		auto csegp = &Segments[seg->children[side]];
+		auto cside = find_connect_side(seg, csegp);
 		anim_num = Walls[seg->sides[side].wall_num].clip_num;
 		n = WallAnims[anim_num].num_frames;
 		if (WallAnims[anim_num].flags & WCF_TMAP1)	{
@@ -1858,13 +1889,13 @@ static void newdemo_pop_ctrlcen_triggers()
 
 static int newdemo_read_frame_information(int rewrite)
 {
-	int done, segnum, side, objnum, soundno, angle, volume, i;
+	int done, side, soundno, angle, volume;
 	sbyte c;
 
 	done = 0;
 
 	if (Newdemo_vcr_state != ND_STATE_PAUSED)
-		for (segnum=0; segnum <= Highest_segment_index; segnum++)
+		range_for (const auto segnum, highest_valid(Segments))
 			Segments[segnum].objects = object_none;
 
 	reset_objects(1);
@@ -1906,13 +1937,15 @@ static int newdemo_read_frame_information(int rewrite)
 		{
 #if defined(DXX_BUILD_DESCENT_II)
 			sbyte WhichWindow;
-			object extraobj;
 			nd_read_byte (&WhichWindow);
 			if (rewrite)
 				nd_write_byte(WhichWindow);
 			if (WhichWindow&15)
 			{
-				nd_read_object (&extraobj);
+				const auto obj = obj_allocate();
+				if (obj==object_none)
+					break;
+				nd_read_object(obj);
 				if (nd_playback_v_bad_read)
 				{
 					done = -1;
@@ -1920,12 +1953,13 @@ static int newdemo_read_frame_information(int rewrite)
 				}
 				if (rewrite)
 				{
-					nd_write_object (&extraobj);
+					nd_write_object(obj);
 					break;
 				}
 				// offset to compensate inaccuracy between object and viewer
-				vm_vec_scale_add(&extraobj.pos,&extraobj.pos,&extraobj.orient.fvec,F1_0*5 );
-				nd_render_extras (WhichWindow,&extraobj);
+				vm_vec_scale_add(obj->pos, obj->pos, obj->orient.fvec, F1_0*5 );
+				nd_render_extras (WhichWindow,obj);
+				obj_delete(obj);
 			}
 			else
 #endif
@@ -1938,7 +1972,7 @@ static int newdemo_read_frame_information(int rewrite)
 				break;
 			}
 			if (Newdemo_vcr_state != ND_STATE_PAUSED) {
-				segnum = Viewer->segnum;
+				auto segnum = Viewer->segnum;
 				Viewer->next = Viewer->prev = object_none;
 				Viewer->segnum = segment_none;
 
@@ -1957,7 +1991,7 @@ static int newdemo_read_frame_information(int rewrite)
 
 		case ND_EVENT_RENDER_OBJECT:       // Followed by an object structure
 		{
-			objptridx_t obj = obj_allocate();
+			const objptridx_t obj = obj_allocate();
 			if (obj==object_none)
 				break;
 			nd_read_object(obj);
@@ -1968,7 +2002,7 @@ static int newdemo_read_frame_information(int rewrite)
 				break;
 			}
 			if (Newdemo_vcr_state != ND_STATE_PAUSED) {
-				segnum = obj->segnum;
+				auto segnum = obj->segnum;
 				obj->next = obj->prev = object_none;
 				obj->segnum = segment_none;
 
@@ -1990,7 +2024,7 @@ static int newdemo_read_frame_information(int rewrite)
 						break;
 					player--;
 
-					for (i=0;i<Polygon_models[obj->rtype.pobj_info.model_num].n_textures;i++)
+					for (int i=0;i<Polygon_models[obj->rtype.pobj_info.model_num].n_textures;i++)
 						multi_player_textures[player][i] = ObjBitmaps[ObjBitmapPtrs[Polygon_models[obj->rtype.pobj_info.model_num].first_texture+i]];
 
 					multi_player_textures[player][4] = ObjBitmaps[ObjBitmapPtrs[First_multi_bitmap_num+(player)*2]];
@@ -2047,7 +2081,7 @@ static int newdemo_read_frame_information(int rewrite)
 
 		case ND_EVENT_LINK_SOUND_TO_OBJ:
 			{
-				int soundno, objnum, max_volume, max_distance, loop_start, loop_end;
+				int soundno, max_volume, max_distance, loop_start, loop_end;
 				int signature;
 				nd_read_int( &soundno );
 				nd_read_int( &signature );
@@ -2065,34 +2099,35 @@ static int newdemo_read_frame_information(int rewrite)
 					nd_write_int( loop_end );
 					break;
 				}
-				objnum = newdemo_find_object( signature );
+				auto objnum = newdemo_find_object( signature );
 				if ( objnum != object_none && Newdemo_vcr_state == ND_STATE_PLAYBACK)  {   //  @mk, 2/22/96, John told me to.
-					digi_link_sound_to_object3( soundno, objnum, 1, max_volume, max_distance, loop_start, loop_end );
+					digi_link_sound_to_object3( soundno, vcobjptridx(objnum), 1, max_volume, vm_distance{max_distance}, loop_start, loop_end );
 				}
 			}
 			break;
 
 		case ND_EVENT_KILL_SOUND_TO_OBJ:
 			{
-				int objnum, signature;
+				int signature;
 				nd_read_int( &signature );
 				if (rewrite)
 				{
 					nd_write_int( signature );
 					break;
 				}
-				objnum = newdemo_find_object( signature );
+				auto objnum = newdemo_find_object( signature );
 				if ( objnum != object_none && Newdemo_vcr_state == ND_STATE_PLAYBACK)  {   //  @mk, 2/22/96, John told me to.
-					digi_kill_sound_linked_to_object(objnum);
+					digi_kill_sound_linked_to_object(vcobjptridx(objnum));
 				}
 			}
 			break;
 
 		case ND_EVENT_WALL_HIT_PROCESS: {
-			int player, segnum;
+			int player;
+			segnum_t segnum;
 			fix damage;
 
-			nd_read_int(&segnum);
+			nd_read_segnum32(segnum);
 			nd_read_int(&side);
 			nd_read_fix(&damage);
 			nd_read_int(&player);
@@ -2112,9 +2147,11 @@ static int newdemo_read_frame_information(int rewrite)
 
 		case ND_EVENT_TRIGGER:
 		{
-			nd_read_int(&segnum);
+			segnum_t segnum;
+			objnum_t objnum;
+			nd_read_segnum32(segnum);
 			nd_read_int(&side);
-			nd_read_int(&objnum);
+			nd_read_objnum32(objnum);
 			int shot;
 #if defined(DXX_BUILD_DESCENT_I)
 			shot = 0;
@@ -2168,7 +2205,7 @@ static int newdemo_read_frame_information(int rewrite)
 				break;
 			}
 			if (Newdemo_vcr_state != ND_STATE_PAUSED)
-				hostage_rescue( hostage_number );
+				hostage_rescue();
 			break;
 		}
 
@@ -2181,7 +2218,7 @@ static int newdemo_read_frame_information(int rewrite)
 			if (newdemo_read( md->submodel_active, sizeof(md->submodel_active), 1 )!=1) { done=-1; break; }
 			if (newdemo_read( md->submodel_startpoints, sizeof(md->submodel_startpoints), 1 )!=1) { done=-1; break; }
 #endif
-			objptridx_t obj = obj_allocate();
+			const objptridx_t obj = obj_allocate();
 			if (obj==object_none)
 				break;
 			nd_read_object(obj);
@@ -2194,7 +2231,7 @@ static int newdemo_read_frame_information(int rewrite)
 			obj->render_type = RT_POLYOBJ;
 			if (Newdemo_vcr_state != ND_STATE_PAUSED) {
 				if (Newdemo_vcr_state != ND_STATE_PAUSED) {
-					segnum = obj->segnum;
+					auto segnum = obj->segnum;
 					obj->next = obj->prev = object_none;
 					obj->segnum = segment_none;
 					obj_link(obj,segnum);
@@ -2204,7 +2241,9 @@ static int newdemo_read_frame_information(int rewrite)
 		}
 
 		case ND_EVENT_WALL_TOGGLE:
-			nd_read_int(&segnum);
+		{
+			segnum_t segnum;
+			nd_read_segnum32(segnum);
 			nd_read_int(&side);
 			if (nd_playback_v_bad_read) {done = -1; break; }
 			if (rewrite)
@@ -2215,6 +2254,7 @@ static int newdemo_read_frame_information(int rewrite)
 			}
 			if (Newdemo_vcr_state != ND_STATE_PAUSED)
 				wall_toggle(segnum, side);
+		}
 			break;
 
 		case ND_EVENT_CONTROL_CENTER_DESTROYED:
@@ -2456,7 +2496,7 @@ static int newdemo_read_frame_information(int rewrite)
 		}
 
 		case ND_EVENT_EFFECT_BLOWUP: {
-			short segnum;
+			segnum_t segnum;
 			sbyte side;
 			vms_vector pnt;
 #if defined(DXX_BUILD_DESCENT_II)
@@ -2471,19 +2511,19 @@ static int newdemo_read_frame_information(int rewrite)
 
 			nd_read_short(&segnum);
 			nd_read_byte(&side);
-			nd_read_vector(&pnt);
+			nd_read_vector(pnt);
 			if (rewrite)
 			{
 				nd_write_short(segnum);
 				nd_write_byte(side);
-				nd_write_vector(&pnt);
+				nd_write_vector(pnt);
 				break;
 			}
 			if (Newdemo_vcr_state != ND_STATE_PAUSED)
 #if defined(DXX_BUILD_DESCENT_I)
-				check_effect_blowup(&(Segments[segnum]), side, &pnt, NULL, 0, 0);
+				check_effect_blowup(&(Segments[segnum]), side, pnt, nullptr, 0, 0);
 #elif defined(DXX_BUILD_DESCENT_II)
-				check_effect_blowup(&(Segments[segnum]), side, &pnt, &dummy, 0, 0);
+				check_effect_blowup(&(Segments[segnum]), side, pnt, &dummy, 0, 0);
 #endif
 			break;
 		}
@@ -2674,16 +2714,16 @@ static int newdemo_read_frame_information(int rewrite)
 		case ND_EVENT_MULTI_CONNECT: {
 			sbyte pnum, new_player;
 			int killed_total, kills_total;
-			char new_callsign[CALLSIGN_LEN+1], old_callsign[CALLSIGN_LEN+1];
+			callsign_t new_callsign, old_callsign;
 
 			nd_read_byte(&pnum);
 			nd_read_byte(&new_player);
 			if (!new_player) {
-				nd_read_string(old_callsign);
+				nd_read_string(old_callsign.buffer());
 				nd_read_int(&killed_total);
 				nd_read_int(&kills_total);
 			}
-			nd_read_string(new_callsign);
+			nd_read_string(new_callsign.buffer());
 			if (rewrite)
 			{
 				nd_write_byte(pnum);
@@ -2693,13 +2733,13 @@ static int newdemo_read_frame_information(int rewrite)
 					nd_write_int(killed_total);
 					nd_write_int(kills_total);
 				}
-				nd_write_string(new_callsign);
+				nd_write_string(static_cast<const char *>(new_callsign));
 				break;
 			}
 			if ((Newdemo_vcr_state == ND_STATE_REWINDING) || (Newdemo_vcr_state == ND_STATE_ONEFRAMEBACKWARD)) {
 				Players[pnum].connected = CONNECT_DISCONNECTED;
 				if (!new_player) {
-					memcpy(Players[pnum].callsign, old_callsign, CALLSIGN_LEN+1);
+					Players[pnum].callsign = old_callsign;
 					Players[pnum].net_killed_total = killed_total;
 					Players[pnum].net_kills_total = kills_total;
 				} else {
@@ -2709,7 +2749,7 @@ static int newdemo_read_frame_information(int rewrite)
 				Players[pnum].connected = CONNECT_PLAYING;
 				Players[pnum].net_kills_total = 0;
 				Players[pnum].net_killed_total = 0;
-				memcpy(Players[pnum].callsign, new_callsign, CALLSIGN_LEN+1);
+				Players[pnum].callsign = new_callsign;
 				if (new_player)
 					N_players++;
 			}
@@ -2844,7 +2884,7 @@ static int newdemo_read_frame_information(int rewrite)
 		}
 
 		case ND_EVENT_DOOR_OPENING: {
-			short segnum;
+			segnum_t segnum;
 			sbyte side;
 
 			nd_read_short(&segnum);
@@ -2857,12 +2897,9 @@ static int newdemo_read_frame_information(int rewrite)
 			}
 			if ((Newdemo_vcr_state == ND_STATE_REWINDING) || (Newdemo_vcr_state == ND_STATE_ONEFRAMEBACKWARD)) {
 				int anim_num;
-				int cside;
-				segment *segp, *csegp;
-
-				segp = &Segments[segnum];
-				csegp = &Segments[segp->children[side]];
-				cside = find_connect_side(segp, csegp);
+				auto segp = &Segments[segnum];
+				auto csegp = &Segments[segp->children[side]];
+				auto cside = find_connect_side(segp, csegp);
 				anim_num = Walls[segp->sides[side].wall_num].clip_num;
 
 				if (WallAnims[anim_num].flags & WCF_TMAP1) {
@@ -2900,7 +2937,6 @@ static int newdemo_read_frame_information(int rewrite)
 			sbyte type,state,cloak_value;
 			ubyte back_wall_num,front_wall_num;
 			short l0,l1,l2,l3;
-			segment *segp;
 			int sidenum;
 
 			nd_read_byte((sbyte*)&front_wall_num);
@@ -2929,7 +2965,7 @@ static int newdemo_read_frame_information(int rewrite)
 			Walls[front_wall_num].type = type;
 			Walls[front_wall_num].state = state;
 			Walls[front_wall_num].cloak_value = cloak_value;
-			segp = &Segments[Walls[front_wall_num].segnum];
+			auto segp = &Segments[Walls[front_wall_num].segnum];
 			sidenum = Walls[front_wall_num].sidenum;
 			segp->sides[sidenum].uvls[0].l = ((int) l0) << 8;
 			segp->sides[sidenum].uvls[1].l = ((int) l1) << 8;
@@ -2975,14 +3011,15 @@ static int newdemo_read_frame_information(int rewrite)
 					loaded_level = old_level;
 				else {
 					loaded_level = new_level;
-					for (i = 0; i < MAX_PLAYERS; i++) {
-						Players[i].cloak_time = 0;
-						Players[i].flags &= ~PLAYER_FLAGS_CLOAKED;
+					range_for (auto &i, Players)
+					{
+						i.cloak_time = 0;
+						i.flags &= ~PLAYER_FLAGS_CLOAKED;
 					}
 				}
 				if ((loaded_level < Last_secret_level) || (loaded_level > Last_level)) {
 					nm_messagebox( NULL, 1, TXT_OK, "%s\n%s\n%s", TXT_CANT_PLAYBACK, TXT_LEVEL_CANT_LOAD, TXT_DEMO_OLD_CORRUPT );
-					free_mission();
+					Current_mission.reset();
 					return -1;
 				}
 
@@ -2996,11 +3033,12 @@ static int newdemo_read_frame_information(int rewrite)
 				nd_read_int (&Num_walls);
 				if (rewrite)
 					nd_write_int (Num_walls);
-				for (i=0;i<Num_walls;i++)    // restore the walls
+				range_for (auto &w, partial_range(Walls, Num_walls))
+				// restore the walls
 				{
-					nd_read_byte ((signed char *)&Walls[i].type);
-					nd_read_byte ((signed char *)&Walls[i].flags);
-					nd_read_byte ((signed char *)&Walls[i].state);
+					nd_read_byte ((signed char *)&w.type);
+					nd_read_byte ((signed char *)&w.flags);
+					nd_read_byte ((signed char *)&w.state);
 
 					segment *seg;
 					if (rewrite)	// hack some dummy variables
@@ -3010,17 +3048,17 @@ static int newdemo_read_frame_information(int rewrite)
 					}
 					else
 					{
-						seg = &Segments[Walls[i].segnum];
-						side = Walls[i].sidenum;
+						seg = &Segments[w.segnum];
+						side = w.sidenum;
 					}
 					nd_read_short (&seg->sides[side].tmap_num);
 					nd_read_short (&seg->sides[side].tmap_num2);
 
 					if (rewrite)
 					{
-						nd_write_byte (Walls[i].type);
-						nd_write_byte (Walls[i].flags);
-						nd_write_byte (Walls[i].state);
+						nd_write_byte (w.type);
+						nd_write_byte (w.flags);
+						nd_write_byte (w.state);
 						nd_write_short (seg->sides[side].tmap_num);
 						nd_write_short (seg->sides[side].tmap_num2);
 					}
@@ -3095,7 +3133,7 @@ static int newdemo_read_frame_information(int rewrite)
 
 	if (nd_playback_v_bad_read) {
 		nm_messagebox( NULL, 1, TXT_OK, "%s %s", TXT_DEMO_ERR_READING, TXT_DEMO_OLD_CORRUPT );
-		free_mission();
+		Current_mission.reset();
 	}
 
 	return done;
@@ -3122,7 +3160,7 @@ void newdemo_goto_end(int to_rewrite)
 	short frame_length=0, byte_count=0, bshort=0;
 	sbyte level=0, bbyte=0, laser_level=0, c=0, cloaked=0;
 	ubyte energy=0, shield=0;
-	int i=0, loc=0, bint=0;
+	int loc=0, bint=0;
 
 	PHYSFSX_fseek(infile, -2, SEEK_END);
 	nd_read_byte(&level);
@@ -3131,7 +3169,7 @@ void newdemo_goto_end(int to_rewrite)
 	{
 		if ((level < Last_secret_level) || (level > Last_level)) {
 			nm_messagebox( NULL, 1, TXT_OK, "%s\n%s\n%s", TXT_CANT_PLAYBACK, TXT_LEVEL_CANT_LOAD, TXT_DEMO_OLD_CORRUPT );
-			free_mission();
+			Current_mission.reset();
 			newdemo_stop_playback();
 			return;
 		}
@@ -3154,7 +3192,7 @@ void newdemo_goto_end(int to_rewrite)
 		if (Newdemo_game_mode & GM_MULTI) {
 			PHYSFSX_fseek(infile, -10, SEEK_END);
 			nd_read_byte(&cloaked);
-			for (i = 0; i < MAX_PLAYERS; i++) {
+			for (uint_fast32_t i = 0; i < MAX_PLAYERS; i++) {
 				if ((1 << i) & cloaked)
 					Players[i].flags |= PLAYER_FLAGS_CLOAKED;
 				Players[i].cloak_time = GameTime64 - (CLOAK_TIME_MAX / 2);
@@ -3178,7 +3216,7 @@ void newdemo_goto_end(int to_rewrite)
 	if (Newdemo_game_mode & GM_MULTI)
 	{
 		nd_read_byte(&cloaked);
-		for (i = 0; i < MAX_PLAYERS; i++)
+		for (uint_fast32_t i = 0; i < MAX_PLAYERS; i++)
 			if (cloaked & (1 << i))
 				Players[i].flags |= PLAYER_FLAGS_CLOAKED;
 	}
@@ -3200,15 +3238,15 @@ void newdemo_goto_end(int to_rewrite)
 		Players[Player_num].invulnerable_time = GameTime64 - (INVULNERABLE_TIME_MAX / 2);
 	nd_read_byte((sbyte *)&Primary_weapon);
 	nd_read_byte((sbyte *)&Secondary_weapon);
-	for (i = 0; i < MAX_PRIMARY_WEAPONS; i++)
+	for (int i = 0; i < MAX_PRIMARY_WEAPONS; i++)
 	{
 		short s;
 		nd_read_short(&s);
 		if (i == VULCAN_INDEX)
 			Players[Player_num].vulcan_ammo = s;
 	}
-	for (i = 0; i < MAX_SECONDARY_WEAPONS; i++)
-		nd_read_short((short *)&(Players[Player_num].secondary_ammo[i]));
+	range_for (auto &i, Players[Player_num].secondary_ammo)
+		nd_read_short((short *)&(i));
 	nd_read_byte(&laser_level);
 	if (laser_level != Players[Player_num].laser_level) {
 		Players[Player_num].laser_level = laser_level;
@@ -3222,14 +3260,14 @@ void newdemo_goto_end(int to_rewrite)
 		// see newdemo_read_start_demo for explanation of
 		// why this is commented out
 		//		nd_read_byte((sbyte *)&N_players);
-		for (i = 0; i < N_players; i++) {
-			nd_read_string(Players[i].callsign);
-			nd_read_byte(&(Players[i].connected));
+		range_for (auto &i, partial_range(Players, N_players)) {
+			nd_read_string(i.callsign.buffer());
+			nd_read_byte(&(i.connected));
 			if (Newdemo_game_mode & GM_MULTI_COOP) {
-				nd_read_int(&(Players[i].score));
+				nd_read_int(&(i.score));
 			} else {
-				nd_read_short((short *)&(Players[i].net_killed_total));
-				nd_read_short((short *)&(Players[i].net_kills_total));
+				nd_read_short((short *)&(i.net_killed_total));
+				nd_read_short((short *)&(i.net_kills_total));
 			}
 		}
 	} else {
@@ -3254,9 +3292,7 @@ void newdemo_goto_end(int to_rewrite)
 static void newdemo_back_frames(int frames)
 {
 	short last_frame_length;
-	int i;
-
-	for (i = 0; i < frames; i++)
+	for (int i = 0; i < frames; i++)
 	{
 		PHYSFS_seek(infile, PHYSFS_tell(infile) - 10);
 		nd_read_short(&last_frame_length);
@@ -3288,7 +3324,7 @@ static void newdemo_back_frames(int frames)
 
 static void interpolate_frame(fix d_play, fix d_recorded)
 {
-	int i, j, num_cur_objs;
+	unsigned num_cur_objs;
 	fix factor;
 	static fix InterpolStep = fl2f(.01);
 
@@ -3313,10 +3349,11 @@ static void interpolate_frame(fix d_play, fix d_recorded)
 	// This interpolating looks just more crappy on high FPS, so let's not even waste performance on it.
 	if (InterpolStep <= 0)
 	{
-		for (i = 0; i <= num_cur_objs; i++) {
-			for (j = 0; j <= Highest_object_index; j++) {
-				if (cur_objs[i].signature == Objects[j].signature) {
-					sbyte render_type = cur_objs[i].render_type;
+		range_for (auto &i, partial_range(cur_objs, 1 + num_cur_objs)) {
+			range_for (const auto j, highest_valid(Objects))
+			{
+				if (i.signature == Objects[j].signature) {
+					sbyte render_type = i.render_type;
 					fix delta_x, delta_y, delta_z;
 
 					//  Extract the angles from the object orientation matrix.
@@ -3327,37 +3364,37 @@ static void interpolate_frame(fix d_play, fix d_recorded)
 						vms_vector  fvec1, fvec2, rvec1, rvec2;
 						fix         mag1;
 
-						fvec1 = cur_objs[i].orient.fvec;
-						vm_vec_scale(&fvec1, F1_0-factor);
+						fvec1 = i.orient.fvec;
+						vm_vec_scale(fvec1, F1_0-factor);
 						fvec2 = Objects[j].orient.fvec;
-						vm_vec_scale(&fvec2, factor);
-						vm_vec_add2(&fvec1, &fvec2);
-						mag1 = vm_vec_normalize_quick(&fvec1);
+						vm_vec_scale(fvec2, factor);
+						vm_vec_add2(fvec1, fvec2);
+						mag1 = vm_vec_normalize_quick(fvec1);
 						if (mag1 > F1_0/256) {
-							rvec1 = cur_objs[i].orient.rvec;
-							vm_vec_scale(&rvec1, F1_0-factor);
+							rvec1 = i.orient.rvec;
+							vm_vec_scale(rvec1, F1_0-factor);
 							rvec2 = Objects[j].orient.rvec;
-							vm_vec_scale(&rvec2, factor);
-							vm_vec_add2(&rvec1, &rvec2);
-							vm_vec_normalize_quick(&rvec1); // Note: Doesn't matter if this is null, if null, vm_vector_2_matrix will just use fvec1
-							vm_vector_2_matrix(&cur_objs[i].orient, &fvec1, NULL, &rvec1);
+							vm_vec_scale(rvec2, factor);
+							vm_vec_add2(rvec1, rvec2);
+							vm_vec_normalize_quick(rvec1); // Note: Doesn't matter if this is null, if null, vm_vector_2_matrix will just use fvec1
+							vm_vector_2_matrix(i.orient, fvec1, nullptr, &rvec1);
 						}
 					}
 
 					// Interpolate the object position.  This is just straight linear
 					// interpolation.
 
-					delta_x = Objects[j].pos.x - cur_objs[i].pos.x;
-					delta_y = Objects[j].pos.y - cur_objs[i].pos.y;
-					delta_z = Objects[j].pos.z - cur_objs[i].pos.z;
+					delta_x = Objects[j].pos.x - i.pos.x;
+					delta_y = Objects[j].pos.y - i.pos.y;
+					delta_z = Objects[j].pos.z - i.pos.z;
 
 					delta_x = fixmul(delta_x, factor);
 					delta_y = fixmul(delta_y, factor);
 					delta_z = fixmul(delta_z, factor);
 
-					cur_objs[i].pos.x += delta_x;
-					cur_objs[i].pos.y += delta_y;
-					cur_objs[i].pos.z += delta_z;
+					i.pos.x += delta_x;
+					i.pos.y += delta_y;
+					i.pos.z += delta_z;
 				}
 			}
 		}
@@ -3381,13 +3418,13 @@ static void interpolate_frame(fix d_play, fix d_recorded)
 
 void newdemo_playback_one_frame()
 {
-	int frames_back, i, level;
+	int frames_back,level;
 	static fix base_interpol_time = 0;
 	static fix d_recorded = 0;
 
-	for (i = 0; i < MAX_PLAYERS; i++)
-		if (Players[i].flags & PLAYER_FLAGS_CLOAKED)
-			Players[i].cloak_time = GameTime64 - (CLOAK_TIME_MAX / 2);
+	range_for (auto &i, Players)
+		if (i.flags & PLAYER_FLAGS_CLOAKED)
+			i.cloak_time = GameTime64 - (CLOAK_TIME_MAX / 2);
 
 	if (Players[Player_num].flags & PLAYER_FLAGS_INVULNERABLE)
 		Players[Player_num].invulnerable_time = GameTime64 - (INVULNERABLE_TIME_MAX / 2);
@@ -3429,7 +3466,7 @@ void newdemo_playback_one_frame()
 	else if (Newdemo_vcr_state == ND_STATE_FASTFORWARD) {
 		if (!nd_playback_v_at_eof)
 		{
-			for (i = 0; i < 10; i++)
+			for (int i = 0; i < 10; i++)
 			{
 				if (newdemo_read_frame_information(0) == -1)
 				{
@@ -3495,7 +3532,8 @@ void newdemo_playback_one_frame()
 				d_recorded = nd_recorded_total - nd_playback_total;
 
 				while (nd_recorded_total - nd_playback_total < FrameTime) {
-					int i, j, num_objs, level;
+					int level;
+					unsigned num_objs;
 
 					num_objs = Highest_object_index;
 					std::vector<object> cur_objs(Objects.begin(), Objects.begin() + num_objs + 1);
@@ -3516,11 +3554,12 @@ void newdemo_playback_one_frame()
 					//  copy that interpolated object to the new Objects array so that the
 					//  interpolated position and orientation can be preserved.
 
-					for (i = 0; i <= num_objs; i++) {
-						for (j = 0; j <= Highest_object_index; j++) {
-							if (cur_objs[i].signature == Objects[j].signature) {
-								memcpy(&(Objects[j].orient), &(cur_objs[i].orient), sizeof(vms_matrix));
-								memcpy(&(Objects[j].pos), &(cur_objs[i].pos), sizeof(vms_vector));
+					range_for (auto &i, partial_range(cur_objs, 1 + num_objs)) {
+						range_for (const auto j, highest_valid(Objects))
+						{
+							if (i.signature == Objects[j].signature) {
+								Objects[j].orient = i.orient;
+								Objects[j].pos = i.pos;
 								break;
 							}
 						}
@@ -3561,7 +3600,7 @@ void newdemo_start_recording()
 
 	outfile = PHYSFSX_openWriteBuffered(DEMO_FILENAME);
 
-	if (outfile == NULL)
+	if (!outfile)
 	{
 		Newdemo_state = ND_STATE_NORMAL;
 		nm_messagebox(NULL, 1, TXT_OK, "Cannot open demo temp file");
@@ -3574,12 +3613,10 @@ static void newdemo_write_end()
 {
 	sbyte cloaked = 0;
 	unsigned short byte_count = 0;
-	int i;
-
 	nd_write_byte(ND_EVENT_EOF);
 	nd_write_short(nd_record_v_framebytes_written - 1);
 	if (Game_mode & GM_MULTI) {
-		for (i = 0; i < N_players; i++) {
+		for (int i = 0; i < N_players; i++) {
 			if (Players[i].flags & PLAYER_FLAGS_CLOAKED)
 				cloaked |= (1 << i);
 		}
@@ -3602,11 +3639,11 @@ static void newdemo_write_end()
 	nd_write_byte((sbyte)Secondary_weapon);
 	byte_count += 8;
 
-	for (i = 0; i < MAX_PRIMARY_WEAPONS; i++)
+	for (int i = 0; i < MAX_PRIMARY_WEAPONS; i++)
 		nd_write_short(i == VULCAN_INDEX ? Players[Player_num].vulcan_ammo : 0);
 
-	for (i = 0; i < MAX_SECONDARY_WEAPONS; i++)
-		nd_write_short((short)Players[Player_num].secondary_ammo[i]);
+	range_for (auto &i, Players[Player_num].secondary_ammo)
+		nd_write_short(i);
 	byte_count += (sizeof(short) * (MAX_PRIMARY_WEAPONS + MAX_SECONDARY_WEAPONS));
 
 	nd_write_byte(Players[Player_num].laser_level);
@@ -3615,16 +3652,16 @@ static void newdemo_write_end()
 	if (Game_mode & GM_MULTI) {
 		nd_write_byte((sbyte)N_players);
 		byte_count++;
-		for (i = 0; i < N_players; i++) {
-			nd_write_string(Players[i].callsign);
-			byte_count += (strlen(Players[i].callsign) + 2);
-			nd_write_byte(Players[i].connected);
+		range_for (auto &i, partial_range(Players, N_players)) {
+			nd_write_string(static_cast<const char *>(i.callsign));
+			byte_count += (strlen(static_cast<const char *>(i.callsign)) + 2);
+			nd_write_byte(i.connected);
 			if (Game_mode & GM_MULTI_COOP) {
-				nd_write_int(Players[i].score);
+				nd_write_int(i.score);
 				byte_count += 5;
 			} else {
-				nd_write_short((short)Players[i].net_killed_total);
-				nd_write_short((short)Players[i].net_kills_total);
+				nd_write_short(i.net_killed_total);
+				nd_write_short(i.net_kills_total);
 				byte_count += 5;
 			}
 		}
@@ -3639,14 +3676,87 @@ static void newdemo_write_end()
 	nd_write_byte(ND_EVENT_EOF);
 }
 
+static bool guess_demo_name(ntstring<PATH_MAX - 1> &filename)
+{
+	filename[0] = 0;
+	auto p = GameArg.SysRecordDemoNameTemplate;
+	if (!p || !*p)
+		return false;
+	if (!strcmp(p, "."))
+		p = "%Y%m%d.%H%M%S-$p-$m";
+	std::size_t i = 0;
+	time_t t = 0;
+	tm *ptm = nullptr;
+	for (;; ++p)
+	{
+		if (*p == '%')
+		{
+			if (!p[1])
+				/* Trailing bare % is ill-formed.  Ignore entire
+				 * template.
+				 */
+				return false;
+			/* Time conversions */
+			if (unlikely(!t))
+				t = time(nullptr);
+			if (unlikely(t == -1 || !(ptm = gmtime(&t))))
+				continue;
+			char sbuf[4];
+			sbuf[0] = '%';
+			sbuf[1] = *++p;
+#ifndef _WIN32
+			/* Not supported on Windows */
+			if (sbuf[1] == 'O' || sbuf[1] == 'E')
+			{
+				sbuf[2] = *++p;
+				sbuf[3] = 0;
+			}
+			else
+#endif
+			{
+				sbuf[2] = 0;
+			}
+			filename[i] = 0;
+			auto a = strftime(&filename[i], sizeof(filename) - i, sbuf, ptm);
+			if (a >= sizeof(filename) - i)
+				return false;
+			i += a;
+			continue;
+		}
+		if (*p == '$')
+		{
+			/* Variable conversions */
+			const char *insert;
+			switch(*++p)
+			{
+				case 'm':	/* mission */
+					insert = Current_mission_filename;
+					break;
+				case 'p':	/* pilot */
+					insert = Players[Player_num].callsign;
+					break;
+				default:
+					return false;
+			}
+			i += filename.copy_if(i, insert);
+			continue;
+		}
+		filename[i++] = *p;
+		if (!*p)
+			break;
+		if (i >= sizeof(filename) - 1)
+			return false;
+	}
+	return filename[0];
+}
+
 static const char demoname_allowed_chars[] = "azAZ09__--";
 #define DEMO_FORMAT_STRING(S)	DEMO_DIR S "." DEMO_EXT
 void newdemo_stop_recording()
 {
-	newmenu_item m[6];
 	int exit;
-	static char filename[PATH_MAX] = "", *s;
 	static sbyte tmpcnt = 0;
+	ntstring<PATH_MAX - 1> filename;
 
 	exit = 0;
 
@@ -3656,40 +3766,27 @@ void newdemo_stop_recording()
 		newdemo_write_end();
 	}
 
-	PHYSFS_close(outfile);
-	outfile = NULL;
+	outfile.reset();
 	Newdemo_state = ND_STATE_NORMAL;
 	gr_palette_load( gr_palette );
-
-	if (filename[0] != '\0') {
-		int num, i = strlen(filename) - 1;
-		char newfile[PATH_MAX];
-
-		while (isdigit(filename[i])) {
-			i--;
-			if (i == -1)
-				break;
-		}
-		i++;
-		num = atoi(&(filename[i]));
-		num++;
-		filename[i] = '\0';
-		sprintf (newfile, "%s%d", filename, num);
-		strncpy(filename, newfile, PATH_MAX);
-		filename[PATH_MAX - 1] = '\0';
-	}
-
 try_again:
 	;
 
 	Newmenu_allowed_chars = demoname_allowed_chars;
-	if (!nd_record_v_no_space) {
-		nm_set_item_input(&m[0], PATH_MAX - 1, filename);
-		exit = newmenu_do( NULL, TXT_SAVE_DEMO_AS, 1, &(m[0]), unused_newmenu_subfunction, unused_newmenu_userdata );
+	if (guess_demo_name(filename))
+	{
+	}
+	else if (!nd_record_v_no_space) {
+		array<newmenu_item, 1> m{
+			nm_item_input(filename),
+		};
+		exit = newmenu_do( NULL, TXT_SAVE_DEMO_AS, m, unused_newmenu_subfunction, unused_newmenu_userdata );
 	} else if (nd_record_v_no_space == 2) {
-		nm_set_item_text(& m[ 0], TXT_DEMO_SAVE_NOSPACE);
-		nm_set_item_input(&m[ 1], PATH_MAX - 1, filename);
-		exit = newmenu_do( NULL, NULL, 2, m, unused_newmenu_subfunction, unused_newmenu_userdata );
+		array<newmenu_item, 2> m{
+			nm_item_text(TXT_DEMO_SAVE_NOSPACE),
+			nm_item_input(filename),
+		};
+		exit = newmenu_do( NULL, NULL, m, unused_newmenu_subfunction, unused_newmenu_userdata );
 	}
 	Newmenu_allowed_chars = NULL;
 
@@ -3697,7 +3794,7 @@ try_again:
 		char save_file[PATH_MAX];
 
 		if (filename[0] != '\0') {
-			snprintf(save_file, sizeof(save_file), DEMO_FORMAT_STRING("%s"), filename);
+			snprintf(save_file, sizeof(save_file), DEMO_FORMAT_STRING("%s"), filename.data());
 		} else
 			snprintf(save_file, sizeof(save_file), DEMO_FORMAT_STRING("tmp%d"), tmpcnt++);
 		remove(save_file);
@@ -3713,14 +3810,19 @@ try_again:
 		goto try_again;
 
 	//check to make sure name is ok
-	for (s=filename;*s;s++)
-		if (!isalnum(*s) && *s!='_') {
+	range_for (const unsigned c, filename)
+	{
+		if (!c)
+			break;
+		if (!isalnum(c) && c != '_' && c != '-' && c != '.')
+		{
 			nm_messagebox(NULL, 1,TXT_CONTINUE, TXT_DEMO_USE_LETTERS);
 			goto try_again;
 		}
+	}
 
 	char fullname[PATH_MAX];
-	snprintf(fullname, sizeof(fullname), DEMO_FORMAT_STRING("%s"), (nd_record_v_no_space) ? m[1].text : m[0].text);
+	snprintf(fullname, sizeof(fullname), DEMO_FORMAT_STRING("%s"), filename.data());
 	PHYSFS_delete(fullname);
 	PHYSFSX_rename(DEMO_FILENAME, fullname);
 }
@@ -3728,22 +3830,17 @@ try_again:
 //returns the number of demo files on the disk
 int newdemo_count_demos()
 {
-	char **find, **i;
 	int NumFiles=0;
 
-	find = PHYSFSX_findFiles(DEMO_DIR, demo_file_extensions);
+	auto find = PHYSFSX_findFiles(DEMO_DIR, demo_file_extensions);
 
-	for (i = find; *i != NULL; i++)
+	for (auto i = find.get(); *i; ++i)
 		NumFiles++;
-
-	PHYSFS_freeList(find);
-
 	return NumFiles;
 }
 
 void newdemo_start_playback(const char * filename)
 {
-	char **find = NULL, **i;
 	enum purpose_type rnd_demo = PURPOSE_CHOSE_PLAY;
 	char filename2[PATH_MAX+FILENAME_LEN] = DEMO_DIR;
 
@@ -3766,9 +3863,9 @@ void newdemo_start_playback(const char * filename)
 		RandFileNum = d_rand() % NumFiles;
 		NumFiles = 0;
 
-		find = PHYSFSX_findFiles(DEMO_DIR, demo_file_extensions);
+		auto find = PHYSFSX_findFiles(DEMO_DIR, demo_file_extensions);
 
-		for (i = find; *i != NULL; i++)
+		for (auto i = find.get(); *i; ++i)
 		{
 			if (NumFiles == RandFileNum)
 			{
@@ -3778,8 +3875,6 @@ void newdemo_start_playback(const char * filename)
 			}
 			NumFiles++;
 		}
-		PHYSFS_freeList(find);
-
 		if (NumFiles > RandFileNum)
 		{
 			GameArg.SysAutoDemo = 0;
@@ -3789,18 +3884,18 @@ void newdemo_start_playback(const char * filename)
 
 	infile = PHYSFSX_openReadBuffered(filename2);
 
-	if (infile==NULL) {
+	if (!infile) {
 		return;
 	}
 
 	nd_playback_v_bad_read = 0;
 	change_playernum_to(0);                 // force playernum to 0
-	strncpy(nd_playback_v_save_callsign, Players[Player_num].callsign, CALLSIGN_LEN);
+	nd_playback_v_save_callsign = Players[Player_num].callsign;
 	Players[Player_num].lives=0;
 	Viewer = ConsoleObject = &Objects[0];   // play properly as if console player
 
 	if (newdemo_read_demo_start(rnd_demo)) {
-		PHYSFS_close(infile);
+		infile.reset();
 		return;
 	}
 
@@ -3830,10 +3925,10 @@ void newdemo_start_playback(const char * filename)
 
 void newdemo_stop_playback()
 {
-	PHYSFS_close(infile);
+	infile.reset();
 	Newdemo_state = ND_STATE_NORMAL;
 	change_playernum_to(0);             //this is reality
-	strncpy(Players[Player_num].callsign, nd_playback_v_save_callsign, CALLSIGN_LEN);
+	Players[Player_num].callsign = nd_playback_v_save_callsign;
 	Rear_view=0;
 	nd_playback_v_dead = nd_playback_v_rear = 0;
 #if defined(DXX_BUILD_DESCENT_II)
@@ -3860,14 +3955,14 @@ int newdemo_swap_endian(const char *filename)
 		return 0;
 
 	infile = PHYSFSX_openReadBuffered(inpath);
-	if (infile==NULL)
+	if (!infile)
 		goto read_error;
 
 	nd_playback_v_demosize = PHYSFS_fileLength(infile);	// should be exactly the same size
 	outfile = PHYSFSX_openWriteBuffered(DEMO_FILENAME);
-	if (outfile==NULL)
+	if (!outfile)
 	{
-		PHYSFS_close(infile);
+		infile.reset();
 		goto read_error;
 	}
 
@@ -3878,8 +3973,8 @@ int newdemo_swap_endian(const char *filename)
 	Newdemo_state = ND_STATE_NORMAL;	// not doing anything special really
 
 	if (newdemo_read_demo_start(PURPOSE_REWRITE)) {
-		PHYSFS_close(infile);
-		PHYSFS_close(outfile);
+		infile.reset();
+		outfile.reset();
 		swap_endian = 0;
 		return 0;
 	}
@@ -3891,9 +3986,8 @@ int newdemo_swap_endian(const char *filename)
 
 	swap_endian = 0;
 	complete = nd_playback_v_demosize == Newdemo_num_written;
-	PHYSFS_close(infile);
-	PHYSFS_close(outfile);
-	outfile = NULL;
+	infile.reset();
+	outfile.reset();
 
 	if (complete)
 	{
@@ -3921,14 +4015,13 @@ read_error:
 
 void newdemo_strip_frames(char *outname, int bytes_to_strip)
 {
-	PHYSFS_file *outfile;
 	char *buf;
 	int read_elems, bytes_back;
 	int trailer_start, loc1, loc2, stop_loc, bytes_to_read;
 	short last_frame_length;
 
-	outfile = PHYSFSX_openWriteBuffered(outname);
-	if (outfile == NULL) {
+	auto outfile = PHYSFSX_openWriteBuffered(outname);
+	if (!outfile) {
 		nm_messagebox( NULL, 1, TXT_OK, "Can't open output file" );
 		newdemo_stop_playback();
 		return;
@@ -3936,7 +4029,6 @@ void newdemo_strip_frames(char *outname, int bytes_to_strip)
 	MALLOC(buf, char, BUF_SIZE);
 	if (buf == NULL) {
 		nm_messagebox( NULL, 1, TXT_OK, "Can't malloc output buffer" );
-		PHYSFS_close(outfile);
 		newdemo_stop_playback();
 		return;
 	}
@@ -3971,7 +4063,6 @@ void newdemo_strip_frames(char *outname, int bytes_to_strip)
 	PHYSFS_seek(outfile, stop_loc);
 	PHYSFS_seek(outfile, PHYSFS_tell(infile) + 1);
 	PHYSFS_write(outfile, &last_frame_length, 2, 1);
-	PHYSFS_close(outfile);
 	newdemo_stop_playback();
 
 }
@@ -3979,7 +4070,7 @@ void newdemo_strip_frames(char *outname, int bytes_to_strip)
 #endif
 
 #if defined(DXX_BUILD_DESCENT_II)
-static void nd_render_extras (ubyte which,object *obj)
+static void nd_render_extras (ubyte which,const vcobjptr_t obj)
 {
 	ubyte w=which>>4;
 	ubyte type=which&15;
@@ -3987,7 +4078,7 @@ static void nd_render_extras (ubyte which,object *obj)
 	if (which==255)
 	{
 		Int3(); // how'd we get here?
-		do_cockpit_window_view(w,NULL,0,WBU_WEAPON,NULL);
+		do_cockpit_window_view(w,0,WBU_WEAPON,NULL);
 		return;
 	}
 

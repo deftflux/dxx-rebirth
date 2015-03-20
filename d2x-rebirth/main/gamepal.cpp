@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -35,8 +41,6 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "piggy.h"
 #include "strutil.h"
 #include "gauges.h"
-
-char Current_level_palette[FILENAME_LEN];
 
 char last_palette_loaded[FILENAME_LEN]="";
 char last_palette_loaded_pig[FILENAME_LEN]="";
@@ -81,7 +85,7 @@ int load_palette(const char *name,int used_for_level,int no_change_screen)
 		gr_use_palette_table(name);
 
 		if (Game_wind && !no_change_screen)
-			gr_remap_bitmap_good( &grd_curscreen->sc_canvas.cv_bitmap, old_pal, -1, -1 );
+			gr_remap_bitmap_good(grd_curscreen->sc_canvas.cv_bitmap, old_pal, -1, -1);
 
 		if (!no_change_screen)
 			gr_palette_load(gr_palette);

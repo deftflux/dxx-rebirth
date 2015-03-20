@@ -1,6 +1,14 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 #include "mve_audio.h"
+#include "dxxsconf.h"
+#include "compiler-array.h"
 
-static int audio_exp_table[256] =
+static const array<int, 256> audio_exp_table{
 {
          0,      1,      2,      3,      4,      5,      6,      7,      8,      9,     10,     11,     12,     13,     14,     15,
         16,     17,     18,     19,     20,     21,     22,     23,     24,     25,     26,     27,     28,     29,     30,     31,
@@ -18,9 +26,10 @@ static int audio_exp_table[256] =
        -66,    -61,    -56,    -51,    -47,    -43,    -42,    -41,    -40,    -39,    -38,    -37,    -36,    -35,    -34,    -33,
        -32,    -31,    -30,    -29,    -28,    -27,    -26,    -25,    -24,    -23,    -22,    -21,    -20,    -19,    -18,    -17,
        -16,    -15,    -14,    -13,    -12,    -11,    -10,     -9,     -8,     -7,     -6,     -5,     -4,     -3,     -2,     -1
+}
 };
 
-static int getWord(unsigned char **fin)
+static int getWord(const unsigned char **fin)
 {
     int value = ((*fin)[1] << 8) | (*fin)[0];
     *fin += 2;
@@ -32,17 +41,16 @@ static void sendWord(short **fout, int nOffset)
     *(*fout)++ = nOffset;
 }
 
-static void processSwath(short *fout, unsigned char *data, int swath, int *offsets)
+static void processSwath(short *fout, const unsigned char *data, int swath, int *offsets)
 {
-    int i;
-    for (i=0; i<swath; i++)
+    for (int i=0; i<swath; i++)
     {
         offsets[i&1] += audio_exp_table[data[i]];
         sendWord(&fout, offsets[i&1]);
     }
 }
 
-void mveaudio_uncompress(short *buffer, unsigned char *data, int length)
+void mveaudio_uncompress(short *buffer, const unsigned char *data, int length)
 {
     int nCurOffsets[2];
     int swath;

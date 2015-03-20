@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -24,9 +30,14 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "piggy.h"
 
 #ifdef __cplusplus
+#include "dxxsconf.h"
+#include "compiler-array.h"
+#include "objnum.h"
+#include "pack.h"
+#include "fwdvalptridx.h"
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
-struct weapon_info
+struct weapon_info : prohibit_void_ptr<weapon_info>
 {
 	sbyte   render_type;        // How to draw 0=laser, 1=blob, 2=object
 #if defined(DXX_BUILD_DESCENT_I)
@@ -60,8 +71,8 @@ struct weapon_info
 	fix blob_size;              // Size of blob if blob type
 	fix flash_size;             // How big to draw the flash
 	fix impact_size;            // How big of an impact
-	fix strength[NDL];          // How much damage it can inflict
-	fix speed[NDL];             // How fast it can move, difficulty level based.
+	array<fix, NDL> strength;          // How much damage it can inflict
+	array<fix, NDL> speed;             // How fast it can move, difficulty level based.
 	fix mass;                   // How much mass it has
 	fix drag;                   // How much drag it has
 	fix thrust;                 // How much thrust it has
@@ -115,8 +126,8 @@ struct weapon_info
 	fix blob_size;              // Size of blob if blob type
 	fix flash_size;             // How big to draw the flash
 	fix impact_size;            // How big of an impact
-	fix strength[NDL];          // How much damage it can inflict
-	fix speed[NDL];             // How fast it can move, difficulty level based.
+	array<fix, NDL> strength;          // How much damage it can inflict
+	array<fix, NDL> speed;             // How fast it can move, difficulty level based.
 	fix mass;                   // How much mass it has
 	fix drag;                   // How much drag it has
 	fix thrust;                 // How much thrust it has
@@ -130,7 +141,10 @@ struct weapon_info
 	/* not present in shareware datafiles */
 	bitmap_index    hires_picture;  // a hires picture of the above
 #endif
-} __pack__;
+};
+
+struct PHYSFS_File;
+void weapon_info_write(PHYSFS_File *, const weapon_info &);
 #endif
 
 #define REARM_TIME                  (F1_0)
@@ -150,18 +164,18 @@ struct weapon_info
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 #if defined(DXX_BUILD_DESCENT_I)
-#define MAX_WEAPON_TYPES 			30
+const unsigned MAX_WEAPON_TYPES = 30;
 
-#define	MAX_PRIMARY_WEAPONS		5
-#define	MAX_SECONDARY_WEAPONS	5
+const unsigned MAX_PRIMARY_WEAPONS = 5;
+const unsigned MAX_SECONDARY_WEAPONS = 5;
 
 #elif defined(DXX_BUILD_DESCENT_II)
 // weapon info flags
 #define WIF_PLACABLE        1   // can be placed by level designer
-#define MAX_WEAPON_TYPES            70
+const unsigned MAX_WEAPON_TYPES = 70;
 
-#define MAX_PRIMARY_WEAPONS         10
-#define MAX_SECONDARY_WEAPONS       10
+const unsigned MAX_PRIMARY_WEAPONS = 10;
+const unsigned MAX_SECONDARY_WEAPONS = 10;
 #endif
 
 extern const ubyte Primary_weapon_to_weapon_info[MAX_PRIMARY_WEAPONS];
@@ -171,13 +185,13 @@ extern const ubyte Primary_weapon_to_powerup[MAX_PRIMARY_WEAPONS];
 
 //for each Secondary weapon, what kind of powerup gives weapon
 extern const ubyte Secondary_weapon_to_powerup[MAX_SECONDARY_WEAPONS];
-extern const int  Primary_ammo_max[MAX_PRIMARY_WEAPONS];
 extern const ubyte    Secondary_ammo_max[MAX_SECONDARY_WEAPONS];
 /*
  * reads n weapon_info structs from a PHYSFS_file
  */
-extern weapon_info Weapon_info[MAX_WEAPON_TYPES];
-extern int weapon_info_read_n(weapon_info *wi, int n, PHYSFS_file *fp, int file_version);
+typedef array<weapon_info, MAX_WEAPON_TYPES> weapon_info_array;
+extern weapon_info_array Weapon_info;
+void weapon_info_read_n(weapon_info_array &wi, std::size_t count, PHYSFS_File *fp, int file_version, std::size_t offset = 0);
 #endif
 
 //given a weapon index, return the flag value
@@ -252,7 +266,7 @@ enum secondary_weapon_index_t
 #endif
 };
 
-extern int N_weapon_types;
+extern unsigned N_weapon_types;
 extern void do_weapon_select(int weapon_num, int secondary_flag);
 
 extern sbyte Primary_weapon, Secondary_weapon;
@@ -303,10 +317,10 @@ int pick_up_primary(int weapon_index);
 int pick_up_ammo(int class_flag,int weapon_index,int ammo_count);
 
 #if defined(DXX_BUILD_DESCENT_II)
-extern int attempt_to_steal_item(struct object *objp, int player_num);
+int attempt_to_steal_item(vobjptridx_t objp, int player_num);
 
 //this function is for when the player intentionally drops a powerup
-extern int spit_powerup(struct object *spitter, int id, int seed);
+objptridx_t spit_powerup(vobjptr_t spitter, int id, int seed);
 
 #define SMEGA_ID    40
 
@@ -344,7 +358,7 @@ static inline int weapon_index_is_player_bomb(unsigned id)
 	return id == PROXIMITY_INDEX;
 }
 #elif defined(DXX_BUILD_DESCENT_II)
-extern fix64	Seismic_disturbance_start_time, Seismic_disturbance_end_time;
+extern fix64 Seismic_disturbance_end_time;
 int which_bomb(void);
 
 static inline int weapon_index_uses_vulcan_ammo(unsigned id)

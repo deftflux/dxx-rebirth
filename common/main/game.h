@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -26,6 +32,9 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #ifdef __cplusplus
 #include <cstdint>
+#include "pack.h"
+#include "segnum.h"
+#include "fwdvalptridx.h"
 
 #define DESIGNATED_GAME_FPS 30 // assuming the original intended Framerate was 30
 #define DESIGNATED_GAME_FRAMETIME (F1_0/DESIGNATED_GAME_FPS) 
@@ -37,8 +46,6 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define MINIMUM_FPS 1
 #define MAXIMUM_FPS 1000
 #endif
-
-struct object;
 
 extern struct window *Game_wind;
 
@@ -134,7 +141,6 @@ void close_game(void);
 void init_cockpit(void);
 void calc_frame_time(void);
 void calc_d_tick();
-int do_flythrough(struct object *obj,int first_time);
 
 extern int Difficulty_level;    // Difficulty level in 0..NDL-1, 0 = easiest, NDL-1 = hardest
 extern int Global_laser_firing_count;
@@ -186,7 +192,7 @@ extern int Game_window_w,       // width and height of player's game window
 extern int Rear_view;           // if true, looking back.
 
 // initalize flying
-void fly_init(struct object *obj);
+void fly_init(vobjptr_t obj);
 
 // selects a given cockpit (or lack of one).
 void select_cockpit(cockpit_mode_t mode);
@@ -247,11 +253,12 @@ static inline int game_mode_hoard()
 	return (Game_mode & GM_HOARD);
 }
 // returns ptr to escort robot, or NULL
-struct object *find_escort();
+objptridx_t find_escort();
 
 //Flickering light system
 struct flickering_light {
-	short segnum, sidenum;
+	segnum_t segnum;
+	short sidenum;
 	uint32_t mask;     // determines flicker pattern
 	fix timer;              // time until next change
 	fix delay;              // time between changes
@@ -259,21 +266,16 @@ struct flickering_light {
 
 #define MAX_FLICKERING_LIGHTS 100
 
-extern flickering_light Flickering_lights[MAX_FLICKERING_LIGHTS];
-extern int Num_flickering_lights;
+typedef array<flickering_light, MAX_FLICKERING_LIGHTS> Flickering_light_array_t;
+extern Flickering_light_array_t Flickering_lights;
+extern unsigned Num_flickering_lights;
 extern int BigWindowSwitch;
 
-// returns ptr to flickering light structure, or NULL if can't find
-flickering_light *find_flicker(int segnum, int sidenum);
-
 // turn flickering off (because light has been turned off)
-void disable_flicker(int segnum, int sidenum);
+void disable_flicker(segnum_t segnum, int sidenum);
 
 // turn flickering off (because light has been turned on)
-void enable_flicker(int segnum, int sidenum);
-
-// returns 1 if ok, 0 if error
-int add_flicker(int segnum, int sidenum, fix delay, uint32_t mask);
+void enable_flicker(segnum_t segnum, int sidenum);
 
 /*
  * reads a flickering_light structure from a PHYSFS_file
@@ -283,11 +285,17 @@ void flickering_light_read(flickering_light *fl, PHYSFS_file *fp);
 void flickering_light_write(flickering_light *fl, PHYSFS_file *fp);
 #endif
 
-void game_render_frame_mono(int flip);
+void game_render_frame_mono();
+static inline void game_render_frame_mono(int flip)
+{
+	game_render_frame_mono();
+	if (flip)
+		gr_flip();
+}
 void game_leave_menus(void);
 
 //Cheats
-struct game_cheats
+struct game_cheats : prohibit_void_ptr<game_cheats>
 {
 	int enabled;
 	int wowie;
@@ -318,18 +326,17 @@ struct game_cheats
 	int buddyclone;
 	int buddyangry;
 #endif
-} __pack__;
+};
 extern game_cheats cheats;
 void game_disable_cheats();
-struct segment;
-void move_player_2_segment(struct segment *seg, int side);
+void move_player_2_segment(vsegptridx_t seg, int side);
 int allowed_to_fire_laser(void);
 int allowed_to_fire_flare(void);
 int allowed_to_fire_missile(void);
 void	check_rear_view(void);
 window *game_setup(void);
 int create_special_path(void);
-int ReadControls(d_event *event);
+window_event_result ReadControls(const d_event &event);
 void toggle_cockpit(void);
 void game_render_frame();
 extern fix Show_view_text_timer;
@@ -338,7 +345,7 @@ extern int	Last_level_path_created;
 extern int force_cockpit_redraw;
 extern ubyte DemoDoingRight,DemoDoingLeft;
 extern fix64	Time_flash_last_played;
-int game_handler(window *wind, d_event *event, unused_window_userdata_t *);
+window_event_result game_handler(window *wind,const d_event &event, const unused_window_userdata_t *);
 
 #ifdef EDITOR
 void dump_used_textures_all();

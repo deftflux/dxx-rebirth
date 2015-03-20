@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -32,6 +38,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "dxxerror.h"
 #include "menu.h"			// For the font.
 #include "collide.h"
+#include "object.h"
 #include "newdemo.h"
 #include "player.h"
 #include "gamefont.h"
@@ -43,7 +50,6 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "endlevel.h"
 #include "cntrlcen.h"
 #include "controls.h"
-#include "wall.h"
 #include "text.h"
 #include "render.h"
 #include "piggy.h"
@@ -51,7 +57,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "common/3d/globvars.h"
 #include "playsave.h"
 #include "rle.h"
-#include "byteswap.h"
+#include "byteutil.h"
 #ifdef OGL
 #include "ogl_init.h"
 #endif
@@ -322,8 +328,8 @@ using std::min;
 #define BASE_WIDTH (HIRESMODE? 640 : 320)
 #define BASE_HEIGHT	(HIRESMODE? 480 : 200)
 #ifdef OGL
-#define HUD_SCALE_X(x)		((int) ((double) (x) * ((double)grd_curscreen->sc_w/BASE_WIDTH) + 0.5))
-#define HUD_SCALE_Y(y)		((int) ((double) (y) * ((double)grd_curscreen->sc_h/BASE_HEIGHT) + 0.5))
+#define HUD_SCALE_X(x)		static_cast<int>(static_cast<double>(x) * (static_cast<double>(grd_curscreen->sc_w)/BASE_WIDTH) + 0.5)
+#define HUD_SCALE_Y(y)		static_cast<int>(static_cast<double>(y) * (static_cast<double>(grd_curscreen->sc_h)/BASE_HEIGHT) + 0.5)
 #define HUD_SCALE_X_AR(x)	(HUD_SCALE_X(100) > HUD_SCALE_Y(100) ? HUD_SCALE_Y(x) : HUD_SCALE_X(x))
 #define HUD_SCALE_Y_AR(y)	(HUD_SCALE_Y(100) > HUD_SCALE_X(100) ? HUD_SCALE_X(y) : HUD_SCALE_Y(y))
 #else
@@ -334,14 +340,14 @@ using std::min;
 #endif
 
 #if defined(DXX_BUILD_DESCENT_I)
-bitmap_index Gauges[MAX_GAUGE_BMS_MAC]; // Array of all gauge bitmaps.
+array<bitmap_index, MAX_GAUGE_BMS_MAC> Gauges; // Array of all gauge bitmaps.
 #elif defined(DXX_BUILD_DESCENT_II)
-bitmap_index Gauges[MAX_GAUGE_BMS];   // Array of all gauge bitmaps.
-bitmap_index Gauges_hires[MAX_GAUGE_BMS];   // hires gauges
-int weapon_box_user[2]={WBU_WEAPON,WBU_WEAPON};		//see WBU_ constants in gauges.h
+array<bitmap_index, MAX_GAUGE_BMS> Gauges,   // Array of all gauge bitmaps.
+	Gauges_hires;   // hires gauges
+static array<int, 2> weapon_box_user{{WBU_WEAPON, WBU_WEAPON}};		//see WBU_ constants in gauges.h
 #endif
 grs_bitmap deccpt;
-grs_bitmap *WinBoxOverlay[2] = { NULL, NULL }; // Overlay subbitmaps for both weapon boxes
+static array<grs_subbitmap_ptr, 2> WinBoxOverlay; // Overlay subbitmaps for both weapon boxes
 
 #define PAGE_IN_GAUGE(x) _page_in_gauge(x)
 static inline void _page_in_gauge(int x)
@@ -354,7 +360,7 @@ static inline void _page_in_gauge(int x)
 		PIGGY_PAGE_IN(Gauges[x]);
 }
 
-static void draw_ammo_info(int x,int y,int ammo_count,int primary);
+static void draw_ammo_info(int x,int y,int ammo_count);
 
 static int score_display;
 static fix score_time;
@@ -389,6 +395,11 @@ const gauge_box gauge_boxes[] = {
 		{SB_PRIMARY_W_BOX_LEFT_H,SB_PRIMARY_W_BOX_TOP_H,SB_PRIMARY_W_BOX_RIGHT_H,SB_PRIMARY_W_BOX_BOT_H},
 		{SB_SECONDARY_W_BOX_LEFT_H,SB_SECONDARY_W_BOX_TOP_H,SB_SECONDARY_W_BOX_RIGHT_H,SB_SECONDARY_W_BOX_BOT_H},
 	};
+
+struct span
+{
+	unsigned l, r;
+};
 
 //store delta x values from left of box
 const span weapon_window_left[] = {
@@ -711,18 +722,18 @@ const span weapon_window_right_hires[] = {
 static inline void hud_bitblt_free (int x, int y, int w, int h, grs_bitmap *bm)
 {
 #ifdef OGL
-	ogl_ubitmapm_cs (x,y,w,h,bm,-1,F1_0);
+	ogl_ubitmapm_cs (x,y,w,h,*bm,-1,F1_0);
 #else
-	gr_ubitmapm(x, y, bm);
+	gr_ubitmapm(x, y, *bm);
 #endif
 }
 
 static inline void hud_bitblt (int x, int y, grs_bitmap *bm)
 {
 #ifdef OGL
-	ogl_ubitmapm_cs (x,y,HUD_SCALE_X (bm->bm_w),HUD_SCALE_Y (bm->bm_h),bm,-1,F1_0);
+	ogl_ubitmapm_cs (x,y,HUD_SCALE_X (bm->bm_w),HUD_SCALE_Y (bm->bm_h),*bm,-1,F1_0);
 #else
-	gr_ubitmapm(x, y, bm);
+	gr_ubitmapm(x, y, *bm);
 #endif
 }
 
@@ -1148,9 +1159,9 @@ static void show_bomb_count(int x,int y,int bg_color,int always_show,int right_a
 static void draw_primary_ammo_info(int ammo_count)
 {
 	if (PlayerCfg.CockpitMode[1] == CM_STATUS_BAR)
-		draw_ammo_info(SB_PRIMARY_AMMO_X,SB_PRIMARY_AMMO_Y,ammo_count,1);
+		draw_ammo_info(SB_PRIMARY_AMMO_X,SB_PRIMARY_AMMO_Y,ammo_count);
 	else
-		draw_ammo_info(PRIMARY_AMMO_X,PRIMARY_AMMO_Y,ammo_count,1);
+		draw_ammo_info(PRIMARY_AMMO_X,PRIMARY_AMMO_Y,ammo_count);
 }
 
 static void hud_set_fontcolor_red()
@@ -1263,7 +1274,7 @@ static void hud_printf_vulcan_ammo(const int x, const int y)
 		hud_set_fontcolor_gray();
 	char c;
 #if defined(DXX_BUILD_DESCENT_II)
-	if ((primary_weapon_flags & gauss_mask) && Primary_last_was_super[VULCAN_INDEX])
+	if ((primary_weapon_flags & gauss_mask) && (Primary_last_was_super[VULCAN_INDEX] || !(primary_weapon_flags & vulcan_mask)))
 		c = 'G';
 	else
 #endif
@@ -1311,6 +1322,8 @@ static void hud_show_weapons_mode(int type,int vertical,int orig_x,int orig_y){
 				case 4:
 					txtweapon = "F";
 					break;
+				default:
+					continue;
 			}
 			gr_get_string_size(txtweapon, &w, &h, &aw );
 			if (vertical){
@@ -1377,6 +1390,8 @@ static void hud_show_weapons_mode(int type,int vertical,int orig_x,int orig_y){
 					else
 						txtweapon = "O";
 					break;
+				default:
+					continue;
 			}
 			gr_get_string_size(txtweapon, &w, &h, &aw );
 			if (vertical){
@@ -1526,7 +1541,7 @@ static void hud_show_cloak_invuln(void)
 		const fix64 effect_end = Players[Player_num].cloak_time+CLOAK_TIME_MAX-GameTime64;
 		if (effect_end > F1_0*3 || GameTime64 & 0x8000)
 		{
-			gr_printf(FSPACX(1), y, "%s: %lu", TXT_CLOAKED, effect_end / F1_0);
+			gr_printf(FSPACX(1), y, "%s: %lu", TXT_CLOAKED, static_cast<unsigned long>(effect_end / F1_0));
 		}
 	}
 
@@ -1541,7 +1556,7 @@ static void hud_show_cloak_invuln(void)
 		const fix64 effect_end = Players[Player_num].invulnerable_time+INVULNERABLE_TIME_MAX-GameTime64;
 		if (effect_end > F1_0*4 || GameTime64 & 0x8000)
 		{
-			gr_printf(FSPACX(1), y, "%s: %lu", TXT_INVULNERABLE, effect_end / F1_0);
+			gr_printf(FSPACX(1), y, "%s: %lu", TXT_INVULNERABLE, static_cast<unsigned long>(effect_end / F1_0));
 		}
 	}
 
@@ -1725,10 +1740,9 @@ void add_bonus_points_to_score(int points)
 }
 
 // Decode cockpit bitmap to deccpt and add alpha fields to weapon boxes (as it should have always been) so we later can render sub bitmaps over the window canvases
-void cockpit_decode_alpha(grs_bitmap *bm)
+static void cockpit_decode_alpha(grs_bitmap *bm)
 {
 
-	int i=0,x=0,y=0;
 	static unsigned char *cur=NULL;
 	static short cur_w=0, cur_h=0;
 	static unsigned char cockpitbuf[1024*1024];
@@ -1742,18 +1756,17 @@ void cockpit_decode_alpha(grs_bitmap *bm)
 	// decode the bitmap
 	if (bm->bm_flags & BM_FLAG_RLE){
 		unsigned char * dbits;
-		unsigned char * sbits;
 		int i, data_offset;
 
 		data_offset = 1;
 		if (bm->bm_flags & BM_FLAG_RLE_BIG)
 			data_offset = 2;
 
-		sbits = &bm->bm_data[4 + (bm->bm_h * data_offset)];
+		auto sbits = &bm->get_bitmap_data()[4 + (bm->bm_h * data_offset)];
 		dbits = cockpitbuf;
 
 		for (i=0; i < bm->bm_h; i++ )    {
-			gr_rle_decode(sbits,dbits);
+			gr_rle_decode({sbits, dbits}, rle_end(*bm, cockpitbuf));
 			if ( bm->bm_flags & BM_FLAG_RLE_BIG )
 				sbits += (int)INTEL_SHORT(*((short *)&(bm->bm_data[4+(i*data_offset)])));
 			else
@@ -1767,31 +1780,34 @@ void cockpit_decode_alpha(grs_bitmap *bm)
 	}
 
 	// add alpha color to the pixels which are inside the window box spans
-	for (y=0;y<bm->bm_h;y++)
+	const unsigned lower_y = (HIRESMODE?364:151);
+	const unsigned upper_y = (HIRESMODE?469:193) - lower_y;
+	unsigned i = bm->bm_w * lower_y;
+	const auto *wbl = (HIRESMODE?weapon_window_left_hires:weapon_window_left);
+	const auto *wbr = (HIRESMODE?weapon_window_right_hires:weapon_window_right);
+	for (unsigned y=0;y < upper_y;y++)
 	{
-		for (x=0;x<bm->bm_w;x++)
+		const auto &wbly = wbl[y];
+		const auto &wbry = wbr[y];
+		for (unsigned x=0;x < bm->bm_w;x++)
 		{
-			if (y >= (HIRESMODE?364:151) && y <= (HIRESMODE?469:193) && ((x >= WinBoxLeft[y-(HIRESMODE?364:151)].l && x <= WinBoxLeft[y-(HIRESMODE?364:151)].r) ||  (x >=WinBoxRight[y-(HIRESMODE?364:151)].l && x <= WinBoxRight[y-(HIRESMODE?364:151)].r)))
+			if ((x >= wbly.l && x <= wbly.r) || (x >= wbry.l && x <= wbry.r))
 				cockpitbuf[i]=TRANSPARENCY_COLOR;
 			i++;
 		}
 	}
 #ifdef OGL
-	ogl_freebmtexture(bm);
+	ogl_freebmtexture(*bm);
 #endif
-	gr_init_bitmap (&deccpt, 0, 0, 0, bm->bm_w, bm->bm_h, bm->bm_w, cockpitbuf);
-	gr_set_transparent(&deccpt,1);
+	gr_init_bitmap(deccpt, 0, 0, 0, bm->bm_w, bm->bm_h, bm->bm_w, cockpitbuf);
+	gr_set_transparent(deccpt,1);
 #ifdef OGL
-	ogl_ubitmapm_cs (0, 0, -1, -1, &deccpt, 255, F1_0); // render one time to init the texture
+	ogl_ubitmapm_cs (0, 0, -1, -1, deccpt, 255, F1_0); // render one time to init the texture
 #endif
-	if (WinBoxOverlay[0] != NULL)
-		gr_free_sub_bitmap(WinBoxOverlay[0]);
-	if (WinBoxOverlay[1] != NULL)
-		gr_free_sub_bitmap(WinBoxOverlay[1]);
-	WinBoxOverlay[0] = gr_create_sub_bitmap(&deccpt,(PRIMARY_W_BOX_LEFT)-2,(PRIMARY_W_BOX_TOP)-2,(PRIMARY_W_BOX_RIGHT-PRIMARY_W_BOX_LEFT+4),(PRIMARY_W_BOX_BOT-PRIMARY_W_BOX_TOP+4));
-	WinBoxOverlay[1] = gr_create_sub_bitmap(&deccpt,(SECONDARY_W_BOX_LEFT)-2,(SECONDARY_W_BOX_TOP)-2,(SECONDARY_W_BOX_RIGHT-SECONDARY_W_BOX_LEFT)+4,(SECONDARY_W_BOX_BOT-SECONDARY_W_BOX_TOP)+4);
+	WinBoxOverlay[0] = gr_create_sub_bitmap(deccpt,(PRIMARY_W_BOX_LEFT)-2,(PRIMARY_W_BOX_TOP)-2,(PRIMARY_W_BOX_RIGHT-PRIMARY_W_BOX_LEFT+4),(PRIMARY_W_BOX_BOT-PRIMARY_W_BOX_TOP+4));
+	WinBoxOverlay[1] = gr_create_sub_bitmap(deccpt,(SECONDARY_W_BOX_LEFT)-2,(SECONDARY_W_BOX_TOP)-2,(SECONDARY_W_BOX_RIGHT-SECONDARY_W_BOX_LEFT)+4,(SECONDARY_W_BOX_BOT-SECONDARY_W_BOX_TOP)+4);
 
-	cur = bm->bm_data;
+	cur = bm->get_bitmap_data();
 	cur_w = bm->bm_w;
 	cur_h = bm->bm_h;
 }
@@ -1808,20 +1824,15 @@ static void draw_wbu_overlay()
 
 	cockpit_decode_alpha(bm);
 
-	if (WinBoxOverlay[0] != NULL)
-		hud_bitblt(HUD_SCALE_X(PRIMARY_W_BOX_LEFT-2),HUD_SCALE_Y(PRIMARY_W_BOX_TOP-2),WinBoxOverlay[0]);
-	if (WinBoxOverlay[1] != NULL)
-		hud_bitblt(HUD_SCALE_X(SECONDARY_W_BOX_LEFT-2),HUD_SCALE_Y(SECONDARY_W_BOX_TOP-2),WinBoxOverlay[1]);
+	if (WinBoxOverlay[0])
+		hud_bitblt(HUD_SCALE_X(PRIMARY_W_BOX_LEFT-2),HUD_SCALE_Y(PRIMARY_W_BOX_TOP-2),WinBoxOverlay[0].get());
+	if (WinBoxOverlay[1])
+		hud_bitblt(HUD_SCALE_X(SECONDARY_W_BOX_LEFT-2),HUD_SCALE_Y(SECONDARY_W_BOX_TOP-2),WinBoxOverlay[1].get());
 }
 
 void close_gauges()
 {
-	if (WinBoxOverlay[0] != NULL)
-		gr_free_sub_bitmap(WinBoxOverlay[0]);
-	if (WinBoxOverlay[1] != NULL)
-		gr_free_sub_bitmap(WinBoxOverlay[1]);
-	WinBoxOverlay[0] = NULL;
-	WinBoxOverlay[1] = NULL;
+	WinBoxOverlay = {};
 }
 
 void init_gauges()
@@ -1918,18 +1929,9 @@ static void draw_player_ship(int cloak_state,int x, int y)
 {
 	static fix cloak_fade_timer=0;
 	static int cloak_fade_value=GR_FADE_LEVELS-1;
-	grs_bitmap *bm = NULL;
-
-	if (Game_mode & GM_TEAM)
-	{
-		PAGE_IN_GAUGE( GAUGE_SHIPS+get_team(Player_num) );
-		bm = &GameBitmaps[ GET_GAUGE_INDEX(GAUGE_SHIPS+get_team(Player_num)) ];
-	}
-	else
-	{
-		PAGE_IN_GAUGE( GAUGE_SHIPS+Player_num );
-		bm = &GameBitmaps[ GET_GAUGE_INDEX(GAUGE_SHIPS+Player_num) ];
-	}
+	const auto color = get_player_or_team_color(Player_num);
+	PAGE_IN_GAUGE(GAUGE_SHIPS+color);
+	grs_bitmap *const bm = &GameBitmaps[GET_GAUGE_INDEX(GAUGE_SHIPS+color)];
 
 	if (cloak_state)
 	{
@@ -2093,6 +2095,9 @@ static void draw_weapon_info_sub(int info_index,const gauge_box *box,int pic_x,i
 
 static void draw_weapon_info(int weapon_type,int weapon_num,int laser_level)
 {
+#if defined(DXX_BUILD_DESCENT_I)
+	(void)laser_level;
+#endif
 	int x,y;
 	int info_index;
 
@@ -2166,7 +2171,7 @@ static void draw_weapon_info(int weapon_type,int weapon_num,int laser_level)
 	}
 }
 
-static void draw_ammo_info(int x,int y,int ammo_count,int primary)
+static void draw_ammo_info(int x,int y,int ammo_count)
 {
 	if (!PlayerCfg.HudMode)
 	{
@@ -2179,9 +2184,9 @@ static void draw_ammo_info(int x,int y,int ammo_count,int primary)
 static void draw_secondary_ammo_info(int ammo_count)
 {
 	if (PlayerCfg.CockpitMode[1] == CM_STATUS_BAR)
-		draw_ammo_info(SB_SECONDARY_AMMO_X,SB_SECONDARY_AMMO_Y,ammo_count,0);
+		draw_ammo_info(SB_SECONDARY_AMMO_X,SB_SECONDARY_AMMO_Y,ammo_count);
 	else
-		draw_ammo_info(SECONDARY_AMMO_X,SECONDARY_AMMO_Y,ammo_count,0);
+		draw_ammo_info(SECONDARY_AMMO_X,SECONDARY_AMMO_Y,ammo_count);
 }
 
 static void draw_weapon_box(int weapon_type,int weapon_num)
@@ -2279,7 +2284,7 @@ static void draw_static(int win)
 #ifndef OGL
 	for (x=gauge_boxes[boxofs+win].left;x<gauge_boxes[boxofs+win].right;x+=bmp->bm_w)
 		for (y=gauge_boxes[boxofs+win].top;y<gauge_boxes[boxofs+win].bot;y+=bmp->bm_h)
-			gr_bitmap(x,y,bmp);
+			gr_bitmap(x,y,*bmp);
 #else
 	if (HIRESMODE)
 	{
@@ -2466,7 +2471,7 @@ static void draw_invulnerable_ship()
 		draw_shield_bar(f2ir(Players[Player_num].shields));
 }
 
-const rgb player_rgb[MAX_PLAYERS] = {
+const rgb_array_t player_rgb_normal{{
 							{15,15,23},
 							{27,0,0},
 							{0,23,0},
@@ -2475,7 +2480,7 @@ const rgb player_rgb[MAX_PLAYERS] = {
 							{24,17,6},
 							{14,21,12},
 							{29,29,0},
-						};
+}};
 
 struct xy {
 	sbyte x, y;
@@ -2647,7 +2652,8 @@ void show_mousefs_indicator(int mx, int my, int mz, int x, int y, int size)
 
 static void hud_show_kill_list()
 {
-	int n_players,player_list[MAX_PLAYERS];
+	playernum_t n_players;
+	playernum_array_t player_list;
 	int n_left,i,x0,x1,y,save_y;
 
 	if (Show_kill_list_timer > 0)
@@ -2685,8 +2691,8 @@ static void hud_show_kill_list()
 	}
 
 	for (i=0;i<n_players;i++) {
-		int player_num;
-		char name[9];
+		playernum_t player_num;
+		callsign_t name;
 		int sw,sh,aw;
 
 		if (i>=n_left) {
@@ -2715,35 +2721,34 @@ static void hud_show_kill_list()
 		else
 			player_num = player_list[i];
 
+		color_t fontcolor;
 		if (Show_kill_list == 1 || Show_kill_list==2)
 		{
-			int color;
-
 			if (Players[player_num].connected != CONNECT_PLAYING)
-				gr_set_fontcolor(BM_XRGB(12, 12, 12), -1);
-			else if (Game_mode & GM_TEAM) {
-				color = get_team(player_num);
-				gr_set_fontcolor(BM_XRGB(player_rgb[color].r,player_rgb[color].g,player_rgb[color].b),-1 );
-			}
+				fontcolor = BM_XRGB(12, 12, 12);
 			else {
-				color = player_num;
-				gr_set_fontcolor(BM_XRGB(player_rgb[color].r,player_rgb[color].g,player_rgb[color].b),-1 );
+				auto &color = player_rgb[get_player_or_team_color(player_num)];
+				fontcolor = BM_XRGB(color.r, color.g, color.b);
 			}
 		}
 		else
 		{
-			gr_set_fontcolor(BM_XRGB(player_rgb[player_num].r,player_rgb[player_num].g,player_rgb[player_num].b),-1 );
+			auto &color = player_rgb_normal[player_num];
+			fontcolor = BM_XRGB(color.r, color.g, color.b);
 		}
+		gr_set_fontcolor(fontcolor, -1);
 
 		if (Show_kill_list == 3)
-			strcpy(name, Netgame.team_name[i]);
+			name = Netgame.team_name[i];
 		else if (Game_mode & GM_BOUNTY && player_num == Bounty_target && GameTime64&0x10000)
-			strcpy(name,"[TARGET]");
+		{
+			name = "[TARGET]";
+		}
 		else
-			strcpy(name,Players[player_num].callsign);	// Note link to above if!!
-		gr_get_string_size(name,&sw,&sh,&aw);
+			name = Players[player_num].callsign;	// Note link to above if!!
+		gr_get_string_size(static_cast<const char *>(name),&sw,&sh,&aw);
 		while (sw > (x1-x0-FSPACX(2))) {
-			name[strlen(name)-1]=0;
+			name.buffer()[strlen(name)-1]=0;
 			gr_get_string_size(name,&sw,&sh,&aw);
 		}
 		gr_string(x0,y,name);
@@ -2783,9 +2788,9 @@ static int see_object(int objnum)
 	fq.thisobjnum			= Viewer - Objects;
 	fq.flags 				= FQ_TRANSWALL | FQ_CHECK_OBJS | FQ_GET_SEGLIST;
 	fq.startseg				= Viewer->segnum;
-	fq.ignore_obj_list	= NULL;
+	fq.ignore_obj_list.first = nullptr;
 
-	hit_type = find_vector_intersection(&fq, &hit_data);
+	hit_type = find_vector_intersection(fq, hit_data);
 
 	return (hit_type == HIT_OBJECT && hit_data.hit_object == objnum);
 }
@@ -2793,9 +2798,9 @@ static int see_object(int objnum)
 //show names of teammates & players carrying flags
 void show_HUD_names()
 {
-	int is_friend = 0, show_friend_name = 0, show_enemy_name = 0, show_name = 0, show_typing = 0, show_indi = 0, pnum = 0, objnum = 0;
+	int is_friend = 0, show_friend_name = 0, show_enemy_name = 0, show_name = 0, show_typing = 0, show_indi = 0, objnum = 0;
 	
-	for (pnum=0;pnum<N_players;pnum++)
+	for (playernum_t pnum=0;pnum<N_players;pnum++)
 	{
 		if (pnum == Player_num || Players[pnum].connected != CONNECT_PLAYING)
 			continue;
@@ -2824,30 +2829,26 @@ void show_HUD_names()
 
 		if ((show_name || show_typing || show_indi) && see_object(objnum))
 		{
-			g3s_point player_point;
-			g3_rotate_point(&player_point,&Objects[objnum].pos);
-
+			auto player_point = g3_rotate_point(Objects[objnum].pos);
 			if (player_point.p3_codes == 0) //on screen
 			{
-				g3_project_point(&player_point);
-
+				g3_project_point(player_point);
 				if (!(player_point.p3_flags & PF_OVERFLOW))
 				{
 					fix x,y,dx,dy;
 					char s[CALLSIGN_LEN+10];
-					int w, h, aw, x1, y1, color_num;
+					int w, h, aw, x1, y1;
 
 					x = player_point.p3_sx;
 					y = player_point.p3_sy;
 					dy = -fixmuldiv(fixmul(Objects[objnum].size,Matrix_scale.y),i2f(grd_curcanv->cv_bitmap.bm_h)/2,player_point.p3_z);
 					dx = fixmul(dy,grd_curscreen->sc_aspect);
-					color_num = (Game_mode & GM_TEAM)?get_team(pnum):pnum;
 					/* Set the text to show */
 					const char *name = NULL;
 					if( Game_mode & GM_BOUNTY && pnum == Bounty_target )
 						name = "Target";
 					else if (show_name)
-						name = Players[pnum].callsign;
+						name = static_cast<const char *>(Players[pnum].callsign);
 					const char *trailer = NULL;
 					if (show_typing)
 					{
@@ -2860,7 +2861,8 @@ void show_HUD_names()
 					if (written)
 					{
 						gr_get_string_size(s, &w, &h, &aw);
-						gr_set_fontcolor(BM_XRGB(player_rgb[color_num].r,player_rgb[color_num].g,player_rgb[color_num].b),-1 );
+						const auto color = get_player_or_team_color(pnum);
+						gr_set_fontcolor(BM_XRGB(player_rgb[color].r, player_rgb[color].g, player_rgb[color].b), -1);
 						x1 = f2i(x)-w/2;
 						y1 = f2i(y-dy)+FSPACY(1);
 						gr_string (x1, y1, s);
@@ -2921,7 +2923,7 @@ void draw_hud()
 		return;
 
 	// Cruise speed
-	if ( Player_num > -1 && Viewer->type==OBJ_PLAYER && get_player_id(Viewer)==Player_num && PlayerCfg.CockpitMode[1] != CM_REAR_VIEW)	{
+	if (Viewer->type==OBJ_PLAYER && get_player_id(Viewer)==Player_num && PlayerCfg.CockpitMode[1] != CM_REAR_VIEW)	{
 		int	x = FSPACX(1);
 		int	y = grd_curcanv->cv_bitmap.bm_h;
 
@@ -3126,17 +3128,32 @@ void update_laser_weapon_info(void)
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
+static array<int, 2> overlap_dirty;
+
 //draws a 3d view into one of the cockpit windows.  win is 0 for left,
 //1 for right.  viewer is object.  NULL object means give up window
 //user is one of the WBU_ constants.  If rear_view_flag is set, show a
 //rear view.  If label is non-NULL, print the label at the top of the
 //window.
-void do_cockpit_window_view(int win,object *viewer,int rear_view_flag,int user,const char *label)
+void do_cockpit_window_view(int win,int rear_view_flag,int user,const char *label)
+{
+	Assert(user == WBU_WEAPON || user == WBU_STATIC);
+	if (user == WBU_STATIC && weapon_box_user[win] != WBU_STATIC)
+		static_time[win] = 0;
+	if (weapon_box_user[win] == WBU_WEAPON || weapon_box_user[win] == WBU_STATIC)
+		return;		//already set
+	weapon_box_user[win] = user;
+	if (overlap_dirty[win]) {
+		gr_set_current_canvas(NULL);
+		overlap_dirty[win] = 0;
+	}
+}
+
+void do_cockpit_window_view(int win,const vobjptridx_t viewer,int rear_view_flag,int user,const char *label)
 {
 	grs_canvas window_canv;
 	static grs_canvas overlap_canv;
 	object *viewer_save = Viewer;
-	static int overlap_dirty[2]={0,0};
 	int boxnum;
 	static int window_x,window_y;
 	const gauge_box *box;
@@ -3145,27 +3162,8 @@ void do_cockpit_window_view(int win,object *viewer,int rear_view_flag,int user,c
 
 	box = NULL;
 
-	if (viewer == NULL) {								//this user is done
-
-		Assert(user == WBU_WEAPON || user == WBU_STATIC);
-
-		if (user == WBU_STATIC && weapon_box_user[win] != WBU_STATIC)
-			static_time[win] = 0;
-
-		if (weapon_box_user[win] == WBU_WEAPON || weapon_box_user[win] == WBU_STATIC)
-			return;		//already set
-
-		weapon_box_user[win] = user;
-
-		if (overlap_dirty[win]) {
-			gr_set_current_canvas(NULL);
-			overlap_dirty[win] = 0;
-		}
-
-		return;
-	}
-
-	update_rendered_data(win+1, viewer, rear_view_flag);
+	window_rendered_data window;
+	update_rendered_data(window, viewer, rear_view_flag);
 
 	weapon_box_user[win] = user;						//say who's using window
 
@@ -3182,7 +3180,7 @@ void do_cockpit_window_view(int win,object *viewer,int rear_view_flag,int user,c
 		window_x = grd_curscreen->sc_w/2+dx;
 		window_y = grd_curscreen->sc_h-h-(SHEIGHT/15);
 
-		gr_init_sub_canvas(&window_canv,&grd_curscreen->sc_canvas,window_x,window_y,w,h);
+		gr_init_sub_canvas(window_canv, grd_curscreen->sc_canvas, window_x, window_y, w, h);
 	}
 	else {
 		if (PlayerCfg.CockpitMode[1] == CM_FULL_COCKPIT)
@@ -3193,17 +3191,17 @@ void do_cockpit_window_view(int win,object *viewer,int rear_view_flag,int user,c
 			goto abort;
 
 		box = &gauge_boxes[boxnum];
-		gr_init_sub_canvas(&window_canv,&grd_curscreen->sc_canvas,HUD_SCALE_X(box->left),HUD_SCALE_Y(box->top),HUD_SCALE_X(box->right-box->left+1),HUD_SCALE_Y(box->bot-box->top+1));
+		gr_init_sub_canvas(window_canv, grd_curscreen->sc_canvas, HUD_SCALE_X(box->left), HUD_SCALE_Y(box->top), HUD_SCALE_X(box->right-box->left+1), HUD_SCALE_Y(box->bot-box->top+1));
 	}
 
 	gr_set_current_canvas(&window_canv);
 
-	render_frame(0, win+1);
+	render_frame(0, window);
 
 	//	HACK! If guided missile, wake up robots as necessary.
 	if (viewer->type == OBJ_WEAPON) {
 		// -- Used to require to be GUIDED -- if (viewer->id == GUIDEDMISS_ID)
-		wake_up_rendered_objects(viewer, win+1);
+		wake_up_rendered_objects(viewer, window);
 	}
 
 	if (label) {
@@ -3237,7 +3235,7 @@ void do_cockpit_window_view(int win,object *viewer,int rear_view_flag,int user,c
 
 			gr_set_current_canvas(NULL);
 
-			gr_bitmap(window_x,window_y,&window_canv.cv_bitmap);
+			gr_bitmap(window_x,window_y,window_canv.cv_bitmap);
 
 			overlap_dirty[win] = 1;
 		}
@@ -3248,13 +3246,9 @@ void do_cockpit_window_view(int win,object *viewer,int rear_view_flag,int user,c
 			extra_part_h = small_window_bottom - big_window_bottom;
 
 			if (extra_part_h > 0) {
-
-				gr_init_sub_canvas(&overlap_canv,&window_canv,0,window_canv.cv_bitmap.bm_h-extra_part_h,window_canv.cv_bitmap.bm_w,extra_part_h);
-
+				gr_init_sub_canvas(overlap_canv, window_canv, 0, window_canv.cv_bitmap.bm_h-extra_part_h, window_canv.cv_bitmap.bm_w, extra_part_h);
 				gr_set_current_canvas(NULL);
-
-				gr_bitmap(window_x,big_window_bottom+1,&overlap_canv.cv_bitmap);
-
+				gr_bitmap(window_x,big_window_bottom+1,overlap_canv.cv_bitmap);
 				overlap_dirty[win] = 1;
 			}
 		}

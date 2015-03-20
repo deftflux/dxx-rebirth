@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -32,6 +38,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "makesig.h"
 #include "physfsx.h"
 
+#include "dxxsconf.h"
+#include "compiler-range_for.h"
+#include "compiler-make_unique.h"
+#include "partial_range.h"
+
 //Internal constants and structures for this library
 
 //Type values for bitmaps
@@ -47,14 +58,8 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define mskHasMask	1
 #define mskHasTransparentColor 2
 
-//Palette entry structure
-struct pal_entry
-{
-	sbyte r,g,b;
-};
-
 //structure of the header in the file
-struct iff_bitmap_header
+struct iff_bitmap_header : prohibit_void_ptr<iff_bitmap_header>
 {
 	short w,h;						//width and height of this bitmap
 	short x,y;						//generally unused
@@ -64,9 +69,9 @@ struct iff_bitmap_header
 	sbyte nplanes;              //number of planes (8 for 256 color image)
 	sbyte masking,compression;  //see constants above
 	sbyte xaspect,yaspect;      //aspect ratio (usually 5/6)
-	pal_entry palette[256];		//the palette for this bitmap
-	ubyte *raw_data;				//ptr to array of data
+	palette_array_t palette;		//the palette for this bitmap
 	short row_size;				//offset to next row
+	RAIIdmem<uint8_t[]> raw_data;				//ptr to array of data
 };
 
 ubyte iff_transparent_color;
@@ -136,7 +141,7 @@ static int parse_bmhd(PHYSFS_file *ifile,long len,iff_bitmap_header *bmheader)
 //  the buffer pointed to by raw_data is stuffed with a pointer to decompressed pixel data
 static int parse_body(PHYSFS_file *ifile,long len,iff_bitmap_header *bmheader)
 {
-	unsigned char  *p=bmheader->raw_data;
+	auto p = bmheader->raw_data.get();
 	int width,depth;
 	signed char n;
 	int nn,wid_cnt,end_cnt,plane;
@@ -220,10 +225,10 @@ static int parse_body(PHYSFS_file *ifile,long len,iff_bitmap_header *bmheader)
 			}
 
 			#ifndef NDEBUG
-			if ((p-bmheader->raw_data) % width == 0)
+			if ((p - bmheader->raw_data.get()) % width == 0)
 					row_count++;
 
-			Assert((p-bmheader->raw_data) - (width*row_count) < width);
+			Assert((p - bmheader->raw_data.get()) - (width*row_count) < width);
 			#endif
 
 		}
@@ -256,13 +261,12 @@ static int parse_body(PHYSFS_file *ifile,long len,iff_bitmap_header *bmheader)
 //modify passed bitmap
 static int parse_delta(PHYSFS_file *ifile,long len,iff_bitmap_header *bmheader)
 {
-	unsigned char  *p=bmheader->raw_data;
-	int y;
+	auto p = bmheader->raw_data.get();
 	long chunk_end = PHYSFS_tell(ifile) + len;
 
 	PHYSFSX_fseek(ifile, 4, SEEK_CUR);		//longword, seems to be equal to 4.  Don't know what it is
 
-	for (y=0;y<bmheader->h;y++) {
+	for (int y=0;y<bmheader->h;y++) {
 		ubyte n_items;
 		int cnt = bmheader->w;
 		ubyte code;
@@ -348,7 +352,7 @@ static int iff_parse_ilbm_pbm(PHYSFS_file *ifile,long form_type,iff_bitmap_heade
 
 			while ((PHYSFS_tell(ifile) < end_pos) && (sig=get_sig(ifile)) != EOF) {
 
-				if (PHYSFS_readSBE32(ifile, &len)==EOF) break;
+				PHYSFS_readSBE32(ifile, &len);
 
 				switch (sig) {
 
@@ -368,8 +372,7 @@ static int iff_parse_ilbm_pbm(PHYSFS_file *ifile,long form_type,iff_bitmap_heade
 
 						}
 						else {
-
-							MALLOC( bmheader->raw_data, ubyte, bmheader->w * bmheader->h );
+							MALLOC(bmheader->raw_data, uint8_t[], bmheader->w * bmheader->h);
 							if (!bmheader->raw_data)
 								return IFF_NO_MEM;
 						}
@@ -386,25 +389,22 @@ static int iff_parse_ilbm_pbm(PHYSFS_file *ifile,long form_type,iff_bitmap_heade
 						bmheader->h = prev_bm->bm_h;
 						bmheader->type = prev_bm->bm_type;
 
-						MALLOC( bmheader->raw_data, ubyte, bmheader->w * bmheader->h );
+						MALLOC(bmheader->raw_data, uint8_t[], bmheader->w * bmheader->h);
 
-						memcpy(bmheader->raw_data, prev_bm->bm_data, bmheader->w * bmheader->h );
+						memcpy(bmheader->raw_data.get(), prev_bm->bm_data, bmheader->w * bmheader->h);
 						skip_chunk(ifile,len);
 
 						break;
 
 					case cmap_sig:
 					{
-						int ncolors=(int) (len/3),cnum;
-						unsigned char r,g,b;
+						unsigned ncolors=(len/3);
 
-						for (cnum=0;cnum<ncolors;cnum++) {
-							r=PHYSFSX_fgetc(ifile);
-							g=PHYSFSX_fgetc(ifile);
-							b=PHYSFSX_fgetc(ifile);
-							r >>= 2; bmheader->palette[cnum].r = r;
-							g >>= 2; bmheader->palette[cnum].g = g;
-							b >>= 2; bmheader->palette[cnum].b = b;
+						range_for (auto &p, partial_range(bmheader->palette, ncolors))
+						{
+							p.r = static_cast<unsigned char>(PHYSFSX_fgetc(ifile)) >> 2;
+							p.g = static_cast<unsigned char>(PHYSFSX_fgetc(ifile)) >> 2;
+							p.b = static_cast<unsigned char>(PHYSFSX_fgetc(ifile)) >> 2;
 						}
 						if (len & 1) PHYSFSX_fgetc(ifile);
 
@@ -440,19 +440,20 @@ static int iff_parse_ilbm_pbm(PHYSFS_file *ifile,long form_type,iff_bitmap_heade
 //convert an ILBM file to a PBM file
 static int convert_ilbm_to_pbm(iff_bitmap_header *bmheader)
 {
-	int x,y,p;
-	sbyte *new_data, *destptr, *rowptr;
+	int x,p;
+	sbyte *rowptr;
 	int bytes_per_row,byteofs;
 	ubyte checkmask,newbyte,setbit;
 
-	MALLOC(new_data, sbyte, bmheader->w * bmheader->h);
+	RAIIdmem<uint8_t[]> new_data;
+	MALLOC(new_data, uint8_t[], bmheader->w * bmheader->h);
 	if (new_data == NULL) return IFF_NO_MEM;
 
-	destptr = new_data;
+	auto destptr = new_data.get();
 
 	bytes_per_row = 2*((bmheader->w+15)/16);
 
-	for (y=0;y<bmheader->h;y++) {
+	for (int y=0;y<bmheader->h;y++) {
 
 		rowptr = (signed char *) &bmheader->raw_data[y * bytes_per_row * bmheader->nplanes];
 
@@ -475,8 +476,7 @@ static int convert_ilbm_to_pbm(iff_bitmap_header *bmheader)
 
 	}
 
-	d_free(bmheader->raw_data);
-	bmheader->raw_data = (unsigned char *) new_data;
+	bmheader->raw_data = std::move(new_data);
 
 	bmheader->type = TYPE_PBM;
 
@@ -485,63 +485,58 @@ static int convert_ilbm_to_pbm(iff_bitmap_header *bmheader)
 
 #define INDEX_TO_15BPP(i) ((short)((((palptr[(i)].r/2)&31)<<10)+(((palptr[(i)].g/2)&31)<<5)+((palptr[(i)].b/2 )&31)))
 
-static int convert_rgb15(grs_bitmap *bm,iff_bitmap_header *bmheader)
+static int convert_rgb15(grs_bitmap &bm,iff_bitmap_header &bmheader)
 {
-	int x,y;
-	pal_entry *palptr;
-
-	palptr = bmheader->palette;
+	palette_array_t::iterator palptr = begin(bmheader.palette);
 
 #if defined(DXX_BUILD_DESCENT_I)
-	gr_init_bitmap (bm, bm->bm_type, 0, 0, bm->bm_w, bm->bm_h, bm->bm_rowsize, 0);
-
-	for (y=0; y<bm->bm_h; y++) {
-		for (x=0; x<bmheader->w; x++)
-			gr_bm_pixel (bm, x, y, INDEX_TO_15BPP(bmheader->raw_data[y*bmheader->w+x]));
+	for (int y=0; y < bm.bm_h; y++) {
+		for (int x=0; x < bmheader.w; x++)
+			gr_bm_pixel(bm, x, y, INDEX_TO_15BPP(bm.get_bitmap_data()[y * bmheader.w + x]));
 	}
 #elif defined(DXX_BUILD_DESCENT_II)
 	ushort *new_data;
-	MALLOC(new_data, ushort, bm->bm_w * bm->bm_h * 2);
+	MALLOC(new_data, ushort, bm.bm_w * bm.bm_h * 2);
 	if (new_data == NULL)
 		return IFF_NO_MEM;
 
 	unsigned newptr = 0;
-	for (y=0; y<bm->bm_h; y++) {
+	for (int y=0; y < bm.bm_h; y++) {
 
-		for (x=0; x<bmheader->w; x++)
-			new_data[newptr++] = INDEX_TO_15BPP(bmheader->raw_data[y*bmheader->w+x]);
+		for (int x=0; x < bmheader.w; x++)
+			new_data[newptr++] = INDEX_TO_15BPP(bm.get_bitmap_data()[y * bmheader.w + x]);
 
 	}
 
-	d_free(bm->bm_data);				//get rid of old-style data
-	bm->bm_data = (ubyte *) new_data;			//..and point to new data
+	d_free(bm.bm_mdata);				//get rid of old-style data
+	bm.bm_mdata = (ubyte *) new_data;			//..and point to new data
 
-	bm->bm_rowsize *= 2;				//two bytes per row
+	bm.bm_rowsize *= 2;				//two bytes per row
 #endif
 	return IFF_NO_ERROR;
 
 }
 
 //copy an iff header structure to a grs_bitmap structure
-static void copy_iff_to_grs(grs_bitmap *bm,iff_bitmap_header *bmheader)
+static void copy_iff_to_grs(grs_bitmap &bm,iff_bitmap_header &bmheader)
 {
-	gr_init_bitmap (bm, bmheader->type, 0, 0, bmheader->w, bmheader->h, bmheader->w, bmheader->raw_data);
+	gr_init_bitmap(bm, bmheader.type, 0, 0, bmheader.w, bmheader.h, bmheader.w, bmheader.raw_data.release());
 }
 
 //if bm->bm_data is set, use it (making sure w & h are correct), else
 //allocate the memory
-static int iff_parse_bitmap(PHYSFS_file *ifile, grs_bitmap *bm, int bitmap_type, sbyte *palette, grs_bitmap *prev_bm)
+static int iff_parse_bitmap(PHYSFS_file *ifile, grs_bitmap &bm, int bitmap_type, palette_array_t *palette, grs_bitmap *prev_bm)
 {
 	int ret;			//return code
 	iff_bitmap_header bmheader;
 	int sig,form_len;
 	long form_type;
 
-	bmheader.raw_data = bm->bm_data;
+	bmheader.raw_data.reset(bm.get_bitmap_data());
 
 	if (bmheader.raw_data) {
-		bmheader.w = bm->bm_w;
-		bmheader.h = bm->bm_h;
+		bmheader.w = bm.bm_w;
+		bmheader.h = bm.bm_h;
 	}//added 05/17/99 Matt Mueller - don't just leave them unitialized
 	else{
 		bmheader.w=bmheader.h=0;
@@ -565,7 +560,6 @@ static int iff_parse_bitmap(PHYSFS_file *ifile, grs_bitmap *bm, int bitmap_type,
 		ret = IFF_UNKNOWN_FORM;
 
 	if (ret != IFF_NO_ERROR) {		//got an error parsing
-		if (bmheader.raw_data) d_free(bmheader.raw_data);
 		return ret;
 	}
 
@@ -580,14 +574,15 @@ static int iff_parse_bitmap(PHYSFS_file *ifile, grs_bitmap *bm, int bitmap_type,
 
 	//Copy data from iff_bitmap_header structure into grs_bitmap structure
 
-	copy_iff_to_grs(bm,&bmheader);
+	copy_iff_to_grs(bm,bmheader);
 
-	if (palette) memcpy(palette,&bmheader.palette,sizeof(bmheader.palette));
+	if (palette)
+		*palette = bmheader.palette;
 
 	//Now do post-process if required
 
 	if (bitmap_type == BM_RGB15) {
-		ret = convert_rgb15(bm,&bmheader);
+		ret = convert_rgb15(bm, bmheader);
 		if (ret != IFF_NO_ERROR)
 			return ret;
 	}
@@ -597,47 +592,34 @@ static int iff_parse_bitmap(PHYSFS_file *ifile, grs_bitmap *bm, int bitmap_type,
 }
 
 //returns error codes - see IFF.H.  see GR.H for bitmap_type
-int iff_read_bitmap(const char *ifilename,grs_bitmap *bm,int bitmap_type,palette_array_t *palette)
+int iff_read_bitmap(const char *ifilename,grs_bitmap &bm,int bitmap_type,palette_array_t *palette)
 {
 	int ret;			//return code
-	PHYSFS_file *ifile;
-
-	ifile = PHYSFSX_openReadBuffered(ifilename);
-	if (ifile == NULL)
+	auto ifile = PHYSFSX_openReadBuffered(ifilename);
+	if (!ifile)
 		return IFF_NO_FILE;
 
-	bm->bm_data = NULL;
-	ret = iff_parse_bitmap(ifile,bm,bitmap_type,(signed char *) palette,NULL);
-
-	PHYSFS_close(ifile);
-
+	bm.bm_data = nullptr;
+	ret = iff_parse_bitmap(ifile, bm, bitmap_type, palette, nullptr);
 	return ret;
-
-
 }
 
 //like iff_read_bitmap(), but reads into a bitmap that already exists,
 //without allocating memory for the bitmap.
-int iff_read_into_bitmap(const char *ifilename, grs_bitmap *bm, sbyte *palette)
+int iff_read_into_bitmap(const char *ifilename, grs_bitmap *bm, palette_array_t *palette)
 {
 	int ret;			//return code
-	PHYSFS_file *ifile;
-
-	ifile = PHYSFSX_openReadBuffered(ifilename);
-	if (ifile == NULL)
+	auto ifile = PHYSFSX_openReadBuffered(ifilename);
+	if (!ifile)
 		return IFF_NO_FILE;
 
-	ret = iff_parse_bitmap(ifile,bm,bm->bm_type,palette,NULL);
-
-	PHYSFS_close(ifile);
-
+	ret = iff_parse_bitmap(ifile, *bm, bm->bm_type, palette, nullptr);
 	return ret;
-
-
 }
 
 #define BMHD_SIZE 20
 
+#if 0
 static int write_bmhd(PHYSFS_file *ofile,iff_bitmap_header *bitmap_header)
 {
 	put_sig(bmhd_sig,ofile);
@@ -666,19 +648,18 @@ static int write_bmhd(PHYSFS_file *ofile,iff_bitmap_header *bitmap_header)
 
 static int write_pal(PHYSFS_file *ofile,iff_bitmap_header *bitmap_header)
 {
-	int	i;
-
 	int n_colors = 1<<bitmap_header->nplanes;
 
 	put_sig(cmap_sig,ofile);
 //	PHYSFS_writeSBE32(sizeof(pal_entry) * n_colors,ofile);
 	PHYSFS_writeSBE32(ofile, 3 * n_colors);
 
-	for (i=0; i<256; i++) {
+	range_for (auto &c, bitmap_header->palette)
+	{
 		unsigned char r,g,b;
-		r = bitmap_header->palette[i].r * 4 + (bitmap_header->palette[i].r?3:0);
-		g = bitmap_header->palette[i].g * 4 + (bitmap_header->palette[i].g?3:0);
-		b = bitmap_header->palette[i].b * 4 + (bitmap_header->palette[i].b?3:0);
+		r = c.r * 4 + (c.r?3:0);
+		g = c.g * 4 + (c.g?3:0);
+		b = c.b * 4 + (c.b?3:0);
 		PHYSFSX_writeU8(ofile, r);
 		PHYSFSX_writeU8(ofile, g);
 		PHYSFSX_writeU8(ofile, b);
@@ -689,7 +670,7 @@ static int write_pal(PHYSFS_file *ofile,iff_bitmap_header *bitmap_header)
 
 static int rle_span(ubyte *dest,ubyte *src,int len)
 {
-	int n,lit_cnt,rep_cnt;
+	int lit_cnt,rep_cnt;
 	ubyte last,*cnt_ptr,*dptr;
 
         cnt_ptr=0;
@@ -698,7 +679,7 @@ static int rle_span(ubyte *dest,ubyte *src,int len)
 
 	last=src[0]; lit_cnt=1;
 
-	for (n=1;n<len;n++) {
+	for (int n=1;n<len;n++) {
 
 		if (src[n] == last) {
 
@@ -766,9 +747,9 @@ static int write_body(PHYSFS_file *ofile,iff_bitmap_header *bitmap_header,int co
 	save_pos = PHYSFS_tell(ofile);
 	PHYSFS_writeSBE32(ofile, len);
 
-	RAIIdubyte new_span;
-	MALLOC( new_span, ubyte, bitmap_header->w + (bitmap_header->w/128+2)*2);
-	if (new_span == NULL) return IFF_NO_MEM;
+	RAIIdmem<uint8_t[]> new_span;
+	MALLOC( new_span, uint8_t[], bitmap_header->w + (bitmap_header->w/128+2)*2);
+	if (!new_span) return IFF_NO_MEM;
 
 	for (y=bitmap_header->h;y--;) {
 
@@ -800,7 +781,7 @@ int write_tiny(PHYSFS_file *ofile,iff_bitmap_header *bitmap_header,int compressi
 	int skip;
 	int new_w,new_h;
 	int len,total_len=0,newlen;
-	int x,y,xofs,odd;
+	int x,xofs,odd;
 	ubyte *p = bitmap_header->raw_data;
 	ubyte tspan[80],new_span[80*2];
 	long save_pos;
@@ -821,7 +802,7 @@ int write_tiny(PHYSFS_file *ofile,iff_bitmap_header *bitmap_header,int compressi
 	PHYSFS_writeSBE16(ofile, new_w);
 	PHYSFS_writeSBE16(ofile, new_h);
 
-	for (y=0;y<new_h;y++) {
+	for (int y=0;y<new_h;y++) {
 		for (x=xofs=0;x<new_w;x++,xofs+=skip)
 			tspan[x] = p[xofs];
 
@@ -852,7 +833,7 @@ static int write_pbm(PHYSFS_file *ofile,iff_bitmap_header *bitmap_header,int com
 {
 	int ret;
 	long raw_size = EVEN(bitmap_header->w) * bitmap_header->h;
-	long body_size,tiny_size,pbm_size = 4 + BMHD_SIZE + 8 + EVEN(raw_size) + sizeof(pal_entry)*(1<<bitmap_header->nplanes)+8;
+	long body_size,tiny_size,pbm_size = 4 + BMHD_SIZE + 8 + EVEN(raw_size) + sizeof(rgb_t)*(1<<bitmap_header->nplanes)+8;
 	long save_pos;
 
 	put_sig(form_sig,ofile);
@@ -874,7 +855,7 @@ static int write_pbm(PHYSFS_file *ofile,iff_bitmap_header *bitmap_header,int com
 
 	body_size = write_body(ofile,bitmap_header,compression_on);
 
-	pbm_size = 4 + BMHD_SIZE + body_size + tiny_size + sizeof(pal_entry)*(1<<bitmap_header->nplanes)+8;
+	pbm_size = 4 + BMHD_SIZE + body_size + tiny_size + sizeof(rgb_t)*(1<<bitmap_header->nplanes)+8;
 
 	Assert(PHYSFSX_fseek(ofile,save_pos,SEEK_SET)==0);
 	(void)save_pos;
@@ -887,9 +868,8 @@ static int write_pbm(PHYSFS_file *ofile,iff_bitmap_header *bitmap_header,int com
 
 //writes an IFF file from a grs_bitmap structure. writes palette if not null
 //returns error codes - see IFF.H.
-int iff_write_bitmap(const char *ofilename,grs_bitmap *bm,ubyte *palette)
+int iff_write_bitmap(const char *ofilename,grs_bitmap *bm,palette_array_t *palette)
 {
-	PHYSFS_file *ofile;
 	iff_bitmap_header bmheader;
 	int ret;
 	int compression_on;
@@ -919,36 +899,35 @@ int iff_write_bitmap(const char *ofilename,grs_bitmap *bm,ubyte *palette)
 	bmheader.compression = (compression_on?cmpByteRun1:cmpNone);
 
 	bmheader.xaspect = bmheader.yaspect = 1;	//I don't think it matters what I write
-	bmheader.raw_data = bm->bm_data;
+	bmheader.raw_data = bm->get_bitmap_data();
 	bmheader.row_size = bm->bm_rowsize;
 
-	if (palette) memcpy(&bmheader.palette,palette,256*3);
+	if (palette)
+		bmheader.palette = *palette;
 
 	//open file and write
 
-	if ((ofile = PHYSFS_openWrite(ofilename)) == NULL)
+	RAIIPHYSFS_File ofile{PHYSFS_openWrite(ofilename)};
+	if (!ofile)
 		return IFF_NO_FILE;
 
 	ret = write_pbm(ofile,&bmheader,compression_on);
-
-	PHYSFS_close(ofile);
-
 	return ret;
 }
+#endif
 
 //read in many brushes.  fills in array of pointers, and n_bitmaps.
 //returns iff error codes
-int iff_read_animbrush(const char *ifilename,grs_bitmap **bm_list,unsigned max_bitmaps,unsigned *n_bitmaps,palette_array_t &palette)
+int iff_read_animbrush(const char *ifilename,array<std::unique_ptr<grs_main_bitmap>, MAX_BITMAPS_PER_BRUSH> &bm_list,unsigned *n_bitmaps,palette_array_t &palette)
 {
 	int ret = IFF_NO_ERROR;			//return code
-	PHYSFS_file *ifile;
 	int sig,form_len;
 	long form_type;
 
 	*n_bitmaps=0;
 
-	ifile = PHYSFSX_openReadBuffered(ifilename);
-	if (ifile == NULL)
+	auto ifile = PHYSFSX_openReadBuffered(ifilename);
+	if (!ifile)
 		return IFF_NO_FILE;
 
 	sig=get_sig(ifile);
@@ -966,16 +945,17 @@ int iff_read_animbrush(const char *ifilename,grs_bitmap **bm_list,unsigned max_b
 	else if (form_type == anim_sig) {
 		int anim_end = PHYSFS_tell(ifile) + form_len - 4;
 
-		while (PHYSFS_tell(ifile) < anim_end && *n_bitmaps < max_bitmaps) {
+		while (PHYSFS_tell(ifile) < anim_end && *n_bitmaps < bm_list.size()) {
 
 			grs_bitmap *prev_bm;
 
-			prev_bm = *n_bitmaps>0?bm_list[*n_bitmaps-1]:NULL;
+			prev_bm = *n_bitmaps>0?bm_list[*n_bitmaps-1].get() : nullptr;
 
-			MALLOC(bm_list[*n_bitmaps] , grs_bitmap, 1 );
-			gr_init_bitmap_data (bm_list[*n_bitmaps]);
+			auto &n = bm_list[*n_bitmaps];
+			n = make_unique<grs_main_bitmap>();
+			gr_init_bitmap_data(*n.get());
 
-			ret = iff_parse_bitmap(ifile,bm_list[*n_bitmaps],form_type,*n_bitmaps>0?NULL:(signed char *)&palette[0],prev_bm);
+			ret = iff_parse_bitmap(ifile, *n.get(), form_type, *n_bitmaps > 0 ? nullptr : &palette, prev_bm);
 
 			if (ret != IFF_NO_ERROR)
 				goto done;
@@ -991,11 +971,7 @@ int iff_read_animbrush(const char *ifilename,grs_bitmap **bm_list,unsigned max_b
 		ret = IFF_UNKNOWN_FORM;
 
 done:
-
-	PHYSFS_close(ifile);
-
 	return ret;
-
 }
 
 //text for error messges

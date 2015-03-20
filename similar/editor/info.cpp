@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,6 +23,7 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
+#include <cinttypes>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -150,26 +157,22 @@ static void info_display_object_placement(int show_all)
 static void info_display_segsize(int show_all)
 {
 	static	int	old_SegSizeMode;
-
-	char		name[30];
-
 	if (init_info | show_all) {
 		old_SegSizeMode = -2;
 	}
 
 	if (old_SegSizeMode != SegSizeMode  ) {
+		const char *name;
 		switch (SegSizeMode) {
-			case SEGSIZEMODE_FREE:		strcpy(name, "free   ");	break;
-			case SEGSIZEMODE_ALL:		strcpy(name, "all    ");	break;
-			case SEGSIZEMODE_CURSIDE:	strcpy(name, "curside");	break;
-			case SEGSIZEMODE_EDGE:		strcpy(name, "edge   ");	break;
-			case SEGSIZEMODE_VERTEX:	strcpy(name, "vertex ");	break;
+			case SEGSIZEMODE_FREE:		name = "free   ";	break;
+			case SEGSIZEMODE_ALL:		name = "all    ";	break;
+			case SEGSIZEMODE_CURSIDE:	name = "curside";	break;
+			case SEGSIZEMODE_EDGE:		name = "edge   ";	break;
+			case SEGSIZEMODE_VERTEX:	name = "vertex ";	break;
 			default:
 				Error("Illegal value for SegSizeMode in info.c/info_display_segsize\n");
 		}
-
 		gr_uprintf( 0, 0, "Mode: %s\n", name);
-
 		old_SegSizeMode = SegSizeMode;
 	}
 
@@ -206,14 +209,14 @@ static void info_display_default(int show_all)
 	//--------------- Number of segments ----------------
 
 	if ( old_Num_segments != Num_segments )	{
-		gr_uprintf( 0, 0, "Segments: %4d/%4d", Num_segments, MAX_SEGMENTS );
+		gr_uprintf(0, 0, "Segments: %4d/%4" PRIuFAST32, Num_segments, static_cast<uint_fast32_t>(MAX_SEGMENTS));
 		old_Num_segments = Num_segments;
 	}
 
 	//---------------- Number of vertics -----------------
 	
 	if ( old_Num_vertices != Num_vertices )	{
-		gr_uprintf( 0, 16, "Vertices: %4d/%4d", Num_vertices, MAX_VERTICES );
+		gr_uprintf(0, 16, "Vertices: %4d/%4" PRIuFAST32, Num_vertices, static_cast<uint_fast32_t>(MAX_VERTICES));
 		old_Num_vertices = Num_vertices;
 	}
 
@@ -277,17 +280,17 @@ static void clear_pad_display(void)
 }
 
 //	------------------------------------------------------------------------------------
-static int info_display_all(window *wind, d_event *event, unused_window_userdata_t *)
+static window_event_result info_display_all(window *wind,const d_event &event, const unused_window_userdata_t *)
 {
 	static int old_padnum = -1;
 	int        padnum,show_all = 1;		// always redraw
 	grs_canvas *save_canvas = grd_curcanv;
 
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_WINDOW_DRAW:
 
-			gr_set_current_canvas(window_get_canvas(wind));
+			gr_set_current_canvas(window_get_canvas(*wind));
 
 			padnum = ui_pad_get_current();
 			Assert(padnum <= MAX_PAD_ID);
@@ -310,8 +313,7 @@ static int info_display_all(window *wind, d_event *event, unused_window_userdata
 					break;
 			}
 			grd_curcanv = save_canvas;
-			return 1;
-			
+			return window_event_result::handled;
 		case EVENT_WINDOW_CLOSE:
 			Pad_info = NULL;
 			break;
@@ -319,8 +321,7 @@ static int info_display_all(window *wind, d_event *event, unused_window_userdata
 		default:
 			break;
 	}
-	
-	return 0;
+	return window_event_result::ignored;
 }
 
 //	------------------------------------------------------------------------------------

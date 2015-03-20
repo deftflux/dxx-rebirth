@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -64,7 +70,7 @@ struct mfi {
 	int     vertex_howmany;
 	int     vertex_sizeof;
 	int     texture_offset;
-	int     texture_howmany;
+	uint32_t texture_howmany;
 	int     texture_sizeof;
 	int     walls_offset;
 	int     walls_howmany;
@@ -137,7 +143,7 @@ int load_mine_data_compiled(PHYSFS_file *LoadFile);
 #if defined(DXX_BUILD_DESCENT_II)
 extern int d1_pig_present;
 extern fix Level_shake_frequency, Level_shake_duration;
-extern int Secret_return_segment;
+extern segnum_t Secret_return_segment;
 extern vms_matrix Secret_return_orient;
 
 /* stuff for loading descent.pig of descent 1 */

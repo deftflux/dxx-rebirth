@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -27,11 +33,9 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "segment.h"
 
 #ifdef __cplusplus
+#include <utility>
 #include "dxxsconf.h"
 #include "compiler-array.h"
-
-//figure out what seg the given point is in, tracing through segments
-int get_new_seg(vms_vector *p0,int startseg);
 
 struct segmasks
 {
@@ -42,17 +46,37 @@ struct segmasks
 
 struct segment_depth_array_t : public array<ubyte, MAX_SEGMENTS> {};
 
-extern int      Highest_vertex_index;                   // Highest index in Vertices and Vertex_active, an efficiency hack
-extern int      Highest_segment_index;          // Highest index in Segments, an efficiency hack
+extern unsigned Highest_vertex_index;                   // Highest index in Vertices and Vertex_active, an efficiency hack
 extern int	Doing_lighting_hack_flag;
 
-extern void compute_center_point_on_side(vms_vector *vp,segment *sp,int side);
-extern void compute_segment_center(vms_vector *vp,const segment *sp);
-extern int find_connect_side(segment *base_seg, segment *con_seg);
+void compute_center_point_on_side(vms_vector &vp,vcsegptr_t sp,int side);
+static inline vms_vector compute_center_point_on_side(const vcsegptr_t sp,int side)
+{
+	vms_vector v;
+	return compute_center_point_on_side(v, sp, side), v;
+}
+void compute_segment_center(vms_vector &vp,vcsegptr_t sp);
+static inline vms_vector compute_segment_center(vcsegptr_t sp)
+{
+	vms_vector v;
+	compute_segment_center(v, sp);
+	return v;
+}
+int_fast32_t find_connect_side(vcsegptridx_t base_seg, vcsegptr_t con_seg) __attribute_warn_unused_result;
+
+struct side_vertnum_list_t : array<int, 4> {};
 
 // Fill in array with four absolute point numbers for a given side
-void get_side_verts(int *vertlist,int segnum,int sidenum);
+void get_side_verts(side_vertnum_list_t &vertlist,vcsegptr_t segnum,int sidenum);
+static inline side_vertnum_list_t get_side_verts(vcsegptr_t segnum,int sidenum)
+{
+	side_vertnum_list_t r;
+	return get_side_verts(r, segnum, sidenum), r;
+}
 
+struct vertex_array_list_t : array<int, 6> {};
+
+#ifdef EDITOR
 //      Create all vertex lists (1 or 2) for faces on a side.
 //      Sets:
 //              num_faces               number of lists
@@ -63,10 +87,25 @@ void get_side_verts(int *vertlist,int segnum,int sidenum);
 // Note: these are not absolute vertex numbers, but are relative to the segment
 // Note:  for triagulated sides, the middle vertex of each trianle is the one NOT
 //   adjacent on the diagonal edge
-extern void create_all_vertex_lists(int *num_faces, int *vertices, int segnum, int sidenum);
+uint_fast32_t create_all_vertex_lists(vertex_array_list_t &vertices, vcsegptr_t segnum, int sidenum);
+__attribute_warn_unused_result
+static inline std::pair<uint_fast32_t, vertex_array_list_t> create_all_vertex_lists(vcsegptr_t segnum, int sidenum)
+{
+	vertex_array_list_t r;
+	auto n = create_all_vertex_lists(r, segnum, sidenum);
+	return {n, r};
+}
+#endif
 
 //like create_all_vertex_lists(), but generate absolute point numbers
-extern void create_abs_vertex_lists(int *num_faces, int *vertices, int segnum, int sidenum, const char *calling_file, int calling_linenum);
+uint_fast32_t create_abs_vertex_lists(vertex_array_list_t &vertices, vcsegptr_t segnum, int sidenum);
+__attribute_warn_unused_result
+static inline std::pair<uint_fast32_t, vertex_array_list_t> create_abs_vertex_lists(vcsegptr_t segnum, int sidenum)
+{
+	vertex_array_list_t r;
+	auto n = create_abs_vertex_lists(r, segnum, sidenum);
+	return {n, r};
+}
 
 // -----------------------------------------------------------------------------------
 // Like create all vertex lists, but returns the vertnums (relative to
@@ -74,31 +113,31 @@ extern void create_abs_vertex_lists(int *num_faces, int *vertices, int segnum, i
 //      If there is one face, it has 4 vertices.
 //      If there are two faces, they both have three vertices, so face #0 is stored in vertices 0,1,2,
 //      face #1 is stored in vertices 3,4,5.
-void create_all_vertnum_lists(int *num_faces, int *vertnums, int segnum, int sidenum);
+uint_fast32_t create_all_vertnum_lists(vertex_array_list_t &vertnums, vcsegptr_t segnum, int sidenum);
+__attribute_warn_unused_result
+static inline std::pair<uint_fast32_t, vertex_array_list_t> create_all_vertnum_lists(vcsegptr_t segnum, int sidenum)
+{
+	vertex_array_list_t r;
+	auto n = create_all_vertnum_lists(r, segnum, sidenum);
+	return {n, r};
+}
 
 //      Given a side, return the number of faces
-extern int get_num_faces(side *sidep);
+int get_num_faces(const side *sidep);
 
 //returns 3 different bitmasks with info telling if this sphere is in
 //this segment.  See segmasks structure for info on fields
-segmasks get_seg_masks(const vms_vector *checkp, int segnum, fix rad, const char *calling_file, int calling_linenum);
+segmasks get_seg_masks(const vms_vector &checkp, vcsegptridx_t segnum, fix rad, const char *calling_file, int calling_linenum);
 
 //this macro returns true if the segnum for an object is correct
-#define check_obj_seg(obj) (get_seg_masks(&(obj)->pos, (obj)->segnum, 0, __FILE__, __LINE__).centermask == 0)
+#define check_obj_seg(obj) (get_seg_masks((obj)->pos, (obj)->segnum, 0, __FILE__, __LINE__).centermask == 0)
 
 //Tries to find a segment for a point, in the following way:
 // 1. Check the given segment
 // 2. Recursively trace through attached segments
 // 3. Check all the segmentns
 //Returns segnum if found, or -1
-int find_point_seg(const vms_vector *p,int segnum);
-
-//--repair-- // Create data specific to segments which does not need to get written to disk.
-//--repair-- extern void create_local_segment_data(void);
-
-//      Sort of makes sure create_local_segment_data has been called for the currently executing mine.
-//      Returns 1 if Lsegments appears valid, 0 if not.
-int check_lsegments_validity(void);
+segptridx_t find_point_seg(const vms_vector &p,segptridx_t segnum);
 
 //      ----------------------------------------------------------------------------------------------------------
 //      Determine whether seg0 and seg1 are reachable using wid_flag to go through walls.
@@ -106,38 +145,45 @@ int check_lsegments_validity(void);
 //      set to WID_FLY_FLAG to see if a robot could fly from one to the other.
 //      Search up to a maximum depth of max_depth.
 //      Return the distance.
-extern fix find_connected_distance(vms_vector *p0, int seg0, vms_vector *p1, int seg1, int max_depth, int wid_flag);
+struct WALL_IS_DOORWAY_mask_t;
+vm_distance find_connected_distance(const vms_vector &p0, vcsegptridx_t seg0, const vms_vector &p1, vcsegptridx_t seg1, int max_depth, WALL_IS_DOORWAY_mask_t wid_flag);
 
 //create a matrix that describes the orientation of the given segment
-extern void extract_orient_from_segment(vms_matrix *m,segment *seg);
+void extract_orient_from_segment(vms_matrix *m,vcsegptr_t seg);
 
 //      In segment.c
 //      Make a just-modified segment valid.
 //              check all sides to see how many faces they each should have (0,1,2)
 //              create new vector normals
-extern void validate_segment(segment *sp);
+void validate_segment(vsegptridx_t sp);
 
 extern void validate_segment_all(void);
 
 //      Extract the forward vector from segment *sp, return in *vp.
 //      The forward vector is defined to be the vector from the the center of the front face of the segment
 // to the center of the back face of the segment.
-extern  void extract_forward_vector_from_segment(segment *sp,vms_vector *vp);
+void extract_forward_vector_from_segment(vcsegptr_t sp,vms_vector &vp);
 
 //      Extract the right vector from segment *sp, return in *vp.
 //      The forward vector is defined to be the vector from the the center of the left face of the segment
 // to the center of the right face of the segment.
-extern  void extract_right_vector_from_segment(segment *sp,vms_vector *vp);
+void extract_right_vector_from_segment(vcsegptr_t sp,vms_vector &vp);
 
 //      Extract the up vector from segment *sp, return in *vp.
 //      The forward vector is defined to be the vector from the the center of the bottom face of the segment
 // to the center of the top face of the segment.
-extern  void extract_up_vector_from_segment(segment *sp,vms_vector *vp);
+void extract_up_vector_from_segment(vcsegptr_t sp,vms_vector &vp);
 
-extern void create_walls_on_side(segment *sp, int sidenum);
+void create_walls_on_side(vsegptridx_t sp, int sidenum);
 
-extern void pick_random_point_in_seg(vms_vector *new_pos, int segnum);
-extern void validate_segment_side(segment *sp, int sidenum);
+void pick_random_point_in_seg(vms_vector &new_pos, vcsegptr_t sp);
+static inline vms_vector pick_random_point_in_seg(vcsegptr_t sp)
+{
+	vms_vector v;
+	return pick_random_point_in_seg(v, sp), v;
+}
+
+void validate_segment_side(vsegptridx_t sp, int sidenum);
 int check_segment_connections(void);
 void flush_fcd_cache(void);
 unsigned set_segment_depths(int start_seg, array<ubyte, MAX_SEGMENTS> *limit, segment_depth_array_t &depths);

@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,40 +23,41 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-#ifndef _AUTOMAP_H
-#define _AUTOMAP_H
+#pragma once
 
 #include "pstypes.h"
-#include "segment.h"
 
 #ifdef __cplusplus
+#include <cstddef>
+#include "fwdsegment.h"
 #include "dxxsconf.h"
 #include "compiler-array.h"
 
 extern int Automap_active;
 
-extern char Marker_input[40];
-extern void do_automap(int key_code);
+void do_automap();
 extern void automap_clear_visited();
 extern array<ubyte, MAX_SEGMENTS> Automap_visited;
 
 #if defined(DXX_BUILD_DESCENT_II)
-struct object;
+#include "objnum.h"
+#include "ntstring.h"
+
 struct vms_vector;
 
-void DropBuddyMarker(object *objp);
+void DropBuddyMarker(vobjptr_t objp);
 void InitMarkerInput();
-int MarkerInputMessage(int key);
+window_event_result MarkerInputMessage(int key);
 
-#define NUM_MARKERS         16
-#define MARKER_MESSAGE_LEN  40
+static const std::size_t NUM_MARKERS = 16;
+static const std::size_t MARKER_MESSAGE_LEN = 40;
+struct marker_message_text_t : ntstring<MARKER_MESSAGE_LEN - 1> {};
+struct marker_messages_array_t : public array<marker_message_text_t, NUM_MARKERS> {};
 
-extern char MarkerMessage[NUM_MARKERS][MARKER_MESSAGE_LEN];
-extern int  MarkerObject[NUM_MARKERS];
-extern vms_vector MarkerPoint[NUM_MARKERS];
+extern marker_message_text_t Marker_input;
+extern marker_messages_array_t MarkerMessage;
+extern array<objnum_t, NUM_MARKERS>  MarkerObject;
 extern ubyte DefiningMarkerMessage;
-#endif
-
 #endif
 
 #endif

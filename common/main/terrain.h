@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -28,7 +34,7 @@ struct vms_vector;
 void free_light_table();
 void free_height_array();
 void load_terrain(const char *filename);
-void render_terrain(vms_vector *org, int org_i, int org_j);
+void render_terrain(const vms_vector &org, int org_i, int org_j);
 
 #endif
 

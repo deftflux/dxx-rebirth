@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -36,12 +42,13 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "gauges.h"
 #include "sounds.h"
 #include "player.h"
-#include "wall.h"
+#include "physfs-serial.h"
 #include "text.h"
 #include "weapon.h"
 #include "laser.h"
 #include "scores.h"
 #include "multi.h"
+#include "segment.h"
 #include "lighting.h"
 #include "controls.h"
 #include "kconfig.h"
@@ -53,11 +60,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #endif
 #include "playsave.h"
 
-int N_powerup_types = 0;
-powerup_type_info Powerup_info[MAX_POWERUP_TYPES];
+unsigned N_powerup_types;
+array<powerup_type_info, MAX_POWERUP_TYPES> Powerup_info;
 
 //process this powerup for this frame
-void do_powerup_frame(objptridx_t obj)
+void do_powerup_frame(const vobjptridx_t obj)
 {
 	fix fudge;
 	vclip_info *vci = &obj->rtype.vclip_info;
@@ -102,46 +109,16 @@ void do_powerup_frame(objptridx_t obj)
 	}
 
 	if (obj->lifeleft <= 0) {
-		object_create_explosion(obj->segnum, &obj->pos, F1_0*7/2, VCLIP_POWERUP_DISAPPEARANCE );
+		object_create_explosion(obj->segnum, obj->pos, F1_0*7/2, VCLIP_POWERUP_DISAPPEARANCE );
 
 		if ( Vclip[VCLIP_POWERUP_DISAPPEARANCE].sound_num > -1 )
 			digi_link_sound_to_object( Vclip[VCLIP_POWERUP_DISAPPEARANCE].sound_num, obj, 0, F1_0);
 	}
 }
 
-#ifdef EDITOR
-//	blob_vertices has 3 vertices in it, 4th must be computed
-static void draw_blob_outline(void)
+void draw_powerup(const vobjptridx_t obj)
 {
-	fix	v3x, v3y;
-
-	v3x = blob_vertices[2].x - blob_vertices[1].x + blob_vertices[0].x;
-	v3y = blob_vertices[2].y - blob_vertices[1].y + blob_vertices[0].y;
-
-	gr_setcolor(BM_XRGB(63, 63, 63));
-
-	gr_line(blob_vertices[0].x, blob_vertices[0].y, blob_vertices[1].x, blob_vertices[1].y);
-	gr_line(blob_vertices[1].x, blob_vertices[1].y, blob_vertices[2].x, blob_vertices[2].y);
-	gr_line(blob_vertices[2].x, blob_vertices[2].y, v3x, v3y);
-
-	gr_line(v3x, v3y, blob_vertices[0].x, blob_vertices[0].y);
-}
-#endif
-
-void draw_powerup(objptridx_t obj)
-{
-	#ifdef EDITOR
-	blob_vertices[0].x = 0x80000;
-	#endif
-
 	draw_object_blob(obj, Vclip[obj->rtype.vclip_info.vclip_num].frames[obj->rtype.vclip_info.framenum] );
-
-	#ifdef EDITOR
-	if (EditorWindow && (Cur_object_index == obj))
-		if (blob_vertices[0].x != 0x80000)
-			draw_blob_outline();
-	#endif
-
 }
 
 static void _powerup_basic_nonhud(int redadd, int greenadd, int blueadd, int score)
@@ -170,8 +147,6 @@ void powerup_basic_str(int redadd, int greenadd, int blueadd, int score, const c
 //	Give the megawow powerup!
 void do_megawow_powerup(int quantity)
 {
-	int i;
-
 	powerup_basic(30, 0, 30, 1, "MEGA-WOWIE-ZOWIE!");
 #if defined(DXX_BUILD_DESCENT_I)
 	Players[Player_num].primary_weapon_flags = (HAS_LASER_FLAG | HAS_VULCAN_FLAG | HAS_SPREADFIRE_FLAG | HAS_PLASMA_FLAG | HAS_FUSION_FLAG);
@@ -182,10 +157,10 @@ void do_megawow_powerup(int quantity)
 #endif
 	Players[Player_num].vulcan_ammo = VULCAN_AMMO_MAX;
 
-	for (i=0; i<3; i++)
+	for (int i=0; i<3; i++)
 		Players[Player_num].secondary_ammo[i] = quantity;
 
-	for (i=3; i<MAX_SECONDARY_WEAPONS; i++)
+	for (int i=3; i<MAX_SECONDARY_WEAPONS; i++)
 		Players[Player_num].secondary_ammo[i] = quantity/5;
 
 	if (Newdemo_state == ND_STATE_RECORDING)
@@ -240,7 +215,7 @@ static int pick_up_vulcan_ammo(void)
 		powerup_basic(7, 14, 21, VULCAN_AMMO_SCORE, "%s!", TXT_VULCAN_AMMO);
 		used = 1;
 	} else {
-		max = Primary_ammo_max[VULCAN_INDEX];
+		max = VULCAN_AMMO_MAX;
 #if defined(DXX_BUILD_DESCENT_II)
 		if (Players[Player_num].flags & PLAYER_FLAGS_AMMO_RACK)
 			max *= 2;
@@ -254,7 +229,7 @@ static int pick_up_vulcan_ammo(void)
 }
 
 //	returns true if powerup consumed
-int do_powerup(objptridx_t obj)
+int do_powerup(const vobjptridx_t obj)
 {
 	int used=0;
 #if defined(DXX_BUILD_DESCENT_I)
@@ -277,17 +252,16 @@ int do_powerup(objptridx_t obj)
 		 * The solution: Let us check if someone else is closer to a powerup and if so, do not collect it.
 		 * NOTE: Player positions computed by 'shortpos' and PING can still cause a small margin of error.
 		 */
-		int i = 0;
 		vms_vector tvec;
-		fix mydist = vm_vec_normalized_dir(&tvec, &obj->pos, &ConsoleObject->pos);
+		fix mydist = vm_vec_normalized_dir(tvec, obj->pos, ConsoleObject->pos);
 
-		for (i = 0; i < MAX_PLAYERS; i++)
+		for (uint_fast32_t i = 0; i < MAX_PLAYERS; i++)
 		{
 			if (i == Player_num || Players[i].connected != CONNECT_PLAYING)
 				continue;
 			if (Objects[Players[i].objnum].type == OBJ_GHOST || Players[i].shields < 0)
 				continue;
-			if (mydist > vm_vec_normalized_dir(&tvec, &obj->pos, &Objects[Players[i].objnum].pos))
+			if (mydist > vm_vec_normalized_dir(tvec, obj->pos, Objects[Players[i].objnum].pos))
 				return 0;
 		}
 	}
@@ -720,18 +694,15 @@ int do_powerup(objptridx_t obj)
 
 }
 
-/*
- * reads n powerup_type_info structs from a PHYSFS_file
- */
-int powerup_type_info_read_n(powerup_type_info *pti, int n, PHYSFS_file *fp)
-{
-	int i;
+DEFINE_SERIAL_UDT_TO_MESSAGE(powerup_type_info, pti, (pti.vclip_num, pti.hit_sound, pti.size, pti.light));
+ASSERT_SERIAL_UDT_MESSAGE_SIZE(powerup_type_info, 16);
 
-	for (i = 0; i < n; i++) {
-		pti[i].vclip_num = PHYSFSX_readInt(fp);
-		pti[i].hit_sound = PHYSFSX_readInt(fp);
-		pti[i].size = PHYSFSX_readFix(fp);
-		pti[i].light = PHYSFSX_readFix(fp);
-	}
-	return i;
+void powerup_type_info_read(PHYSFS_file *fp, powerup_type_info &pti)
+{
+	PHYSFSX_serialize_read(fp, pti);
+}
+
+void powerup_type_info_write(PHYSFS_file *fp, const powerup_type_info &pti)
+{
+	PHYSFSX_serialize_write(fp, pti);
 }

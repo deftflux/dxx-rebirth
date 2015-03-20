@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,30 +23,16 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-
-#ifndef _STATE_H
-#define _STATE_H
+#pragma once
 
 #if defined(DXX_BUILD_DESCENT_I)
-#include "playsave.h"
-
-#ifdef __cplusplus
-
-extern int state_save_old_game(int slotnum, const char * sg_name, player_rw * sg_player, 
-                        int sg_difficulty_level, int sg_primary_weapon, 
-                        int sg_secondary_weapon, int sg_next_level_num );
-
-#endif
-
 #elif defined(DXX_BUILD_DESCENT_II)
 #define SECRETB_FILENAME	PLAYER_DIRECTORY_STRING("secret.sgb")
 #define SECRETC_FILENAME	PLAYER_DIRECTORY_STRING("secret.sgc")
 #endif
 
 #ifdef __cplusplus
-
-int state_save_all(int secret_save, const char *filename_override, int blind_save);
-int state_restore_all(int in_game, int secret_restore, const char *filename_override, int blind_save);
+#include <cstddef>
 
 extern unsigned state_game_id;
 extern int state_quick_item;
@@ -55,10 +47,12 @@ int state_get_game_id(const char *filename);
 static inline void set_pos_from_return_segment(void)
 {
 }
+int state_save_all(int secret_save, std::nullptr_t, int blind_save);
+int state_restore_all(int in_game, int secret_restore, std::nullptr_t, int blind_save);
 #elif defined(DXX_BUILD_DESCENT_II)
 void set_pos_from_return_segment(void);
+int state_save_all(int secret_save, const char *filename_override, int blind_save);
+int state_restore_all(int in_game, int secret_restore, const char *filename_override, int blind_save);
 #endif
 
 #endif
-
-#endif /* _STATE_H */

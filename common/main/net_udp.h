@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * Prototypes for UDP-protocol network management functions.
  *
@@ -8,23 +14,26 @@
 #include "multi.h"
 
 #ifdef __cplusplus
+#include "pack.h"
+#include "compiler-array.h"
+#include "ntstring.h"
 
 // Exported functions
 int net_udp_setup_game(void);
 void net_udp_manual_join_game();
 void net_udp_list_join_game();
-int net_udp_objnum_is_past(int objnum);
+int net_udp_objnum_is_past(objnum_t objnum);
 void net_udp_do_frame(int force, int listen);
 void net_udp_send_data(const ubyte * ptr, int len, int priority );
 void net_udp_leave_game();
 int net_udp_endlevel(int *secret);
-int net_udp_kmatrix_poll1( newmenu *menu, d_event *event, unused_newmenu_userdata_t *userdata );
-int net_udp_kmatrix_poll2( newmenu *menu, d_event *event, unused_newmenu_userdata_t *userdata );
+int net_udp_kmatrix_poll1( newmenu *menu,const d_event &event, const unused_newmenu_userdata_t *);
+int net_udp_kmatrix_poll2( newmenu *menu,const d_event &event, const unused_newmenu_userdata_t *);
 void net_udp_send_endlevel_packet();
-void net_udp_dump_player(struct _sockaddr dump_addr, int why);
+void net_udp_dump_player(const _sockaddr &dump_addr, int why);
 void net_udp_disconnect_player(int playernum);
 int net_udp_level_sync();
-void net_udp_send_mdata_direct(ubyte *data, int data_len, int pnum, int priority);
+void net_udp_send_mdata_direct(const ubyte *data, int data_len, int pnum, int priority);
 void net_udp_send_netgame_update();
 
 // Some defines
@@ -32,7 +41,8 @@ void net_udp_send_netgame_update();
 #define UDP_MCASTv6_ADDR "ff02::1"
 #endif
 #define UDP_BCAST_ADDR "255.255.255.255"
-#define UDP_PORT_DEFAULT 42424 // Our default port - easy to remember: D = 4, X = 24, X = 24
+// Our default port - easy to remember: D = 4, X = 24, X = 24
+const uint16_t UDP_PORT_DEFAULT = 42424;
 #define UDP_MANUAL_ADDR_DEFAULT "localhost"
 #ifdef USE_TRACKER
 #define TRACKER_HOST_DEFAULT "dxxtracker.reenigne.net"
@@ -46,7 +56,10 @@ void net_udp_send_netgame_update();
 #define UDP_NETGAMES_PPAGE 12 // Netgames on one page of Netlist
 #define UDP_NETGAMES_PAGES 75 // Pages available on Netlist (UDP_MAX_NETGAMES/UDP_NETGAMES_PPAGE)
 #define UDP_TIMEOUT (5*F1_0) // 5 seconds disconnect timeout
-#define UDP_MDATA_STOR_QUEUE_SIZE 500 // Store up to 500 MDATA packets
+#define UDP_MDATA_STOR_QUEUE_SIZE 1024 // Store up to 1024 MDATA packets
+#define UDP_MDATA_STOR_MIN_FREE_2JOIN 384 // have at least this many free packet slots before we let someone join the game
+#define UDP_MDATA_PKT_NUM_MIN 1 // start from pkt_num 1 (0 is used to initialize the trace list)
+#define UDP_MDATA_PKT_NUM_MAX (UDP_MDATA_STOR_QUEUE_SIZE*100) // the max value for pkt_num. roll over when we go any higher. this should be smaller than INT_MAX
 
 // UDP-Packet identificators (ubyte) and their (max. sizes).
 #define UPID_VERSION_DENY			  1 // Netgame join or info has been denied due to version difference.
@@ -57,13 +70,8 @@ void net_udp_send_netgame_update();
 #define UPID_GAME_INFO				  3 // Packet containing all info about a netgame.
 #define UPID_GAME_INFO_LITE_REQ			  4 // Requesting lite info about a netgame. Used for discovering games.
 #define UPID_GAME_INFO_LITE			  5 // Packet containing lite netgame info.
-#if defined(DXX_BUILD_DESCENT_I)
-#define UPID_GAME_INFO_SIZE			(359 + (NETGAME_NAME_LEN+1) + (MISSION_NAME_LEN+1) + ((MAX_PLAYERS+4)*(CALLSIGN_LEN+1)))
-#define UPID_GAME_INFO_LITE_SIZE		 (31 + (NETGAME_NAME_LEN+1) + (MISSION_NAME_LEN+1))
-#elif defined(DXX_BUILD_DESCENT_II)
-#define UPID_GAME_INFO_SIZE			(359 + (NETGAME_NAME_LEN+1) + (MISSION_NAME_LEN+1) + ((MAX_PLAYERS+4)*(CALLSIGN_LEN+1)))
-#define UPID_GAME_INFO_LITE_SIZE		 (31 + (NETGAME_NAME_LEN+1) + (MISSION_NAME_LEN+1))
-#endif
+#define UPID_GAME_INFO_SIZE_MAX			 (sizeof(netgame_info))
+#define UPID_GAME_INFO_LITE_SIZE_MAX		 (sizeof(UDP_netgame_info_lite))
 #define UPID_DUMP				  6 // Packet containing why player cannot join this game.
 #define UPID_DUMP_SIZE				  2
 #define UPID_ADDPLAYER				  7 // Packet from Host containing info about a new player.
@@ -87,14 +95,14 @@ void net_udp_send_netgame_update();
 #define UPID_MDATA_BUF_SIZE			454
 
 // Structure keeping lite game infos (for netlist, etc.)
-struct UDP_netgame_info_lite
+struct UDP_netgame_info_lite : public prohibit_void_ptr<UDP_netgame_info_lite>
 {
 	struct _sockaddr                game_addr;
 	short                           program_iver[3];
 	fix                             GameID;
-	char                            game_name[NETGAME_NAME_LEN+1];
-	char                            mission_title[MISSION_NAME_LEN+1];
-	char                            mission_name[9];
+	ntstring<NETGAME_NAME_LEN> game_name;
+	ntstring<MISSION_NAME_LEN> mission_title;
+	ntstring<8> mission_name;
 	int32_t                         levelnum;
 	ubyte                           gamemode;
 	ubyte                           RefusePlayers;
@@ -103,51 +111,44 @@ struct UDP_netgame_info_lite
 	ubyte                           numconnected;
 	ubyte                           max_numplayers;
 	bit_game_flags game_flag;
-} __pack__;
+};
 
-struct UDP_sequence_packet
+struct UDP_sequence_packet : prohibit_void_ptr<UDP_sequence_packet>
 {
 	ubyte           		type;
 	netplayer_info  		player;
-} __pack__;
-
-// player position packet structure
-struct UDP_frame_info
-{
-	ubyte				type;
-	ubyte				Player_num;
-	ubyte				connected;
-	quaternionpos			qpp;
-} __pack__;
+};
 
 // packet structure for multi-buffer
-struct UDP_mdata_info
+struct UDP_mdata_info : prohibit_void_ptr<UDP_mdata_info>
 {
 	ubyte				type;
 	ubyte				Player_num;
+	uint16_t			mbuf_size;
 	uint32_t			pkt_num;
-	ushort				mbuf_size;
-	ubyte				mbuf[UPID_MDATA_BUF_SIZE];
-} __pack__;
+	array<uint8_t, UPID_MDATA_BUF_SIZE> mbuf;
+};
 
 // structure to store MDATA to maybe resend
-struct UDP_mdata_store
+struct UDP_mdata_store : prohibit_void_ptr<UDP_mdata_store>
 {
-	int 				used;
-	fix64				pkt_initial_timestamp;		// initial timestamp to see if packet is outdated
-	fix64				pkt_timestamp[MAX_PLAYERS];	// Packet timestamp
-	int				pkt_num;			// Packet number
-	ubyte				Player_num;			// sender of this packet
-	ubyte				player_ack[MAX_PLAYERS]; 	// 0 if player has not ACK'd this packet, 1 if ACK'd or not connected
-	ubyte				data[UPID_MDATA_BUF_SIZE];	// extra data of a packet - contains all multibuf data we don't want to loose
-	ushort				data_size;
-} __pack__;
+	fix64				pkt_initial_timestamp;			// initial timestamp to see if packet is outdated
+	fix64				pkt_timestamp[MAX_PLAYERS];		// Packet timestamp
+	uint32_t			pkt_num[MAX_PLAYERS];			// Packet number
+	sbyte				used;
+	ubyte				Player_num;				// sender of this packet
+	uint16_t			data_size;
+	ubyte				player_ack[MAX_PLAYERS]; 		// 0 if player has not ACK'd this packet, 1 if ACK'd or not connected
+	array<uint8_t, UPID_MDATA_BUF_SIZE> data;		// extra data of a packet - contains all multibuf data we don't want to loose
+};
 
-// structure to keep track of MDATA packets we've already got
-struct UDP_mdata_recv
+// structure to keep track of MDATA packets we already got, which we expect from another player and the pkt_num for the next packet we want to send to another player
+struct UDP_mdata_check : public prohibit_void_ptr<UDP_mdata_check>
 {
-	int				pkt_num[UDP_MDATA_STOR_QUEUE_SIZE];
-	int				cur_slot; // index we can use for a new pkt_num
-} __pack__;
+	array<uint32_t, UDP_MDATA_STOR_QUEUE_SIZE>			pkt_num; 	// all those we got just recently, so we can ignore them if we get them again
+	int				cur_slot; 				// index we can use for a new pkt_num
+	uint32_t			pkt_num_torecv; 			// the next pkt_num we await for this player
+	uint32_t			pkt_num_tosend; 			// the next pkt_num we want to send to another player
+};
 
 #endif

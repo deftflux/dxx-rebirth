@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * SDL Event related stuff
  *
@@ -17,8 +23,6 @@
 #include "joy.h"
 #include "args.h"
 
-static int initialised=0;
-
 void event_poll()
 {
 	SDL_Event event;
@@ -28,44 +32,44 @@ void event_poll()
 	
 	// If the front window changes, exit this loop, otherwise unintended behavior can occur
 	// like pressing 'Return' really fast at 'Difficulty Level' causing multiple games to be started
-	while ((wind == window_get_front()) && (memset(&event, 0, sizeof(event)), SDL_PollEvent(&event)))
+	while ((wind == window_get_front()) && (event = {}, SDL_PollEvent(&event)))
 	{
 		switch(event.type) {
 			case SDL_KEYDOWN:
 			case SDL_KEYUP:
 				if (clean_uniframe)
-					memset(unicode_frame_buffer,'\0',sizeof(unsigned char)*KEY_BUFFER_SIZE);
+					unicode_frame_buffer = {};
 				clean_uniframe=0;
-				key_handler((SDL_KeyboardEvent *)&event);
+				key_handler(&event.key);
 				idle = 0;
 				break;
 			case SDL_MOUSEBUTTONDOWN:
 			case SDL_MOUSEBUTTONUP:
-				mouse_button_handler((SDL_MouseButtonEvent *)&event);
+				mouse_button_handler(&event.button);
 				idle = 0;
 				break;
 			case SDL_MOUSEMOTION:
-				mouse_motion_handler((SDL_MouseMotionEvent *)&event);
+				mouse_motion_handler(&event.motion);
 				idle = 0;
 				break;
 			case SDL_JOYBUTTONDOWN:
 			case SDL_JOYBUTTONUP:
-				joy_button_handler((SDL_JoyButtonEvent *)&event);
+				joy_button_handler(&event.jbutton);
 				idle = 0;
 				break;
 			case SDL_JOYAXISMOTION:
-				if (joy_axis_handler((SDL_JoyAxisEvent *)&event))
+				if (joy_axis_handler(&event.jaxis))
 					idle = 0;
 				break;
 			case SDL_JOYHATMOTION:
-				joy_hat_handler((SDL_JoyHatEvent *)&event);
+				joy_hat_handler(&event.jhat);
 				idle = 0;
 				break;
 			case SDL_JOYBALLMOTION:
 				break;
 			case SDL_QUIT: {
 				d_event qevent = { EVENT_QUIT };
-				call_default_handler(&qevent);
+				call_default_handler(qevent);
 				idle = 0;
 			} break;
 		}
@@ -77,7 +81,7 @@ void event_poll()
 		d_event ievent;
 		
 		ievent.type = EVENT_IDLE;
-		event_send(&ievent);
+		event_send(ievent);
 	}
 	else
 		event_reset_idle_seconds();
@@ -95,19 +99,17 @@ void event_flush()
 int event_init()
 {
 	// We should now be active and responding to events.
-	initialised = 1;
-
 	return 0;
 }
 
-int (*default_handler)(d_event *event) = NULL;
+int (*default_handler)(const d_event &event) = NULL;
 
-void set_default_handler(int (*handler)(d_event *event))
+void set_default_handler(int (*handler)(const d_event &event))
 {
 	default_handler = handler;
 }
 
-int call_default_handler(d_event *event)
+int call_default_handler(const d_event &event)
 {
 	if (default_handler)
 		return (*default_handler)(event);
@@ -115,23 +117,23 @@ int call_default_handler(d_event *event)
 	return 0;
 }
 
-void event_send(d_event *event)
+void event_send(const d_event &event)
 {
 	window *wind;
-	int handled = 0;
+	window_event_result handled = window_event_result::ignored;
 
-	for (wind = window_get_front(); wind != NULL && !handled; wind = window_get_prev(wind))
+	for (wind = window_get_front(); wind && handled == window_event_result::ignored; wind = window_get_prev(*wind))
 		if (window_is_visible(wind))
 		{
-			handled = window_send_event(wind, event);
+			handled = window_send_event(*wind, event);
 
 			if (!window_exists(wind)) // break away if necessary: window_send_event() could have closed wind by now
 				break;
-			if (window_is_modal(wind))
+			if (window_is_modal(*wind))
 				break;
 		}
 	
-	if (!handled)
+	if (handled == window_event_result::ignored)
 		call_default_handler(event);
 }
 
@@ -156,17 +158,17 @@ void event_process(void)
 	wind = window_get_first();
 	while (wind != NULL)
 	{
-		window *prev = window_get_prev(wind);
+		window *prev = window_get_prev(*wind);
 		if (window_is_visible(wind))
-			window_send_event(wind, &event);
+			window_send_event(*wind, event);
 		if (!window_exists(wind))
 		{
 			if (!prev) // well there isn't a previous window ...
 				break; // ... just bail out - we've done everything for this frame we can.
-			wind = window_get_next(prev); // the current window seemed to be closed. so take the next one from the previous which should be able to point to the one after the current closed
+			wind = window_get_next(*prev); // the current window seemed to be closed. so take the next one from the previous which should be able to point to the one after the current closed
 		}
 		else
-			wind = window_get_next(wind);
+			wind = window_get_next(*wind);
 	}
 
 	gr_flip();

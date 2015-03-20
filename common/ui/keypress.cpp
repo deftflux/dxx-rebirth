@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -49,34 +55,18 @@ static const char *const KeyDesc[256] = {         \
 
 
 
-void GetKeyDescription( char * text, int keypress )
+void GetKeyDescription(char (&text)[100], uint_fast32_t keypress)
 {
-	char Ctrl[10];
-	char Alt[10];
-	char Shift[10];
-
-	if (keypress & KEY_CTRLED)
-		strcpy( Ctrl, "{Ctrl}");
-	else
-		strcpy( Ctrl, "");
-
-	if (keypress & KEY_ALTED)
-		strcpy( Alt, "{Alt}");
-	else
-		strcpy( Alt, "");
-
-	if (keypress & KEY_SHIFTED)
-		strcpy( Shift, "{Shift}");
-	else
-		strcpy( Shift, "");
-
-	sprintf( text, "%s%s%s%s", Ctrl, Alt, Shift, KeyDesc[keypress & 255 ]  );
+	const char *Ctrl = keypress & KEY_CTRLED ? "{Ctrl}" : "";
+	const char *Alt = keypress & KEY_ALTED ? "{Alt}" : "";
+	const char *Shift = keypress & KEY_SHIFTED ? "{Shift}" : "";
+	snprintf(text, sizeof(text), "%s%s%s%s", Ctrl, Alt, Shift, KeyDesc[keypress & 255 ]);
 }
 
 
 int DecodeKeyText( const char * text )
 {
-	int i, code = 0;
+	int code = 0;
 
 	if (strstr(text, "{Ctrl}") )
 		code |= KEY_CTRLED;
@@ -85,7 +75,7 @@ int DecodeKeyText( const char * text )
 	if (strstr(text, "{Shift}") )
 		code |= KEY_SHIFTED;
 
-	for (i=0; i<256; i++ )
+	for (int i=0; i<256; i++ )
 	{
 		if ( strlen(KeyDesc[i])>0 && strstr(text, KeyDesc[i]) )
 		{

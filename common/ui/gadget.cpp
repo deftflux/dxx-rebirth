@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -11,7 +17,7 @@ AND AGREES TO THE TERMS HEREIN AND ACCEPTS THE SAME BY USE OF THIS FILE.
 COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 */
 
-
+#include <stdexcept>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -29,19 +35,13 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 UI_GADGET * selected_gadget;
 
-struct event_gadget
+struct event_gadget : d_event
 {
-	event_type type;
 	UI_GADGET *gadget;
 };
 
-UI_GADGET * ui_gadget_add( UI_DIALOG * dlg, short kind, short x1, short y1, short x2, short y2 )
+void ui_gadget_add(UI_DIALOG * dlg, short x1, short y1, short x2, short y2, UI_GADGET *gadget)
 {
-	UI_GADGET * gadget;
-
-	MALLOC(gadget, UI_GADGET, 1);
-	if (gadget==NULL) Error("Could not create gadget: Out of memory");
-
 	if (dlg->gadget == NULL )
 	{
 		dlg->gadget = gadget;
@@ -60,21 +60,18 @@ UI_GADGET * ui_gadget_add( UI_DIALOG * dlg, short kind, short x1, short y1, shor
 	gadget->when_down = NULL;
 	gadget->when_left = NULL;
 	gadget->when_right = NULL;
-	gadget->kind = kind;
 	gadget->status = 1;
 	gadget->oldstatus = 0;
 	if ( x1==0 && x2==0 && y1==0 && y2== 0 )
-		gadget->canvas = NULL;
+		gadget->canvas.reset();
 	else
-		gadget->canvas = gr_create_sub_canvas( window_get_canvas(ui_dialog_get_window( dlg )), x1, y1, x2-x1+1, y2-y1+1 );
+		gadget->canvas = gr_create_sub_canvas(window_get_canvas(*ui_dialog_get_window(dlg)), x1, y1, x2-x1+1, y2-y1+1);
 	gadget->x1 = gadget->canvas->cv_bitmap.bm_x;
 	gadget->y1 = gadget->canvas->cv_bitmap.bm_y;
 	gadget->x2 = gadget->canvas->cv_bitmap.bm_x+x2-x1+1;
 	gadget->y2 = gadget->canvas->cv_bitmap.bm_y+y2-y1+1;
 	gadget->parent = NULL;
 	gadget->hotkey = -1;
-	return gadget;
-
 }
 
 void ui_gadget_delete_all( UI_DIALOG * dlg )
@@ -92,44 +89,22 @@ void ui_gadget_delete_all( UI_DIALOG * dlg )
 			tmp->prev->next = tmp->next;
 			dlg->gadget = tmp->next;
 		}
-		if (tmp->canvas)
-			gr_free_sub_canvas( tmp->canvas );
 
-
-		if (tmp->kind == 1 )    // Button
+		switch(tmp->kind)
 		{
-			UI_GADGET_BUTTON * but1 = (UI_GADGET_BUTTON *)tmp;
-			if (but1->text)
-				d_free( but1->text );
+			case UI_GADGET_BUTTON::s_kind:
+			case UI_GADGET_LISTBOX::s_kind:
+			case UI_GADGET_SCROLLBAR::s_kind:
+			case UI_GADGET_RADIO::s_kind:
+			case UI_GADGET_CHECKBOX::s_kind:
+			case UI_GADGET_INPUTBOX::s_kind:
+			case UI_GADGET_USERBOX::s_kind:
+			case UI_GADGET_ICON::s_kind:
+				/* Handled by returned unique_ptr */
+				break;
+			default:
+				throw std::runtime_error("unknown gadget kind");
 		}
-
-		if (tmp->kind == 4 )    // Radio
-		{
-			UI_GADGET_RADIO * but1 = (UI_GADGET_RADIO *)tmp;
-			if (but1->text)
-				d_free( but1->text );
-		}
-		
-		if (tmp->kind == 6 )    // Inputbox
-		{
-			UI_GADGET_INPUTBOX * but1 = (UI_GADGET_INPUTBOX *)tmp;
-			d_free( but1->text );
-		}
-
-		if (tmp->kind == 5 )    // Checkbox
-		{
-			UI_GADGET_CHECKBOX * but1 = (UI_GADGET_CHECKBOX *)tmp;
-			d_free( but1->text );
-		}
-		
-		if (tmp->kind == 9 )    // Icon
-		{
-			UI_GADGET_ICON * but1 = (UI_GADGET_ICON *)tmp;
-			d_free( but1->text );
-		}
-
-
-		d_free( tmp );
 	}
 }
 
@@ -187,43 +162,31 @@ int ui_mouse_on_gadget( UI_GADGET * gadget )
 		return 0;
 }
 
-static int ui_gadget_do(UI_DIALOG *dlg, UI_GADGET *g, d_event *event)
+static window_event_result ui_gadget_do(UI_DIALOG *dlg, UI_GADGET *g,const d_event &event)
 {
 	switch( g->kind )
 	{
-		case 1:
+		case UI_GADGET_BUTTON::s_kind:
 			return ui_button_do(dlg, (UI_GADGET_BUTTON *)g, event);
-			break;
-		case 2:
+		case UI_GADGET_LISTBOX::s_kind:
 			return ui_listbox_do(dlg, (UI_GADGET_LISTBOX *)g, event);
-			break;
-		case 3:
+		case UI_GADGET_SCROLLBAR::s_kind:
 			return ui_scrollbar_do(dlg, (UI_GADGET_SCROLLBAR *)g, event);
-			break;
-		case 4:
+		case UI_GADGET_RADIO::s_kind:
 			return ui_radio_do(dlg, (UI_GADGET_RADIO *)g, event);
-			break;
-		case 5:
+		case UI_GADGET_CHECKBOX::s_kind:
 			return ui_checkbox_do(dlg, (UI_GADGET_CHECKBOX *)g, event);
-			break;
-		case 6:
+		case UI_GADGET_INPUTBOX::s_kind:
 			return ui_inputbox_do(dlg, (UI_GADGET_INPUTBOX *)g, event);
-			break;
-		case 7:
+		case UI_GADGET_USERBOX::s_kind:
 			return ui_userbox_do(dlg, (UI_GADGET_USERBOX *)g, event);
-			break;
-		case 8:
-			return ui_keytrap_do((UI_GADGET_KEYTRAP *)g, event);
-			break;
-		case 9:
+		case UI_GADGET_ICON::s_kind:
 			return ui_icon_do(dlg, (UI_GADGET_ICON *)g, event);
-			break;
 	}
-	
-	return 0;
+	return window_event_result::ignored;
 }
 
-int ui_gadget_send_event(UI_DIALOG *dlg, event_type type, UI_GADGET *gadget)
+window_event_result ui_gadget_send_event(UI_DIALOG *dlg, event_type type, UI_GADGET *gadget)
 {
 	event_gadget event;
 	
@@ -231,30 +194,30 @@ int ui_gadget_send_event(UI_DIALOG *dlg, event_type type, UI_GADGET *gadget)
 	event.gadget = gadget;
 	
 	if (gadget->parent)
-		return ui_gadget_do(dlg, gadget->parent, (d_event *) &event);
+		return ui_gadget_do(dlg, gadget->parent, event);
 
-	return window_send_event(ui_dialog_get_window(dlg), (d_event *) &event);
+	return window_send_event(*ui_dialog_get_window(dlg), event);
 }
 
-UI_GADGET *ui_event_get_gadget(d_event *event)
+UI_GADGET *ui_event_get_gadget(const d_event &event)
 {
-	Assert(event->type >= EVENT_UI_GADGET_PRESSED);	// Any UI event
-	return ((event_gadget *) event)->gadget;
+	auto &e = static_cast<const event_gadget &>(event);
+	Assert(e.type >= EVENT_UI_GADGET_PRESSED);	// Any UI event
+	return e.gadget;
 }
 
-int ui_dialog_do_gadgets(UI_DIALOG * dlg, d_event *event)
+window_event_result ui_dialog_do_gadgets(UI_DIALOG * dlg,const d_event &event)
 {
 	int keypress = 0;
 	UI_GADGET * tmp, * tmp1;
 	window *wind;
-	int rval = 0;
 
-	if (event->type == EVENT_KEY_COMMAND)
+	if (event.type == EVENT_KEY_COMMAND)
 		keypress = event_key_get(event);
 
 	tmp = dlg->gadget;
 
-	if (tmp == NULL) return 0;
+	if (tmp == NULL) return window_event_result::ignored;
 
 	if (selected_gadget==NULL)
 		selected_gadget = tmp;
@@ -318,13 +281,14 @@ int ui_dialog_do_gadgets(UI_DIALOG * dlg, d_event *event)
 		}
 	}
 
+	window_event_result rval = window_event_result::ignored;
 	if (dlg->keyboard_focus_gadget != tmp1)
 	{
 		if (dlg->keyboard_focus_gadget != NULL )
 			dlg->keyboard_focus_gadget->status = 1;
 		if (tmp1 != NULL )
 			tmp1->status = 1;
-		rval = 1;
+		rval = window_event_result::handled;
 		
 		if (keypress)
 			return rval;

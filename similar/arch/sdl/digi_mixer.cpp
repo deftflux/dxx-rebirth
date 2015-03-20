@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  * This is an alternate backend for the sound effect system.
  * It uses SDL_mixer to provide a more reliable playback,
  * and allow processing of multiple audio formats.
@@ -14,11 +20,7 @@
 
 #include <SDL.h>
 #include <SDL_audio.h>
-#if !(defined(__APPLE__) && defined(__MACH__))
 #include <SDL_mixer.h>
-#else
-#include <SDL_mixer/SDL_mixer.h>
-#endif
 
 #include "pstypes.h"
 #include "dxxerror.h"
@@ -33,6 +35,8 @@
 #include "maths.h"
 #include "piggy.h"
 #include "u_mem.h"
+
+#include "compiler-make_unique.h"
 
 #define MIX_DIGI_DEBUG 0
 #define MIX_OUTPUT_FORMAT	AUDIO_S16
@@ -50,17 +54,14 @@ struct RAIIMix_Chunk : public Mix_Chunk
 {
 	~RAIIMix_Chunk()
 	{
-#ifdef DEBUG_MEMORY_ALLOCATIONS
-		if (abuf)
-#endif
-			d_free(abuf);
+		delete [] abuf;
 	}
 };
 
 static int digi_initialised = 0;
 static int digi_mixer_max_channels = MAX_SOUND_SLOTS;
 static inline int fix2byte(fix f) { return (f / 256) % 256; }
-RAIIMix_Chunk SoundChunks[MAX_SOUNDS];
+static RAIIMix_Chunk SoundChunks[MAX_SOUNDS];
 ubyte channels[MAX_SOUND_SLOTS];
 
 /* Initialise audio */
@@ -104,8 +105,7 @@ void digi_mixer_close() {
 /* channel management */
 static int digi_mixer_find_channel()
 {
-	int i;
-	for (i = 0; i < digi_mixer_max_channels; i++)
+	for (int i = 0; i < digi_mixer_max_channels; i++)
 		if (channels[i] == 0)
 			return i;
 	return -1;
@@ -146,12 +146,13 @@ static void mixdigi_convert_sound(int i)
 		if (MIX_DIGI_DEBUG) con_printf(CON_DEBUG,"converting %d (%d)", i, dlen);
 		SDL_BuildAudioCVT(&cvt, AUDIO_U8, 1, freq, out_format, out_channels, out_freq);
 
-		MALLOC(cvt.buf, Uint8, dlen * cvt.len_mult);
+		auto cvtbuf = make_unique<Uint8[]>(dlen * cvt.len_mult);
+		cvt.buf = cvtbuf.get();
 		cvt.len = dlen;
 		memcpy(cvt.buf, data, dlen);
 		if (SDL_ConvertAudio(&cvt)) con_printf(CON_DEBUG,"conversion of %d failed", i);
 
-		SoundChunks[i].abuf = cvt.buf;
+		SoundChunks[i].abuf = cvtbuf.release();
 		SoundChunks[i].alen = dlen * cvt.len_mult;
 		SoundChunks[i].allocated = 1;
 		SoundChunks[i].volume = 128; // Max volume = 128
@@ -159,7 +160,7 @@ static void mixdigi_convert_sound(int i)
 }
 
 // Volume 0-F1_0
-int digi_mixer_start_sound(short soundnum, fix volume, int pan, int looping, int loop_start, int loop_end, int soundobj)
+int digi_mixer_start_sound(short soundnum, fix volume, int pan, int looping, int loop_start, int loop_end, sound_object *)
 {
 	int mix_vol = fix2byte(fixmul(digi_volume, volume));
 	int mix_pan = fix2byte(pan);
@@ -220,8 +221,7 @@ void digi_mixer_set_digi_volume( int dvolume )
 	Mix_Volume(-1, fix2byte(dvolume));
 }
 
-int digi_mixer_is_sound_playing(int soundno) { return 0; }
-int digi_mixer_is_channel_playing(int channel) { return 0; }
+int digi_mixer_is_channel_playing(int) { return 0; }
 
 void digi_mixer_reset() {}
 void digi_mixer_stop_all_channels()

@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,23 +23,17 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
+#include <algorithm>
 #include <string.h>
 #include "gr.h"
 #include "grdef.h"
 
-static void gr_linear_darken(ubyte * dest, int darkening_level, int count, ubyte * fade_table) {
-	register int i;
-
-	for (i=0;i<count;i++)
-	{
-		*dest = fade_table[(*dest)+(darkening_level*256)];
-		dest++;
-	}
+static void gr_linear_darken(ubyte * dest, int darkening_level, int count, const gft_array1 &fade_table) {
+	auto predicate = [&](ubyte c) { return fade_table[darkening_level][c]; };
+	std::transform(dest, dest + count, dest, predicate);
 }
 
-static void gr_linear_stosd( ubyte * dest, unsigned char color, unsigned int nbytes) {
-	memset(dest,color,nbytes);
-}
+#define gr_linear_stosd(D,C,N)	memset(D,C,N)
 
 void gr_uscanline( int x1, int x2, int y )
 {
@@ -44,7 +44,7 @@ void gr_uscanline( int x1, int x2, int y )
 #ifdef OGL
 		case BM_OGL:
 #endif
-			gr_linear_stosd( DATA + ROWSIZE*y + x1, (unsigned char)COLOR, x2-x1+1);
+			gr_linear_stosd(&DATA[ROWSIZE*y + x1], static_cast<uint8_t>(COLOR), x2-x1+1);
 			break;
 		}
 	} else {
@@ -54,7 +54,7 @@ void gr_uscanline( int x1, int x2, int y )
 #ifdef OGL
 		case BM_OGL:
 #endif
-			gr_linear_darken( DATA + ROWSIZE*y + x1, grd_curcanv->cv_fade_level, x2-x1+1, gr_fade_table);
+			gr_linear_darken(&DATA[ROWSIZE*y + x1], grd_curcanv->cv_fade_level, x2-x1+1, gr_fade_table);
 			break;
 		}
 	}
@@ -79,7 +79,7 @@ void gr_scanline( int x1, int x2, int y )
 #ifdef OGL
 		case BM_OGL:
 #endif
-			gr_linear_stosd( DATA + ROWSIZE*y + x1, (unsigned char)COLOR, x2-x1+1);
+			gr_linear_stosd(&DATA[ROWSIZE*y + x1], static_cast<uint8_t>(COLOR), x2-x1+1);
 			break;
 		}
 	} else {
@@ -89,7 +89,7 @@ void gr_scanline( int x1, int x2, int y )
 #ifdef OGL
 		case BM_OGL:
 #endif
-			gr_linear_darken( DATA + ROWSIZE*y + x1, grd_curcanv->cv_fade_level, x2-x1+1, gr_fade_table);
+			gr_linear_darken(&DATA[ROWSIZE*y + x1], grd_curcanv->cv_fade_level, x2-x1+1, gr_fade_table);
 			break;
 		}
 	}

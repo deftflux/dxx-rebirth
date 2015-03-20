@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -26,6 +32,7 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "ui.h"
 #include "game.h"
 #include "gamesave.h"
+#include "object.h"
 #include "gameseq.h"
 #include "gameseg.h"
 #include "kdefs.h"
@@ -64,7 +71,7 @@ static void checkforgamext( char * f )
 
 //these variables store the "permanant" player position, which overrides
 //whatever the player's position happens to be when the game is saved
-int Perm_player_segnum=segment_none;		//-1 means position not set
+segnum_t Perm_player_segnum=segment_none;		//-1 means position not set
 vms_vector Perm_player_position;
 vms_matrix Perm_player_orient;
 
@@ -96,7 +103,7 @@ int SaveGameData()
 		int saved_flag;
 		vms_vector save_pos = ConsoleObject->pos;
 		vms_matrix save_orient = ConsoleObject->orient;
-		int save_segnum = ConsoleObject->segnum;
+		auto save_segnum = ConsoleObject->segnum;
 
       checkforgamext(game_filename);
 
@@ -104,7 +111,7 @@ int SaveGameData()
 			Perm_player_segnum = segment_none;
 
 		if (Perm_player_segnum!=segment_none) {
-			if (get_seg_masks(&Perm_player_position, Perm_player_segnum, 0, __FILE__, __LINE__).centermask == 0)
+			if (get_seg_masks(Perm_player_position, Perm_player_segnum, 0, __FILE__, __LINE__).centermask == 0)
 			{
 				ConsoleObject->pos = Perm_player_position;
 				obj_relink(ConsoleObject-Objects,Perm_player_segnum);
@@ -115,15 +122,14 @@ int SaveGameData()
 		}
       saved_flag=save_level(game_filename);
 		if (Perm_player_segnum!=segment_none) {
-			int	found_save_segnum;
 
 			if (save_segnum > Highest_segment_index)
 				save_segnum = 0;
 
 			ConsoleObject->pos = save_pos;
-			found_save_segnum = find_point_seg(&save_pos,save_segnum);
+			auto found_save_segnum = find_point_seg(save_pos,save_segnum);
 			if (found_save_segnum == segment_none) {
-				compute_segment_center(&save_pos, &(Segments[save_segnum]));
+				compute_segment_center(save_pos, &(Segments[save_segnum]));
 				found_save_segnum = save_segnum;
 			}
 

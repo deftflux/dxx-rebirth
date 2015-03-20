@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -33,14 +39,12 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 // If there is no connecting segment on the opposite face, try any segment.
 void get_previous_segment(int curseg_num, int curside,int *newseg_num, int *newside)
 {
-	int     s;
-
 	*newseg_num = curseg_num;
 
         if (IS_CHILD(Segments[curseg_num].children[(int)Side_opposite[curside]]))
                 *newseg_num = Segments[curseg_num].children[(int)Side_opposite[curside]];
 	else        // no segment on opposite face, connect to anything
-		for (s=0; s<MAX_SIDES_PER_SEGMENT; s++)
+		for (int s=0; s<MAX_SIDES_PER_SEGMENT; s++)
 			if ((s != curside) && IS_CHILD(Segments[curseg_num].children[s]))
 				*newseg_num = Segments[curseg_num].children[s];
 
@@ -58,8 +62,6 @@ void get_previous_segment(int curseg_num, int curside,int *newseg_num, int *news
 // If there is no connecting segment on the current side, try any segment.
 void get_next_segment(int curseg_num, int curside, int *newseg_num, int *newside)
 {
-	int	s;
-
 	if (IS_CHILD(Segments[curseg_num].children[curside])) {
 
 		*newseg_num = Segments[curseg_num].children[Curside];
@@ -69,7 +71,7 @@ void get_next_segment(int curseg_num, int curside, int *newseg_num, int *newside
 
 		// If there is nothing attached on the side opposite to what we came in (*newside), pick any other side
 		if (!IS_CHILD(Segments[*newseg_num].children[*newside]))
-			for (s=0; s<MAX_SIDES_PER_SEGMENT; s++)
+			for (int s=0; s<MAX_SIDES_PER_SEGMENT; s++)
 				if ((Segments[*newseg_num].children[s] != curseg_num) && IS_CHILD(Segments[*newseg_num].children[s]))
 					*newside = s;
 	} else {

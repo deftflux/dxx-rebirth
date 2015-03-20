@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -40,18 +46,16 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "compiler-range_for.h"
 
 //find the distance between a segment and a point
-static fix compute_dist(const segment *seg,const vms_vector *pos)
+static fix compute_dist(const vcsegptr_t seg,const vms_vector &pos)
 {
-	vms_vector delta;
+	auto delta = compute_segment_center(seg);
+	vm_vec_sub2(delta,pos);
 
-	compute_segment_center(&delta,seg);
-	vm_vec_sub2(&delta,pos);
-
-	return vm_vec_mag(&delta);
+	return vm_vec_mag(delta);
 
 }
 
-void sort_seg_list(count_segment_array_t &segnumlist,const vms_vector *pos)
+void sort_seg_list(count_segment_array_t &segnumlist,const vms_vector &pos)
 {
 	array<fix, MAX_SEGMENTS> dist;
 	range_for (const auto &ss, segnumlist)
@@ -64,7 +68,7 @@ void sort_seg_list(count_segment_array_t &segnumlist,const vms_vector *pos)
 
 int SortSelectedList(void)
 {
-	sort_seg_list(Selected_segs,&ConsoleObject->pos);
+	sort_seg_list(Selected_segs,ConsoleObject->pos);
 	editor_status_fmt("%i element selected list sorted.",Selected_segs.count());
 
 	return 1;

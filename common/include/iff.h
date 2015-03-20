@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -25,9 +31,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #ifdef __cplusplus
 
+static const std::size_t MAX_BITMAPS_PER_BRUSH = 30;
+
 //Prototypes for IFF library functions
 
-int iff_read_bitmap(const char *ifilename,grs_bitmap *bm,int bitmap_type,palette_array_t *palette);
+int iff_read_bitmap(const char *ifilename,grs_bitmap &bm,int bitmap_type,palette_array_t *palette);
 	//reads an IFF file into a grs_bitmap structure. fills in palette if not null
 	//returns error codes - see IFF.H.  see GR.H for bitmap_type
 	//MEM DETAILS:  This routines assumes that you already have the grs_bitmap
@@ -42,18 +50,18 @@ int iff_read_bitmap(const char *ifilename,grs_bitmap *bm,int bitmap_type,palette
 
 //like iff_read_bitmap(), but reads into a bitmap that already exists,
 //without allocating memory for the bitmap.
-int iff_read_into_bitmap(const char *ifilename,grs_bitmap *bm, sbyte *palette);
+int iff_read_into_bitmap(const char *ifilename,grs_bitmap *bm, palette_array_t *palette);
 
 //read in animator brush (.abm) file
 //fills in array of pointers, and n_bitmaps.
 //returns iff error codes. max_bitmaps is size of array.
-int iff_read_animbrush(const char *ifilename,grs_bitmap **bm,unsigned max_bitmaps,unsigned *n_bitmaps,palette_array_t &palette);
+int iff_read_animbrush(const char *ifilename,array<std::unique_ptr<grs_main_bitmap>, MAX_BITMAPS_PER_BRUSH> &bm,unsigned *n_bitmaps,palette_array_t &palette);
 
 // After a read
 extern ubyte iff_transparent_color;
 extern ubyte iff_has_transparency;	// 0=no transparency, 1=iff_transparent_color is valid
 
-int iff_write_bitmap(const char *ofilename,grs_bitmap *bm,ubyte *palette);
+int iff_write_bitmap(const char *ofilename,grs_bitmap *bm,palette_array_t *palette);
 	//writes an IFF file from a grs_bitmap structure. writes palette if not null
 	//returns error codes - see IFF.H.
 

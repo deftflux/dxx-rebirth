@@ -1,6 +1,14 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 #ifndef __HMP_H
 #define __HMP_H
 
+#include <memory>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
@@ -48,7 +56,7 @@ struct event
 
 struct hmp_track
 {
-	unsigned char *data;
+	std::unique_ptr<uint8_t[]> data;
 	unsigned char *loop;
 	unsigned int len;
 	unsigned char *cur;
@@ -60,6 +68,7 @@ struct hmp_track
 
 struct hmp_file
 {
+	~hmp_file();
 	PHYSFS_sint64 filesize;
 	int num_trks;
 	hmp_track trks[HMP_TRACKS];
@@ -82,9 +91,8 @@ struct hmp_file
 	unsigned int midi_division;
 };
 
-hmp_file *hmp_open(const char *filename);
-void hmp_close(hmp_file *hmp);
-void hmp2mid(const char *hmp_name, unsigned char **midbuf, unsigned int *midlen);
+std::unique_ptr<hmp_file> hmp_open(const char *filename);
+void hmp2mid(const char *hmp_name, std::vector<uint8_t> &midbuf);
 #ifdef _WIN32
 void hmp_setvolume(hmp_file *hmp, int volume);
 int hmp_play(hmp_file *hmp, int bLoop);

@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,47 +23,33 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-
-#ifndef _LIGHTING_H
-#define _LIGHTING_H
+#pragma once
 
 #include "maths.h"
-#include "segment.h"
 
 #ifdef __cplusplus
+#include "fwdsegment.h"
+#include "fwdvalptridx.h"
 
 struct g3s_lrgb;
-struct object;
 
 #define MAX_LIGHT       0x10000     // max value
 
 #define MIN_LIGHT_DIST  (F1_0*4)
 
-extern fix Beam_brightness;
 extern g3s_lrgb Dynamic_light[MAX_VERTICES];
 extern object *old_viewer;
 
-extern void set_dynamic_light(void);
-
-// Compute the lighting from the headlight for a given vertex on a face.
-// Takes:
-//  point - the 3d coords of the point
-//  face_light - a scale factor derived from the surface normal of the face
-// If no surface normal effect is wanted, pass F1_0 for face_light
-fix compute_headlight_light(vms_vector *point,fix face_light);
-
 // compute the average dynamic light in a segment.  Takes the segment number
-g3s_lrgb compute_seg_dynamic_light(int segnum);
+g3s_lrgb compute_seg_dynamic_light(segnum_t segnum);
 
 // compute the lighting for an object.  Takes a pointer to the object,
 // and possibly a rotated 3d point.  If the point isn't specified, the
 // object's center point is rotated.
-g3s_lrgb compute_object_light(objptridx_t obj,vms_vector *rotated_pnt);
+g3s_lrgb compute_object_light(vobjptridx_t obj,const vms_vector *rotated_pnt);
 
 // turn headlight boost on & off
 void toggle_headlight_active(void);
-void start_lighting_frame(struct object *viewer);
+void start_lighting_frame(objptr_t viewer);
 
 #endif
-
-#endif /* _LIGHTING_H */

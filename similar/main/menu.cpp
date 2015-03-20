@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -81,6 +87,10 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "ogl_init.h"
 #endif
 
+#include "dxxsconf.h"
+#include "compiler-make_unique.h"
+#include "compiler-range_for.h"
+#include "partial_range.h"
 
 // Menu IDs...
 enum MENUS
@@ -118,9 +128,9 @@ enum MENUS
 //ADD_ITEM("Start netgame...", MENU_START_NETGAME, -1 );
 //ADD_ITEM("Send net message...", MENU_SEND_NET_MESSAGE, -1 );
 
-#define ADD_ITEM(t,value,key)  do { nm_set_item_menu(&m[num_options], t); menu_choice[num_options]=value;num_options++; } while (0)
+#define ADD_ITEM(t,value,key)  do { nm_set_item_menu(m[num_options], t); menu_choice[num_options]=value;num_options++; } while (0)
 
-static window *menus[16] = { NULL };
+static array<window *, 16> menus;
 
 // Function Prototypes added after LINTING
 static int do_option(int select);
@@ -137,39 +147,34 @@ public:
 	typedef int (*type)(T *, const char *);
 };
 
-class unused_select_file_userdata_t;
-static select_file_subfunction_t<unused_select_file_userdata_t>::type *const unused_select_file_subfunction = NULL;
-static unused_select_file_userdata_t *const unused_select_file_userdata = NULL;
+__attribute_nonnull()
+static int select_file_recursive(const char *title, const char *orig_path, const file_extension_t *ext_list, uint32_t ext_count, int select_dir, select_file_subfunction_t<void>::type when_selected, void *userdata);
 
-template <typename T>
-static int select_file_recursive(const char *title, const char *orig_path, const file_extension_t *ext_list, int select_dir, typename select_file_subfunction_t<T>::type when_selected, T *userdata) __attribute_nonnull();
-
-template <>
-int select_file_recursive<void>(const char *title, const char *orig_path, const file_extension_t *ext_list, int select_dir, select_file_subfunction_t<void>::type when_selected, void *userdata) __attribute_nonnull();
-
-template <typename T>
-static int select_file_recursive(const char *title, const char *orig_path, const file_extension_t *ext_list, int select_dir, typename select_file_subfunction_t<T>::type when_selected, T *userdata)
+template <typename T, std::size_t count>
+__attribute_nonnull()
+static int select_file_recursive(const char *title, const char *orig_path, const array<file_extension_t, count> &ext_list, int select_dir, typename select_file_subfunction_t<T>::type when_selected, T *userdata)
 {
-	return select_file_recursive(title, orig_path, ext_list, select_dir, (select_file_subfunction_t<void>::type)when_selected, (void *)userdata);
+	return select_file_recursive(title, orig_path, ext_list.data(), count, select_dir, reinterpret_cast<select_file_subfunction_t<void>::type>(when_selected), reinterpret_cast<void *>(userdata));
 }
 
 // Hide all menus
 int hide_menus(void)
 {
 	window *wind;
-	int i;
-
 	if (menus[0])
 		return 0;		// there are already hidden menus
 
-	for (i = 0; (i < 15) && (wind = window_get_front()); i++)
+	wind = window_get_front();
+	range_for (auto &i, partial_range(menus, menus.size() - 1))
 	{
-		menus[i] = wind;
-		window_set_visible(wind, 0);
+		i = wind;
+		if (!wind)
+			break;
+		wind = window_set_visible(*wind, 0);
 	}
 
 	Assert(window_get_front() == NULL);
-	menus[i] = NULL;
+	menus.back() = nullptr;
 
 	return 1;
 }
@@ -178,12 +183,13 @@ int hide_menus(void)
 // This makes sure EVENT_WINDOW_ACTIVATED is only sent to that window
 void show_menus(void)
 {
-	int i;
-
-	for (i = 0; (i < 16) && menus[i]; i++)
-		if (window_exists(menus[i]))
-			window_set_visible(menus[i], 1);
-
+	range_for (auto &i, menus)
+	{
+		if (!i)
+			break;
+		if (window_exists(i))
+			window_set_visible(i, 1);
+	}
 	menus[0] = NULL;
 }
 
@@ -194,16 +200,16 @@ static int MakeNewPlayerFile(int allow_abort)
 {
 	int x;
 	char filename[PATH_MAX];
-	newmenu_item m;
-	char text[CALLSIGN_LEN+9]="";
-
-	strncpy(text, Players[Player_num].callsign,CALLSIGN_LEN);
+	callsign_t text = Players[Player_num].callsign;
 
 try_again:
-	nm_set_item_input(&m, CALLSIGN_LEN, text);
-
+	{
+		array<newmenu_item, 1> m{
+			nm_item_input(text.buffer()),
+		};
 	Newmenu_allowed_chars = playername_allowed_chars;
-	x = newmenu_do( NULL, TXT_ENTER_PILOT_NAME, 1, &m, unused_newmenu_subfunction, unused_newmenu_userdata );
+		x = newmenu_do( NULL, TXT_ENTER_PILOT_NAME, m, unused_newmenu_subfunction, unused_newmenu_userdata );
+	}
 	Newmenu_allowed_chars = NULL;
 
 	if ( x < 0 ) {
@@ -211,24 +217,23 @@ try_again:
 		goto try_again;
 	}
 
-	if (text[0]==0)	//null string
+	if (!*static_cast<const char *>(text))	//null string
 		goto try_again;
 
-	d_strlwr(text);
+	text.lower();
 
-	snprintf(filename, sizeof(filename), PLAYER_DIRECTORY_STRING("%s.plr"), text );
+	snprintf(filename, sizeof(filename), PLAYER_DIRECTORY_STRING("%s.plr"), static_cast<const char *>(text) );
 
 	if (PHYSFSX_exists(filename,0))
 	{
-		nm_messagebox(NULL, 1, TXT_OK, "%s '%s' %s", TXT_PLAYER, text, TXT_ALREADY_EXISTS );
+		nm_messagebox(NULL, 1, TXT_OK, "%s '%s' %s", TXT_PLAYER, static_cast<const char *>(text), TXT_ALREADY_EXISTS );
 		goto try_again;
 	}
 
 	if ( !new_player_config() )
 		goto try_again;			// They hit Esc during New player config
 
-	strncpy(Players[Player_num].callsign, text, CALLSIGN_LEN);
-	d_strlwr(Players[Player_num].callsign);
+	Players[Player_num].callsign = text;
 
 	write_player_file();
 
@@ -237,7 +242,7 @@ try_again:
 
 static void delete_player_saved_games(const char * name);
 
-static int player_menu_keycommand( listbox *lb, d_event *event )
+static int player_menu_keycommand( listbox *lb,const d_event &event )
 {
 	const char **items = listbox_get_items(lb);
 	int citem = listbox_get_citem(lb);
@@ -289,18 +294,16 @@ static int player_menu_keycommand( listbox *lb, d_event *event )
 	return 0;
 }
 
-static int player_menu_handler( listbox *lb, d_event *event, char **list )
+static int player_menu_handler( listbox *lb,const d_event &event, char **list )
 {
 	const char **items = listbox_get_items(lb);
-	int citem = listbox_get_citem(lb);
-
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_KEY_COMMAND:
 			return player_menu_keycommand(lb, event);
-			break;
-
 		case EVENT_NEWMENU_SELECTED:
+		{
+			auto &citem = static_cast<const d_select_event &>(event).citem;
 			if (citem < 0)
 				return 0;		// shouldn't happen
 			else if (citem == 0)
@@ -310,10 +313,10 @@ static int player_menu_handler( listbox *lb, d_event *event, char **list )
 			}
 			else
 			{
-				strncpy(Players[Player_num].callsign,items[citem] + ((items[citem][0]=='$')?1:0), CALLSIGN_LEN);
-				d_strlwr(Players[Player_num].callsign);
+				Players[Player_num].callsign.copy_lower(items[citem], strlen(items[citem]));
 			}
 			break;
+		}
 
 		case EVENT_WINDOW_CLOSE:
 			if (read_player_file() != EZERO)
@@ -337,33 +340,31 @@ int RegisterPlayer()
 {
 	const char **m;
 	char **f;
-	char **list;
-	static const file_extension_t types[] = { "plr", "" };
+	static const array<file_extension_t, 1> types{"plr"};
 	int i = 0, NumItems;
 	int citem = 0;
 	int allow_abort_flag = 1;
 
-	if ( Players[Player_num].callsign[0] == 0 )
+	if (!*static_cast<const char *>(Players[Player_num].callsign))
 	{
-		if (GameCfg.LastPlayer[0]==0)
+		if (!*static_cast<const char *>(GameCfg.LastPlayer))
 		{
-			strncpy( Players[Player_num].callsign, "player", CALLSIGN_LEN );
+			Players[Player_num].callsign = "player";
 			allow_abort_flag = 0;
 		}
 		else
 		{
 			// Read the last player's name from config file, not lastplr.txt
-			strncpy( Players[Player_num].callsign, GameCfg.LastPlayer, CALLSIGN_LEN );
+			Players[Player_num].callsign = GameCfg.LastPlayer;
 		}
 	}
 
-	list = PHYSFSX_findFiles(PLAYER_DIRECTORY_STRING(""), types);
+	auto list = PHYSFSX_findFiles(PLAYER_DIRECTORY_STRING(""), types);
 	if (!list)
 		return 0;	// memory error
-	if (!*list)
+	if (!list[0])
 	{
 		MakeNewPlayerFile(0);	// make a new player without showing listbox
-		PHYSFS_freeList(list);
 		return 0;
 	}
 
@@ -374,13 +375,12 @@ int RegisterPlayer()
 	MALLOC(m, const char *, NumItems);
 	if (m == NULL)
 	{
-		PHYSFS_freeList(list);
 		return 0;
 	}
 
 	m[i++] = TXT_CREATE_NEW;
 
-	for (f = list; *f != NULL; f++)
+	for (f = list.get(); *f; f++)
 	{
 		char *p;
 
@@ -399,7 +399,6 @@ int RegisterPlayer()
 	if (NumItems <= 1) // so it seems all plr files we found were too long. funny. let's make a real player
 	{
 		MakeNewPlayerFile(0);	// make a new player without showing listbox
-		PHYSFS_freeList(list);
 		return 0;
 	}
 
@@ -407,10 +406,10 @@ int RegisterPlayer()
 	qsort(&m[1], NumItems - 1, sizeof(char *), (int (*)( const void *, const void * ))string_array_sort_func);
 
 	for ( i=0; i<NumItems; i++ )
-		if (!d_stricmp(Players[Player_num].callsign, m[i]) )
+		if (!d_stricmp(static_cast<const char *>(Players[Player_num].callsign), m[i]) )
 			citem = i;
 
-	newmenu_listbox1(TXT_SELECT_PILOT, NumItems, m, allow_abort_flag, citem, player_menu_handler, list);
+	newmenu_listbox1(TXT_SELECT_PILOT, NumItems, m, allow_abort_flag, citem, player_menu_handler, list.release());
 
 	return 1;
 }
@@ -427,16 +426,16 @@ static void draw_copyright()
 }
 
 // ------------------------------------------------------------------------
-static int main_menu_handler(newmenu *menu, d_event *event, int *menu_choice )
+static int main_menu_handler(newmenu *menu,const d_event &event, int *menu_choice )
 {
 	newmenu_item *items = newmenu_get_items(menu);
 
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_WINDOW_ACTIVATED:
 			load_palette(MENU_PALETTE,0,1);		//get correct palette
 
-			if ( Players[Player_num].callsign[0]==0 )
+			if (!*static_cast<const char *>(Players[Player_num].callsign))
 				RegisterPlayer();
 			else
 				keyd_time_when_last_pressed = timer_query();		// .. 20 seconds from now!
@@ -493,8 +492,10 @@ static int main_menu_handler(newmenu *menu, d_event *event, int *menu_choice )
 			break;
 
 		case EVENT_NEWMENU_SELECTED:
-			return do_option(menu_choice[newmenu_get_citem(menu)]);
-			break;
+		{
+			auto &citem = static_cast<const d_select_event &>(event).citem;
+			return do_option(menu_choice[citem]);
+		}
 
 		case EVENT_WINDOW_CLOSE:
 			d_free(menu_choice);
@@ -585,7 +586,7 @@ int do_option ( int select)
 			select_demo();
 			break;
 		case MENU_LOAD_GAME:
-			state_restore_all(0, 0, NULL, 0);
+			state_restore_all(0, 0, nullptr, 0);
 			break;
 		#ifdef EDITOR
 		case MENU_EDITOR:
@@ -669,7 +670,7 @@ static void delete_player_saved_games(const char * name)
 	}
 }
 
-static int demo_menu_keycommand( listbox *lb, d_event *event )
+static int demo_menu_keycommand( listbox *lb,const d_event &event )
 {
 	const char **items = listbox_get_items(lb);
 	int citem = listbox_get_citem(lb);
@@ -725,55 +726,49 @@ static int demo_menu_keycommand( listbox *lb, d_event *event )
 	return 0;
 }
 
-static int demo_menu_handler( listbox *lb, d_event *event, unused_listbox_userdata_t *)
+static int demo_menu_handler(listbox *lb, const d_event &event, char **items)
 {
-	const char **items = listbox_get_items(lb);
-	int citem = listbox_get_citem(lb);
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_KEY_COMMAND:
 			return demo_menu_keycommand(lb, event);
-			break;
-
 		case EVENT_NEWMENU_SELECTED:
+		{
+			auto &citem = static_cast<const d_select_event &>(event).citem;
 			if (citem < 0)
 				return 0;		// shouldn't happen
-
 			newdemo_start_playback(items[citem]);
 			return 1;		// stay in demo selector
-
+		}
 		case EVENT_WINDOW_CLOSE:
 			PHYSFS_freeList(items);
 			break;
-
 		default:
 			break;
 	}
-
 	return 0;
 }
 
 int select_demo(void)
 {
-	char **list;
 	int NumItems;
 
-	list = PHYSFSX_findFiles(DEMO_DIR, demo_file_extensions);
+	auto list = PHYSFSX_findFiles(DEMO_DIR, demo_file_extensions);
 	if (!list)
 		return 0;	// memory error
-	if ( !*list )
+	if (!list[0])
 	{
 		nm_messagebox( NULL, 1, TXT_OK, "%s %s\n%s", TXT_NO_DEMO_FILES, TXT_USE_F5, TXT_TO_CREATE_ONE);
-		PHYSFS_freeList(list);
 		return 0;
 	}
 
 	for (NumItems = 0; list[NumItems] != NULL; NumItems++) {}
 
 	// Sort by name
-	qsort(list, NumItems, sizeof(char *), (int (*)( const void *, const void * ))string_array_sort_func);
+	qsort(list.get(), NumItems, sizeof(char *), (int (*)( const void *, const void * ))string_array_sort_func);
 
-	newmenu_listbox1(TXT_SELECT_DEMO, NumItems, (const char **) list, 1, 0, demo_menu_handler, unused_listbox_userdata);
+	auto clist = (const char **) list.get();
+	newmenu_listbox1(TXT_SELECT_DEMO, NumItems, clist, 1, 0, demo_menu_handler, list.release());
 
 	return 1;
 }
@@ -781,15 +776,15 @@ int select_demo(void)
 static int do_difficulty_menu()
 {
 	int s;
-	newmenu_item m[5];
+	array<newmenu_item, NDL> m{
+		nm_item_menu(MENU_DIFFICULTY_TEXT(0)),
+		nm_item_menu(MENU_DIFFICULTY_TEXT(1)),
+		nm_item_menu(MENU_DIFFICULTY_TEXT(2)),
+		nm_item_menu(MENU_DIFFICULTY_TEXT(3)),
+		nm_item_menu(MENU_DIFFICULTY_TEXT(4)),
+	};
 
-	nm_set_item_menu(&m[0], MENU_DIFFICULTY_TEXT(0));
-	nm_set_item_menu(&m[1], MENU_DIFFICULTY_TEXT(1));
-	nm_set_item_menu(&m[2], MENU_DIFFICULTY_TEXT(2));
-	nm_set_item_menu(&m[3], MENU_DIFFICULTY_TEXT(3));
-	nm_set_item_menu(&m[4], MENU_DIFFICULTY_TEXT(4));
-
-	s = newmenu_do1( NULL, TXT_DIFFICULTY_LEVEL, NDL, m, unused_newmenu_subfunction, unused_newmenu_userdata, Difficulty_level);
+	s = newmenu_do1( NULL, TXT_DIFFICULTY_LEVEL, m.size(), &m.front(), unused_newmenu_subfunction, unused_newmenu_userdata, Difficulty_level);
 
 	if (s > -1 )	{
 		if (s != Difficulty_level)
@@ -815,24 +810,19 @@ int do_new_game_menu()
 #endif
 		player_highest_level = Last_level;
 	if (player_highest_level > 1) {
-		newmenu_item m[4];
 		char info_text[80];
-		char num_text[10];
 		int choice;
-		int n_items;
 		int valid = 0;
 
 		snprintf(info_text,sizeof(info_text),"%s %d",TXT_START_ANY_LEVEL, player_highest_level);
 		while (!valid)
 		{
-
-			nm_set_item_text(& m[0], info_text);
-			nm_set_item_input(&m[1], 10, num_text);
-			n_items = 2;
-
-			strcpy(num_text,"1");
-
-			choice = newmenu_do( NULL, TXT_SELECT_START_LEV, n_items, m, unused_newmenu_subfunction, unused_newmenu_userdata );
+			array<char, 10> num_text{"1"};
+			array<newmenu_item, 2> m{
+				nm_item_text(info_text),
+				nm_item_input(num_text),
+			};
+			choice = newmenu_do( NULL, TXT_SELECT_START_LEV, m, unused_newmenu_subfunction, unused_newmenu_userdata );
 
 			if (choice==-1 || m[1].text[0]==0)
 				return 0;
@@ -864,31 +854,76 @@ static void change_res();
 static void graphics_config();
 static void do_misc_menu();
 
-static int options_menuset(newmenu *menu, d_event *event, unused_newmenu_userdata_t *)
+#define DXX_OPTIONS_MENU(VERB)	\
+	DXX_##VERB##_MENU("Sound effects & music...", sfx)	\
+	DXX_##VERB##_TEXT("", blank1)	\
+	DXX_##VERB##_MENU(TXT_CONTROLS_, controls)	\
+	DXX_##VERB##_TEXT("", blank2)	\
+	DXX_##VERB##_MENU("Screen resolution...", screen)	\
+	DXX_##VERB##_MENU("Graphics Options...", graphics)	\
+	DXX_##VERB##_TEXT("", blank3)	\
+	DXX_##VERB##_MENU("Primary autoselect ordering...", primary)	\
+	DXX_##VERB##_MENU("Secondary autoselect ordering...", secondary)	\
+	DXX_##VERB##_MENU("Misc Options...", misc)	\
+
+namespace {
+
+class options_menu_items
 {
-	switch (event->type)
+public:
+	enum
+	{
+		DXX_OPTIONS_MENU(ENUM)
+	};
+	array<newmenu_item, DXX_OPTIONS_MENU(COUNT)> m;
+	options_menu_items()
+	{
+		DXX_OPTIONS_MENU(ADD);
+	}
+};
+
+}
+
+static int options_menuset(newmenu *menu,const d_event &event, options_menu_items *items)
+{
+	switch (event.type)
 	{
 		case EVENT_NEWMENU_CHANGED:
 			break;
 
 		case EVENT_NEWMENU_SELECTED:
-			switch(newmenu_get_citem(menu))
+		{
+			auto &citem = static_cast<const d_select_event &>(event).citem;
+			switch (citem)
 			{
-				case  0: do_sound_menu();		break;
-				case  2: input_config();		break;
-				case  4: change_res();			break;
-				case  5: graphics_config();		break;
-				case  7: ReorderPrimary();		break;
-				case  8: ReorderSecondary();		break;
-				case  9: do_misc_menu();		break;
+				case options_menu_items::sfx:
+					do_sound_menu();
+					break;
+				case options_menu_items::controls:
+					input_config();
+					break;
+				case options_menu_items::screen:
+					change_res();
+					break;
+				case options_menu_items::graphics:
+					graphics_config();
+					break;
+				case options_menu_items::primary:
+					ReorderPrimary();
+					break;
+				case options_menu_items::secondary:
+					ReorderSecondary();
+					break;
+				case options_menu_items::misc:
+					do_misc_menu();
+					break;
 			}
 			return 1;	// stay in menu until escape
-			break;
+		}
 
 		case EVENT_WINDOW_CLOSE:
 		{
-			newmenu_item *items = newmenu_get_items(menu);
-			d_free(items);
+			std::default_delete<options_menu_items>()(items);
 			write_player_file();
 			break;
 		}
@@ -909,39 +944,43 @@ static int gcd(int a, int b)
 
 void change_res()
 {
-	u_int32_t modes[50], new_mode = 0;
-	int i = 0, mc = 0, num_presets = 0, citem = -1, opt_cval = -1, opt_fullscr = -1;
+	array<uint32_t, 50> modes;
+	u_int32_t new_mode = 0;
+	int i = 0, mc = 0, citem = -1, opt_cval = -1, opt_fullscr = -1;
 
-	num_presets = gr_list_modes( modes );
+	unsigned num_presets = gr_list_modes(modes);
 
 	{
 	newmenu_item m[50+8];
 	char restext[50][12], crestext[12], casptext[12];
 
-	for (i = 0; i <= num_presets-1; i++)
+	range_for (const auto i, partial_range(modes, num_presets))
 	{
-		snprintf(restext[mc], sizeof(restext[mc]), "%ix%i", SM_W(modes[i]), SM_H(modes[i]));
+		snprintf(restext[mc], sizeof(restext[mc]), "%ix%i", SM_W(i), SM_H(i));
 
-		nm_set_item_radio(&m[mc], restext[mc], ((citem == -1) && (Game_screen_mode == modes[i]) && GameCfg.AspectY == SM_W(modes[i])/gcd(SM_W(modes[i]),SM_H(modes[i])) && GameCfg.AspectX == SM_H(modes[i])/gcd(SM_W(modes[i]),SM_H(modes[i]))), 0);
+		nm_set_item_radio(m[mc], restext[mc], ((citem == -1) && (Game_screen_mode == i) && GameCfg.AspectY == SM_W(i) / gcd(SM_W(i), SM_H(i)) && GameCfg.AspectX == SM_H(i) / gcd(SM_W(i), SM_H(i))), 0);
 		if (m[mc].value)
 			citem = mc;
 		mc++;
 	}
 
-	nm_set_item_text(& m[mc], ""); mc++; // little space for overview
+	nm_set_item_text(m[mc], ""); mc++; // little space for overview
 	// the fields for custom resolution and aspect
 	opt_cval = mc;
-	nm_set_item_radio(&m[mc], "use custom values", (citem == -1), 0); mc++;
-	nm_set_item_text(& m[mc], "resolution:"); mc++;
+	nm_set_item_radio(m[mc], "use custom values", (citem == -1), 0); mc++;
+	nm_set_item_text(m[mc], "resolution:"); mc++;
 	snprintf(crestext, sizeof(crestext), "%ix%i", SM_W(Game_screen_mode), SM_H(Game_screen_mode));
-	nm_set_item_input(&m[mc], 11, crestext); modes[mc] = 0; mc++;
-	nm_set_item_text(& m[mc], "aspect:"); mc++;
+	nm_set_item_input(m[mc], crestext);
+	modes[mc] = 0; mc++;
+	nm_set_item_text(m[mc], "aspect:"); mc++;
 	snprintf(casptext, sizeof(casptext), "%ix%i", GameCfg.AspectY, GameCfg.AspectX);
-	nm_set_item_input(&m[mc], 11, casptext); modes[mc] = 0; mc++;
-	nm_set_item_text(& m[mc], ""); mc++; // little space for overview
+	nm_set_item_input(m[mc], casptext);
+	modes[mc] = 0; mc++;
+	nm_set_item_text(m[mc], ""); mc++; // little space for overview
 	// fullscreen
 	opt_fullscr = mc;
-	nm_set_item_checkbox(&m[mc], "Fullscreen", gr_check_fullscreen()); mc++;
+	nm_set_item_checkbox(m[mc], "Fullscreen", gr_check_fullscreen());
+	mc++;
 
 	// create the menu
 	newmenu_do1(NULL, "Screen Resolution", mc, m, unused_newmenu_subfunction, unused_newmenu_userdata, 0);
@@ -1010,44 +1049,44 @@ static void input_config_sensitivity()
 	newmenu_item m[33];
 	int i = 0, nitems = 0, keysens = 0, joysens = 0, joydead = 0, mousesens = 0, mousefsdead;
 
-	nm_set_item_text(& m[nitems++], "Keyboard Sensitivity:");
+	nm_set_item_text(m[nitems++], "Keyboard Sensitivity:");
 	keysens = nitems;
-	nm_set_item_slider(&m[nitems], TXT_TURN_LR, PlayerCfg.KeyboardSens[0], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_PITCH_UD, PlayerCfg.KeyboardSens[1], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_SLIDE_LR, PlayerCfg.KeyboardSens[2], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_SLIDE_UD, PlayerCfg.KeyboardSens[3], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_BANK_LR, PlayerCfg.KeyboardSens[4], 0, 16); nitems++;
-	nm_set_item_text(& m[nitems++], "");
-	nm_set_item_text(& m[nitems++], "Joystick Sensitivity:");
+	nm_set_item_slider(m[nitems], TXT_TURN_LR, PlayerCfg.KeyboardSens[0], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_PITCH_UD, PlayerCfg.KeyboardSens[1], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_SLIDE_LR, PlayerCfg.KeyboardSens[2], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_SLIDE_UD, PlayerCfg.KeyboardSens[3], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_BANK_LR, PlayerCfg.KeyboardSens[4], 0, 16); nitems++;
+	nm_set_item_text(m[nitems++], "");
+	nm_set_item_text(m[nitems++], "Joystick Sensitivity:");
 	joysens = nitems;
-	nm_set_item_slider(&m[nitems], TXT_TURN_LR, PlayerCfg.JoystickSens[0], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_PITCH_UD, PlayerCfg.JoystickSens[1], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_SLIDE_LR, PlayerCfg.JoystickSens[2], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_SLIDE_UD, PlayerCfg.JoystickSens[3], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_BANK_LR, PlayerCfg.JoystickSens[4], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_THROTTLE, PlayerCfg.JoystickSens[5], 0, 16); nitems++;
-	nm_set_item_text(& m[nitems], ""); nitems++;
-	nm_set_item_text(& m[nitems], "Joystick Deadzone:"); nitems++;
+	nm_set_item_slider(m[nitems], TXT_TURN_LR, PlayerCfg.JoystickSens[0], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_PITCH_UD, PlayerCfg.JoystickSens[1], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_SLIDE_LR, PlayerCfg.JoystickSens[2], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_SLIDE_UD, PlayerCfg.JoystickSens[3], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_BANK_LR, PlayerCfg.JoystickSens[4], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_THROTTLE, PlayerCfg.JoystickSens[5], 0, 16); nitems++;
+	nm_set_item_text(m[nitems], ""); nitems++;
+	nm_set_item_text(m[nitems], "Joystick Deadzone:"); nitems++;
 	joydead = nitems;
-	nm_set_item_slider(&m[nitems], TXT_TURN_LR, PlayerCfg.JoystickDead[0], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_PITCH_UD, PlayerCfg.JoystickDead[1], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_SLIDE_LR, PlayerCfg.JoystickDead[2], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_SLIDE_UD, PlayerCfg.JoystickDead[3], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_BANK_LR, PlayerCfg.JoystickDead[4], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_THROTTLE, PlayerCfg.JoystickDead[5], 0, 16); nitems++;
-	nm_set_item_text(& m[nitems], ""); nitems++;
-	nm_set_item_text(& m[nitems], "Mouse Sensitivity:"); nitems++;
+	nm_set_item_slider(m[nitems], TXT_TURN_LR, PlayerCfg.JoystickDead[0], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_PITCH_UD, PlayerCfg.JoystickDead[1], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_SLIDE_LR, PlayerCfg.JoystickDead[2], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_SLIDE_UD, PlayerCfg.JoystickDead[3], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_BANK_LR, PlayerCfg.JoystickDead[4], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_THROTTLE, PlayerCfg.JoystickDead[5], 0, 16); nitems++;
+	nm_set_item_text(m[nitems], ""); nitems++;
+	nm_set_item_text(m[nitems], "Mouse Sensitivity:"); nitems++;
 	mousesens = nitems;
-	nm_set_item_slider(&m[nitems], TXT_TURN_LR, PlayerCfg.MouseSens[0], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_PITCH_UD, PlayerCfg.MouseSens[1], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_SLIDE_LR, PlayerCfg.MouseSens[2], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_SLIDE_UD, PlayerCfg.MouseSens[3], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_BANK_LR, PlayerCfg.MouseSens[4], 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], TXT_THROTTLE, PlayerCfg.MouseSens[5], 0, 16); nitems++;
-	nm_set_item_text(& m[nitems], ""); nitems++;
-	nm_set_item_text(& m[nitems], "Mouse FlightSim Deadzone:"); nitems++;
+	nm_set_item_slider(m[nitems], TXT_TURN_LR, PlayerCfg.MouseSens[0], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_PITCH_UD, PlayerCfg.MouseSens[1], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_SLIDE_LR, PlayerCfg.MouseSens[2], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_SLIDE_UD, PlayerCfg.MouseSens[3], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_BANK_LR, PlayerCfg.MouseSens[4], 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], TXT_THROTTLE, PlayerCfg.MouseSens[5], 0, 16); nitems++;
+	nm_set_item_text(m[nitems], ""); nitems++;
+	nm_set_item_text(m[nitems], "Mouse FlightSim Deadzone:"); nitems++;
 	mousefsdead = nitems;
-	nm_set_item_slider(&m[nitems], "X/Y", PlayerCfg.MouseFSDead, 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], "X/Y", PlayerCfg.MouseFSDead, 0, 16); nitems++;
 
 	newmenu_do1(NULL, "SENSITIVITY & DEADZONE", nitems, m, unused_newmenu_subfunction, unused_newmenu_userdata, 1);
 
@@ -1063,14 +1102,14 @@ static void input_config_sensitivity()
 }
 
 static int opt_ic_usejoy = 0, opt_ic_usemouse = 0, opt_ic_confkey = 0, opt_ic_confjoy = 0, opt_ic_confmouse = 0, opt_ic_confweap = 0, opt_ic_mouseflightsim = 0, opt_ic_joymousesens = 0, opt_ic_grabinput = 0, opt_ic_mousefsgauge = 0, opt_ic_help0 = 0, opt_ic_help1 = 0, opt_ic_help2 = 0;
-static int input_config_menuset(newmenu *menu, d_event *event, unused_newmenu_userdata_t *)
+static int input_config_menuset(newmenu *menu,const d_event &event, const unused_newmenu_userdata_t *)
 {
 	newmenu_item *items = newmenu_get_items(menu);
-	int citem = newmenu_get_citem(menu);
-
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_NEWMENU_CHANGED:
+		{
+			auto &citem = static_cast<const d_change_event &>(event).citem;
 			if (citem == opt_ic_usejoy)
 				(items[citem].value)?(PlayerCfg.ControlType|=CONTROL_USING_JOYSTICK):(PlayerCfg.ControlType&=~CONTROL_USING_JOYSTICK);
 			if (citem == opt_ic_usemouse)
@@ -1084,8 +1123,10 @@ static int input_config_menuset(newmenu *menu, d_event *event, unused_newmenu_us
 			if (citem == opt_ic_mousefsgauge)
 				PlayerCfg.MouseFSIndicator = items[citem].value;
 			break;
-
+		}
 		case EVENT_NEWMENU_SELECTED:
+		{
+			auto &citem = static_cast<const d_select_event &>(event).citem;
 			if (citem == opt_ic_confkey)
 				kconfig(0, "KEYBOARD");
 			if (citem == opt_ic_confjoy)
@@ -1103,7 +1144,7 @@ static int input_config_menuset(newmenu *menu, d_event *event, unused_newmenu_us
 			if (citem == opt_ic_help2)
 				show_newdemo_help();
 			return 1;		// stay in menu
-			break;
+		}
 
 		default:
 			break;
@@ -1118,38 +1159,42 @@ void input_config()
 	int nitems = 0;
 
 	opt_ic_usejoy = nitems;
-	nm_set_item_checkbox(&m[nitems], "USE JOYSTICK", (PlayerCfg.ControlType&CONTROL_USING_JOYSTICK)); nitems++;
+	nm_set_item_checkbox(m[nitems], "USE JOYSTICK", (PlayerCfg.ControlType&CONTROL_USING_JOYSTICK));
+	nitems++;
 	opt_ic_usemouse = nitems;
-	nm_set_item_checkbox(&m[nitems], "USE MOUSE", (PlayerCfg.ControlType&CONTROL_USING_MOUSE)); nitems++;
-	nm_set_item_text(& m[nitems], ""); nitems++;
+	nm_set_item_checkbox(m[nitems], "USE MOUSE", (PlayerCfg.ControlType&CONTROL_USING_MOUSE));
+	nitems++;
+	nm_set_item_text(m[nitems], ""); nitems++;
 	opt_ic_confkey = nitems;
-	nm_set_item_menu(&m[nitems], "CUSTOMIZE KEYBOARD"); nitems++;
+	nm_set_item_menu(m[nitems], "CUSTOMIZE KEYBOARD"); nitems++;
 	opt_ic_confjoy = nitems;
-	nm_set_item_menu(&m[nitems], "CUSTOMIZE JOYSTICK"); nitems++;
+	nm_set_item_menu(m[nitems], "CUSTOMIZE JOYSTICK"); nitems++;
 	opt_ic_confmouse = nitems;
-	nm_set_item_menu(&m[nitems], "CUSTOMIZE MOUSE"); nitems++;
+	nm_set_item_menu(m[nitems], "CUSTOMIZE MOUSE"); nitems++;
 	opt_ic_confweap = nitems;
-	nm_set_item_menu(&m[nitems], "CUSTOMIZE WEAPON KEYS"); nitems++;
-	nm_set_item_text(& m[nitems], ""); nitems++;
-	nm_set_item_text(& m[nitems], "MOUSE CONTROL TYPE:"); nitems++;
+	nm_set_item_menu(m[nitems], "CUSTOMIZE WEAPON KEYS"); nitems++;
+	nm_set_item_text(m[nitems], ""); nitems++;
+	nm_set_item_text(m[nitems], "MOUSE CONTROL TYPE:"); nitems++;
 	opt_ic_mouseflightsim = nitems;
-	nm_set_item_radio(&m[nitems], "normal", !PlayerCfg.MouseFlightSim, 0); nitems++;
-	nm_set_item_radio(&m[nitems], "FlightSim", PlayerCfg.MouseFlightSim, 0); nitems++;
-	nm_set_item_text(& m[nitems], ""); nitems++;
+	nm_set_item_radio(m[nitems], "normal", !PlayerCfg.MouseFlightSim, 0); nitems++;
+	nm_set_item_radio(m[nitems], "FlightSim", PlayerCfg.MouseFlightSim, 0); nitems++;
+	nm_set_item_text(m[nitems], ""); nitems++;
 	opt_ic_joymousesens = nitems;
-	nm_set_item_menu(&m[nitems], "SENSITIVITY & DEADZONE"); nitems++;
-	nm_set_item_text(& m[nitems], ""); nitems++;
+	nm_set_item_menu(m[nitems], "SENSITIVITY & DEADZONE"); nitems++;
+	nm_set_item_text(m[nitems], ""); nitems++;
 	opt_ic_grabinput = nitems;
-	nm_set_item_checkbox(&m[nitems], "Keep Keyboard/Mouse focus", GameCfg.Grabinput); nitems++;
+	nm_set_item_checkbox(m[nitems], "Keep Keyboard/Mouse focus", GameCfg.Grabinput);
+	nitems++;
 	opt_ic_mousefsgauge = nitems;
-	nm_set_item_checkbox(&m[nitems], "Mouse FlightSim Indicator", PlayerCfg.MouseFSIndicator); nitems++;
-	nm_set_item_text(& m[nitems], ""); nitems++;
+	nm_set_item_checkbox(m[nitems], "Mouse FlightSim Indicator", PlayerCfg.MouseFSIndicator);
+	nitems++;
+	nm_set_item_text(m[nitems], ""); nitems++;
 	opt_ic_help0 = nitems;
-	nm_set_item_menu(&m[nitems], "GAME SYSTEM KEYS"); nitems++;
+	nm_set_item_menu(m[nitems], "GAME SYSTEM KEYS"); nitems++;
 	opt_ic_help1 = nitems;
-	nm_set_item_menu(&m[nitems], "NETGAME SYSTEM KEYS"); nitems++;
+	nm_set_item_menu(m[nitems], "NETGAME SYSTEM KEYS"); nitems++;
 	opt_ic_help2 = nitems;
-	nm_set_item_menu(&m[nitems], "DEMO SYSTEM KEYS"); nitems++;
+	nm_set_item_menu(m[nitems], "DEMO SYSTEM KEYS"); nitems++;
 
 	newmenu_do1(NULL, TXT_CONTROLS, nitems, m, input_config_menuset, unused_newmenu_userdata, 3);
 }
@@ -1162,29 +1207,29 @@ static void reticle_config()
 	newmenu_item m[17];
 #endif
 	int nitems = 0, i, opt_ret_type, opt_ret_rgba, opt_ret_size;
-	nm_set_item_text(& m[nitems], "Reticle Type:"); nitems++;
+	nm_set_item_text(m[nitems], "Reticle Type:"); nitems++;
 	opt_ret_type = nitems;
-	nm_set_item_radio(&m[nitems], "Classic", 0, 0); nitems++;
+	nm_set_item_radio(m[nitems], "Classic", 0, 0); nitems++;
 #ifdef OGL
-	nm_set_item_radio(&m[nitems], "Classic Reboot", 0, 0); nitems++;
+	nm_set_item_radio(m[nitems], "Classic Reboot", 0, 0); nitems++;
 #endif
-	nm_set_item_radio(&m[nitems], "None", 0, 0); nitems++;
-	nm_set_item_radio(&m[nitems], "X", 0, 0); nitems++;
-	nm_set_item_radio(&m[nitems], "Dot", 0, 0); nitems++;
-	nm_set_item_radio(&m[nitems], "Circle", 0, 0); nitems++;
-	nm_set_item_radio(&m[nitems], "Cross V1", 0, 0); nitems++;
-	nm_set_item_radio(&m[nitems], "Cross V2", 0, 0); nitems++;
-	nm_set_item_radio(&m[nitems], "Angle", 0, 0); nitems++;
-	nm_set_item_text(& m[nitems], ""); nitems++;
-	nm_set_item_text(& m[nitems], "Reticle Color:"); nitems++;
+	nm_set_item_radio(m[nitems], "None", 0, 0); nitems++;
+	nm_set_item_radio(m[nitems], "X", 0, 0); nitems++;
+	nm_set_item_radio(m[nitems], "Dot", 0, 0); nitems++;
+	nm_set_item_radio(m[nitems], "Circle", 0, 0); nitems++;
+	nm_set_item_radio(m[nitems], "Cross V1", 0, 0); nitems++;
+	nm_set_item_radio(m[nitems], "Cross V2", 0, 0); nitems++;
+	nm_set_item_radio(m[nitems], "Angle", 0, 0); nitems++;
+	nm_set_item_text(m[nitems], ""); nitems++;
+	nm_set_item_text(m[nitems], "Reticle Color:"); nitems++;
 	opt_ret_rgba = nitems;
-	nm_set_item_slider(&m[nitems], "Red", (PlayerCfg.ReticleRGBA[0]/2), 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], "Green", (PlayerCfg.ReticleRGBA[1]/2), 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], "Blue", (PlayerCfg.ReticleRGBA[2]/2), 0, 16); nitems++;
-	nm_set_item_slider(&m[nitems], "Alpha", (PlayerCfg.ReticleRGBA[3]/2), 0, 16); nitems++;
-	nm_set_item_text(& m[nitems], ""); nitems++;
+	nm_set_item_slider(m[nitems], "Red", (PlayerCfg.ReticleRGBA[0]/2), 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], "Green", (PlayerCfg.ReticleRGBA[1]/2), 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], "Blue", (PlayerCfg.ReticleRGBA[2]/2), 0, 16); nitems++;
+	nm_set_item_slider(m[nitems], "Alpha", (PlayerCfg.ReticleRGBA[3]/2), 0, 16); nitems++;
+	nm_set_item_text(m[nitems], ""); nitems++;
 	opt_ret_size = nitems;
-	nm_set_item_slider(&m[nitems], "Reticle Size:", PlayerCfg.ReticleSize, 0, 4); nitems++;
+	nm_set_item_slider(m[nitems], "Reticle Size:", PlayerCfg.ReticleSize, 0, 4); nitems++;
 
 	i = PlayerCfg.ReticleType;
 #ifndef OGL
@@ -1209,37 +1254,75 @@ static void reticle_config()
 	PlayerCfg.ReticleSize = m[opt_ret_size].value;
 }
 
-int opt_gr_texfilt, opt_gr_brightness, opt_gr_reticlemenu, opt_gr_alphafx, opt_gr_dynlightcolor, opt_gr_vsync, opt_gr_multisample, opt_gr_fpsindi;
-#if defined(DXX_BUILD_DESCENT_II)
-int opt_gr_movietexfilt;
+#define DXX_GRAPHICS_MENU(VERB)	\
+	DXX_OGL0_GRAPHICS_MENU(VERB)	\
+	DXX_##VERB##_SLIDER(TXT_BRIGHTNESS, opt_gr_brightness, gr_palette_get_gamma(), 0, 16)	\
+	DXX_##VERB##_MENU("Reticle Options...", opt_gr_reticlemenu)	\
+	DXX_OGL1_GRAPHICS_MENU(VERB)	\
+	DXX_##VERB##_CHECK("FPS Counter", opt_gr_fpsindi, GameCfg.FPSIndicator)	\
+
+#ifdef OGL
+enum {
+	optgrp_texfilt,
+};
+#define DXX_OGL0_GRAPHICS_MENU(VERB)	\
+	DXX_##VERB##_TEXT("Texture Filtering:", opt_gr_texfilt)	\
+	DXX_##VERB##_RADIO("None (Classical)", opt_filter_none, 0, optgrp_texfilt)	\
+	DXX_##VERB##_RADIO("Bilinear", opt_filter_bilinear, 0, optgrp_texfilt)	\
+	DXX_##VERB##_RADIO("Trilinear", opt_filter_trilinear, 0, optgrp_texfilt)	\
+	DXX_##VERB##_RADIO("Anisotropic", opt_filter_anisotropic, 0, optgrp_texfilt)	\
+	D2X_OGL_GRAPHICS_MENU(VERB)	\
+	DXX_##VERB##_TEXT("", blank1)	\
+
+#define DXX_OGL1_GRAPHICS_MENU(VERB)	\
+	DXX_##VERB##_CHECK("Transparency Effects", opt_gr_alphafx, PlayerCfg.AlphaEffects)	\
+	DXX_##VERB##_CHECK("Colored Dynamic Light", opt_gr_dynlightcolor, PlayerCfg.DynLightColor)	\
+	DXX_##VERB##_CHECK("VSync", opt_gr_vsync, GameCfg.VSync)	\
+	DXX_##VERB##_CHECK("4x multisampling", opt_gr_multisample, GameCfg.Multisample)	\
+
+#if defined(DXX_BUILD_DESCENT_I)
+#define D2X_OGL_GRAPHICS_MENU(VERB)
+#elif defined(DXX_BUILD_DESCENT_II)
+#define D2X_OGL_GRAPHICS_MENU(VERB)	\
+	DXX_##VERB##_CHECK("Movie Filter", opt_gr_movietexfilt, GameCfg.MovieTexFilt)
 #endif
-static int graphics_config_menuset(newmenu *menu, d_event *event, unused_newmenu_userdata_t *)
+
+#else
+#define DXX_OGL0_GRAPHICS_MENU(VERB)
+#define DXX_OGL1_GRAPHICS_MENU(VERB)
+#endif
+
+enum {
+	DXX_GRAPHICS_MENU(ENUM)
+};
+
+static int graphics_config_menuset(newmenu *menu,const d_event &event, const unused_newmenu_userdata_t *)
 {
 	newmenu_item *items = newmenu_get_items(menu);
-	int citem = newmenu_get_citem(menu);
-
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_NEWMENU_CHANGED:
-			if ( citem == opt_gr_texfilt + 3
+		{
+			auto &citem = static_cast<const d_change_event &>(event).citem;
 #ifdef OGL
-				&& ogl_maxanisotropy <= 1.0
-#endif
-				)
+			if (citem == opt_filter_anisotropic && ogl_maxanisotropy <= 1.0)
 			{
 				nm_messagebox( TXT_ERROR, 1, TXT_OK, "Anisotropic Filtering not\nsupported by your hardware/driver.");
-				items[opt_gr_texfilt + 3].value = 0;
-				items[opt_gr_texfilt + 2].value = 1;
+				items[opt_filter_trilinear].value = 1;
+				items[opt_filter_anisotropic].value = 0;
 			}
+#endif
 			if ( citem == opt_gr_brightness)
 				gr_palette_set_gamma(items[citem].value);
 			break;
-
+		}
 		case EVENT_NEWMENU_SELECTED:
+		{
+			auto &citem = static_cast<const d_select_event &>(event).citem;
 			if (citem == opt_gr_reticlemenu)
 				reticle_config();
 			return 1;		// stay in menu
-			break;
+		}
 
 		default:
 			break;
@@ -1250,60 +1333,25 @@ static int graphics_config_menuset(newmenu *menu, d_event *event, unused_newmenu
 
 void graphics_config()
 {
-#ifdef OGL
-#if defined(DXX_BUILD_DESCENT_I)
-	newmenu_item m[13];
-#elif defined(DXX_BUILD_DESCENT_II)
-	newmenu_item m[14];
-#endif
-	int i = 0;
-#else
-	newmenu_item m[3];
-#endif
-	int nitems = 0;
+	array<newmenu_item, DXX_GRAPHICS_MENU(COUNT)> m;
+	DXX_GRAPHICS_MENU(ADD);
 
-#ifdef OGL
-	nm_set_item_text(& m[nitems], "Texture Filtering:"); nitems++;
-	opt_gr_texfilt = nitems;
-	nm_set_item_radio(&m[nitems++], "None (Classical)", 0, 0);
-	nm_set_item_radio(&m[nitems++], "Bilinear", 0, 0);
-	nm_set_item_radio(&m[nitems++], "Trilinear", 0, 0);
-	nm_set_item_radio(&m[nitems++], "Anisotropic", 0, 0);
-#if defined(DXX_BUILD_DESCENT_II)
-	opt_gr_movietexfilt = nitems;
-	nm_set_item_checkbox(&m[nitems++], "Movie Filter", GameCfg.MovieTexFilt);
-#endif
-	nm_set_item_text(& m[nitems], ""); nitems++;
-#endif
-	opt_gr_brightness = nitems;
-	nm_set_item_slider(&m[nitems], TXT_BRIGHTNESS, gr_palette_get_gamma(), 0, 16); nitems++;
-	opt_gr_reticlemenu = nitems;
-	nm_set_item_menu(&m[nitems], "Reticle Options"); nitems++;
-#ifdef OGL
-	opt_gr_alphafx = nitems;
-	nm_set_item_checkbox(&m[nitems], "Transparency Effects", PlayerCfg.AlphaEffects); nitems++;
-	opt_gr_dynlightcolor = nitems;
-	nm_set_item_checkbox(&m[nitems], "Colored Dynamic Light", PlayerCfg.DynLightColor); nitems++;
-	opt_gr_vsync = nitems;
-	nm_set_item_checkbox(&m[nitems],"VSync", GameCfg.VSync); nitems++;
-	opt_gr_multisample = nitems;
-	nm_set_item_checkbox(&m[nitems],"4x multisampling", GameCfg.Multisample); nitems++;
-#endif
-	opt_gr_fpsindi = nitems;
-	nm_set_item_checkbox(&m[nitems],"FPS Counter", GameCfg.FPSIndicator); nitems++;
 #ifdef OGL
 	m[opt_gr_texfilt+GameCfg.TexFilt].value=1;
 #endif
 
-	newmenu_do1( NULL, "Graphics Options", nitems, m, graphics_config_menuset, unused_newmenu_userdata, 1 );
+	newmenu_do1(nullptr, "Graphics Options", m.size(), m.data(), graphics_config_menuset, unused_newmenu_userdata, 1);
 
 #ifdef OGL
 	if (GameCfg.VSync != m[opt_gr_vsync].value || GameCfg.Multisample != m[opt_gr_multisample].value)
 		nm_messagebox( NULL, 1, TXT_OK, "Setting VSync or 4x Multisample\nrequires restart on some systems.");
 
-	for (i = 0; i <= 3; i++)
+	for (uint_fast32_t i = 0; i != 4; ++i)
 		if (m[i+opt_gr_texfilt].value)
+		{
 			GameCfg.TexFilt = i;
+			break;
+		}
 #if defined(DXX_BUILD_DESCENT_II)
 	GameCfg.MovieTexFilt = m[opt_gr_movietexfilt].value;
 #endif
@@ -1326,44 +1374,40 @@ struct browser
 	const char	*title;			// The title - needed for making another listbox when changing directory
 	int		(*when_selected)(void *userdata, const char *filename);	// What to do when something chosen
 	void	*userdata;		// Whatever you want passed to when_selected
-	char	**list;			// All menu items
-	char	*list_buf;		// Buffer for menu item text: hopefully reduces memory fragmentation this way
+	string_array_t list;
 	const file_extension_t *ext_list;		// List of file extensions we're looking for (if looking for a music file many types are possible)
+	uint32_t ext_count;
 	int		select_dir;		// Allow selecting the current directory (e.g. for Jukebox level song directory)
-	int		num_files;		// Number of list items found (including parent directory and current directory if selectable)
-	int		max_files;		// How many entries we can have before having to grow the array
-	int		max_buf;		// How much text we can have before having to grow the buffer
-	char	view_path[PATH_MAX];	// The absolute path we're currently looking at
 	int		new_path;		// Whether the view_path is a new searchpath, if so, remove it when finished
+	char	view_path[PATH_MAX];	// The absolute path we're currently looking at
 };
 
-static void list_dir_el(browser *b, const char *origdir, const char *fname)
+static void list_dir_el(void *vb, const char *, const char *fname)
 {
-	if ((!strcmp((PHYSFS_getRealDir(fname)==NULL?"":PHYSFS_getRealDir(fname)), b->view_path)) && (PHYSFS_isDirectory(fname) || (PHYSFSX_checkMatchingExtension(b->ext_list, fname)))
+	browser *b = reinterpret_cast<browser *>(vb);
+	const char *r = PHYSFS_getRealDir(fname);
+	if (!r)
+		r = "";
+	if (!strcmp(r, b->view_path) && (PHYSFS_isDirectory(fname) || PHYSFSX_checkMatchingExtension(fname, b->ext_list, b->ext_count))
 #if defined(__MACH__) && defined(__APPLE__)
 		&& d_stricmp(fname, "Volumes")	// this messes things up, use '..' instead
 #endif
 		)
-		string_array_add(&b->list, &b->list_buf, &b->num_files, &b->max_files, &b->max_buf, fname);
+		b->list.add(fname);
 }
 
 static int list_directory(browser *b)
 {
-	if (!string_array_new(&b->list, &b->list_buf, &b->num_files, &b->max_files, &b->max_buf))
-		return 0;
-	
-	strcpy(b->list_buf, "..");		// go to parent directory
-	b->list[b->num_files++] = b->list_buf;
-	
+	b->list.clear();
+	b->list.add("..");		// go to parent directory
 	if (b->select_dir)
 	{
-		b->list[b->num_files] = b->list[b->num_files - 1] + strlen(b->list[b->num_files - 1]) + 1;
-		strcpy(b->list[b->num_files++], "<this directory>");	// choose the directory being viewed
+		b->list.add("<this directory>");	// choose the directory being viewed
 	}
 	
-	PHYSFS_enumerateFilesCallback("", (PHYSFS_EnumFilesCallback) list_dir_el, b);
-	string_array_tidy(&b->list, &b->list_buf, &b->num_files, &b->max_files, &b->max_buf, 1 + (b->select_dir ? 1 : 0),
-#ifdef __LINUX__
+	PHYSFS_enumerateFilesCallback("", list_dir_el, b);
+	b->list.tidy(1 + (b->select_dir ? 1 : 0),
+#ifdef __linux__
 					  strcmp
 #else
 					  d_stricmp
@@ -1373,34 +1417,32 @@ static int list_directory(browser *b)
 	return 1;
 }
 
-static int select_file_handler(listbox *menu, d_event *event, browser *b)
+static int select_file_handler(listbox *menu,const d_event &event, browser *b)
 {
 	char newpath[PATH_MAX];
 	const char **list = listbox_get_items(menu);
-	int citem = listbox_get_citem(menu);
 	const char *sep = PHYSFS_getDirSeparator();
-
 	memset(newpath, 0, sizeof(char)*PATH_MAX);
-	switch (event->type)
+	switch (event.type)
 	{
 #ifdef _WIN32
 		case EVENT_KEY_COMMAND:
 		{
 			if (event_key_get(event) == KEY_CTRLED + KEY_D)
 			{
-				newmenu_item m;
 				char text[4] = "c";
 				int rval = 0;
 
-				nm_set_item_input(&m, sizeof(text) - 1, text);
-				rval = newmenu_do( NULL, "Enter drive letter", 1, &m, NULL, NULL );
+				array<newmenu_item, 1> m{
+					nm_item_input(text),
+				};
+				rval = newmenu_do( NULL, "Enter drive letter", m, unused_newmenu_subfunction, unused_newmenu_userdata );
 				text[1] = '\0'; 
 				snprintf(newpath, sizeof(char)*PATH_MAX, "%s:%s", text, sep);
 				if (!rval && text[0])
 				{
-					select_file_recursive(b->title, newpath, b->ext_list, b->select_dir, b->when_selected, b->userdata);
+					select_file_recursive(b->title, newpath, b->ext_list, b->ext_count, b->select_dir, b->when_selected, b->userdata);
 					// close old box.
-					event->type = EVENT_WINDOW_CLOSED;
 					window_close(listbox_get_window(menu));
 				}
 				return 0;
@@ -1409,8 +1451,9 @@ static int select_file_handler(listbox *menu, d_event *event, browser *b)
 		}
 #endif
 		case EVENT_NEWMENU_SELECTED:
+		{
+			auto &citem = static_cast<const d_select_event &>(event).citem;
 			strcpy(newpath, b->view_path);
-
 			if (citem == 0)		// go to parent dir
 			{
 				char *p;
@@ -1460,25 +1503,18 @@ static int select_file_handler(listbox *menu, d_event *event, browser *b)
 				strncat(newpath, list[citem], PATH_MAX - 1 - len_newpath);
 				newpath[PATH_MAX - 1] = '\0';
 			}
-			
 			if ((citem == 0) || PHYSFS_isDirectory(list[citem]))
 			{
 				// If it fails, stay in this one
-				return !select_file_recursive(b->title, newpath, b->ext_list, b->select_dir, b->when_selected, b->userdata);
+				return !select_file_recursive(b->title, newpath, b->ext_list, b->ext_count, b->select_dir, b->when_selected, b->userdata);
 			}
-			
 			return !(*b->when_selected)(b->userdata, list[citem]);
-			break;
-			
+		}
 		case EVENT_WINDOW_CLOSE:
 			if (b->new_path)
 				PHYSFS_removeFromSearchPath(b->view_path);
 
-			if (list)
-				d_free(list);
-			if (b->list_buf)
-				d_free(b->list_buf);
-			d_free(b);
+			std::default_delete<browser>()(b);
 			break;
 			
 		default:
@@ -1488,24 +1524,19 @@ static int select_file_handler(listbox *menu, d_event *event, browser *b)
 	return 0;
 }
 
-template <>
-int select_file_recursive(const char *title, const char *orig_path, const file_extension_t *ext_list, int select_dir, select_file_subfunction_t<void>::type when_selected, void *userdata)
+static int select_file_recursive(const char *title, const char *orig_path, const file_extension_t *ext_list, uint32_t ext_count, int select_dir, select_file_subfunction_t<void>::type when_selected, void *userdata)
 {
-	browser *b;
 	const char *sep = PHYSFS_getDirSeparator();
 	char *p;
 	char new_path[PATH_MAX];
 	
-	MALLOC(b, browser, 1);
-	if (!b)
-		return 0;
-	
+	auto b = make_unique<browser>();
 	b->title = title;
 	b->when_selected = when_selected;
 	b->userdata = userdata;
 	b->ext_list = ext_list;
+	b->ext_count = ext_count;
 	b->select_dir = select_dir;
-	b->num_files = b->max_files = 0;
 	b->view_path[0] = '\0';
 	b->new_path = 1;
 	
@@ -1567,30 +1598,28 @@ int select_file_recursive(const char *title, const char *orig_path, const file_e
 		b->new_path = PHYSFSX_isNewPath(b->view_path);
 		if (!PHYSFS_addToSearchPath(b->view_path, 0))
 		{
-			d_free(b);
 			return 0;
 		}
 	}
 	
-	if (!list_directory(b))
+	if (!list_directory(b.get()))
 	{
-		d_free(b);
 		return 0;
 	}
 	
-	return newmenu_listbox1(title, b->num_files, (const char **) b->list, 1, 0, select_file_handler, b) != NULL;
+	auto pb = b.get();
+	return newmenu_listbox1(title, pb->list.pointer().size(), &pb->list.pointer().front(), 1, 0, select_file_handler, std::move(b)) != NULL;
 }
 
 #define BROWSE_TXT " (browse...)"
 static inline void nm_set_item_browse(newmenu_item *ni, const char *text)
 {
-	nm_set_item_menu(ni, text);
+	nm_set_item_menu(*ni, text);
 }
 
 #else
 
-template <>
-int select_file_recursive(const char *title, const char *orig_path, const file_extension_t *ext_list, int select_dir, int (*when_selected)(void *userdata, const char *filename), void *userdata)
+int select_file_recursive(const char *title, const char *orig_path, const file_extension_t *ext_list, uint32_t ext_count, int select_dir, int (*when_selected)(void *userdata, const char *filename), void *userdata)
 {
 	return 0;
 }
@@ -1598,34 +1627,33 @@ int select_file_recursive(const char *title, const char *orig_path, const file_e
 #define BROWSE_TXT
 static inline void nm_set_item_browse(newmenu_item *ni, const char *text)
 {
-	nm_set_item_text(ni, text);
+	nm_set_item_text(*ni, text);
 }
 
 #endif
 
 int opt_sm_digivol = -1, opt_sm_musicvol = -1, opt_sm_revstereo = -1, opt_sm_mtype0 = -1, opt_sm_mtype1 = -1, opt_sm_mtype2 = -1, opt_sm_mtype3 = -1, opt_sm_redbook_playorder = -1, opt_sm_mtype3_lmpath = -1, opt_sm_mtype3_lmplayorder1 = -1, opt_sm_mtype3_lmplayorder2 = -1, opt_sm_mtype3_lmplayorder3 = -1, opt_sm_cm_mtype3_file1_b = -1, opt_sm_cm_mtype3_file1 = -1, opt_sm_cm_mtype3_file2_b = -1, opt_sm_cm_mtype3_file2 = -1, opt_sm_cm_mtype3_file3_b = -1, opt_sm_cm_mtype3_file3 = -1, opt_sm_cm_mtype3_file4_b = -1, opt_sm_cm_mtype3_file4 = -1, opt_sm_cm_mtype3_file5_b = -1, opt_sm_cm_mtype3_file5 = -1;
 
+#ifdef USE_SDLMIXER
 static int get_absolute_path(char *full_path, const char *rel_path)
 {
 	PHYSFSX_getRealPath(rel_path, full_path);
 	return 1;
 }
 
-#ifdef USE_SDLMIXER
-#define SELECT_SONG(t, s)	select_file_recursive(t, GameCfg.CMMiscMusic[s], jukebox_exts, 0, get_absolute_path, GameCfg.CMMiscMusic[s])
+#define SELECT_SONG(t, s)	select_file_recursive(t, GameCfg.CMMiscMusic[s].data(), jukebox_exts, 0, get_absolute_path, GameCfg.CMMiscMusic[s].data())
 #endif
 
-static int sound_menuset(newmenu *menu, d_event *event, unused_newmenu_userdata_t *)
+static int sound_menuset(newmenu *menu,const d_event &event, const unused_newmenu_userdata_t *)
 {
 	newmenu_item *items = newmenu_get_items(menu);
-	int citem = newmenu_get_citem(menu);
-	//int nitems = newmenu_get_nitems(menu);
 	int replay = 0;
 	int rval = 0;
-
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_NEWMENU_CHANGED:
+		{
+			auto &citem = static_cast<const d_change_event &>(event).citem;
 			if (citem == opt_sm_digivol)
 			{
 				GameCfg.DigiVolume = items[citem].value;
@@ -1686,55 +1714,38 @@ static int sound_menuset(newmenu *menu, d_event *event, unused_newmenu_userdata_
 			}
 #endif
 			break;
-
+		}
 		case EVENT_NEWMENU_SELECTED:
+		{
 #ifdef USE_SDLMIXER
+			auto &citem = static_cast<const d_select_event &>(event).citem;
+#ifdef _WIN32
+#define WINDOWS_DRIVE_CHANGE_TEXT	".\nCTRL-D to change drive"
+#else
+#define WINDOWS_DRIVE_CHANGE_TEXT
+#endif
 			if (citem == opt_sm_mtype3_lmpath)
 			{
-				static const file_extension_t ext_list[] = { "m3u", "" };		// select a directory or M3U playlist
+				static const array<file_extension_t, 1> ext_list{"m3u"};		// select a directory or M3U playlist
 				select_file_recursive(
-#ifndef _WIN32
-					"Select directory or\nM3U playlist to\n play level music from",
-#else
-					"Select directory or\nM3U playlist to\n play level music from.\n CTRL-D to change drive",
-#endif
-									  GameCfg.CMLevelMusicPath, ext_list, 1,	// look in current music path for ext_list files and allow directory selection
-									  get_absolute_path, GameCfg.CMLevelMusicPath);	// just copy the absolute path
+					"Select directory or\nM3U playlist to\n play level music from" WINDOWS_DRIVE_CHANGE_TEXT,
+									  GameCfg.CMLevelMusicPath.data(), ext_list, 1,	// look in current music path for ext_list files and allow directory selection
+									  get_absolute_path, GameCfg.CMLevelMusicPath.data());	// just copy the absolute path
 			}
 			else if (citem == opt_sm_cm_mtype3_file1_b)
-#ifndef _WIN32
-				SELECT_SONG("Select main menu music", SONG_TITLE);
-#else
-				SELECT_SONG("Select main menu music.\nCTRL-D to change drive", SONG_TITLE);
-#endif
+				SELECT_SONG("Select main menu music" WINDOWS_DRIVE_CHANGE_TEXT, SONG_TITLE);
 			else if (citem == opt_sm_cm_mtype3_file2_b)
-#ifndef _WIN32
-				SELECT_SONG("Select briefing music", SONG_BRIEFING);
-#else
-				SELECT_SONG("Select briefing music.\nCTRL-D to change drive", SONG_BRIEFING);
-#endif
+				SELECT_SONG("Select briefing music" WINDOWS_DRIVE_CHANGE_TEXT, SONG_BRIEFING);
 			else if (citem == opt_sm_cm_mtype3_file3_b)
-#ifndef _WIN32
-				SELECT_SONG("Select credits music", SONG_CREDITS);
-#else
-				SELECT_SONG("Select credits music.\nCTRL-D to change drive", SONG_CREDITS);
-#endif
+				SELECT_SONG("Select credits music" WINDOWS_DRIVE_CHANGE_TEXT, SONG_CREDITS);
 			else if (citem == opt_sm_cm_mtype3_file4_b)
-#ifndef _WIN32
-				SELECT_SONG("Select escape sequence music", SONG_ENDLEVEL);
-#else
-				SELECT_SONG("Select escape sequence music.\nCTRL-D to change drive", SONG_ENDLEVEL);
-#endif
+				SELECT_SONG("Select escape sequence music" WINDOWS_DRIVE_CHANGE_TEXT, SONG_ENDLEVEL);
 			else if (citem == opt_sm_cm_mtype3_file5_b)
-#ifndef _WIN32
-				SELECT_SONG("Select game ending music", SONG_ENDGAME);
-#else
-				SELECT_SONG("Select game ending music.\nCTRL-D to change drive", SONG_ENDGAME);
-#endif
+				SELECT_SONG("Select game ending music" WINDOWS_DRIVE_CHANGE_TEXT, SONG_ENDGAME);
 #endif
 			rval = 1;	// stay in menu
 			break;
-
+		}
 		case EVENT_WINDOW_CLOSE:
 			d_free(items);
 			break;
@@ -1770,52 +1781,50 @@ void do_sound_menu()
 {
 	newmenu_item *m;
 	int nitems = 0;
-	char old_CMLevelMusicPath[PATH_MAX+1], old_CMMiscMusic0[PATH_MAX+1];
-
-	memset(old_CMLevelMusicPath, 0, sizeof(char)*(PATH_MAX+1));
-	snprintf(old_CMLevelMusicPath, sizeof(old_CMLevelMusicPath), "%s", GameCfg.CMLevelMusicPath);
-	memset(old_CMMiscMusic0, 0, sizeof(char)*(PATH_MAX+1));
-	snprintf(old_CMMiscMusic0, sizeof(old_CMMiscMusic0), "%s", GameCfg.CMMiscMusic[SONG_TITLE]);
+#ifdef USE_SDLMIXER
+	const auto old_CMLevelMusicPath = GameCfg.CMLevelMusicPath;
+	const auto old_CMMiscMusic0 = GameCfg.CMMiscMusic[SONG_TITLE];
+#endif
 
 	MALLOC(m, newmenu_item, SOUND_MENU_NITEMS);
 	if (!m)
 		return;
 
 	opt_sm_digivol = nitems;
-	nm_set_item_slider(&m[nitems++], TXT_FX_VOLUME, GameCfg.DigiVolume, 0, 8);
+	nm_set_item_slider(m[nitems++], TXT_FX_VOLUME, GameCfg.DigiVolume, 0, 8);
 
 	opt_sm_musicvol = nitems;
-	nm_set_item_slider(&m[nitems++], "music volume", GameCfg.MusicVolume, 0, 8);
+	nm_set_item_slider(m[nitems++], "music volume", GameCfg.MusicVolume, 0, 8);
 
 	opt_sm_revstereo = nitems;
-	nm_set_item_checkbox(&m[nitems++], TXT_REVERSE_STEREO, GameCfg.ReverseStereo);
+	nm_set_item_checkbox(m[nitems++], TXT_REVERSE_STEREO, GameCfg.ReverseStereo);
 
-	nm_set_item_text(& m[nitems++], "");
+	nm_set_item_text(m[nitems++], "");
 
-	nm_set_item_text(& m[nitems++], "music type:");
+	nm_set_item_text(m[nitems++], "music type:");
 
 	opt_sm_mtype0 = nitems;
-	nm_set_item_radio(&m[nitems], "no music", (GameCfg.MusicType == MUSIC_TYPE_NONE), 0); nitems++;
+	nm_set_item_radio(m[nitems], "no music", (GameCfg.MusicType == MUSIC_TYPE_NONE), 0); nitems++;
 
 #if defined(USE_SDLMIXER) || defined(_WIN32)
 	opt_sm_mtype1 = nitems;
-	nm_set_item_radio(&m[nitems], "built-in/addon music", (GameCfg.MusicType == MUSIC_TYPE_BUILTIN), 0); nitems++;
+	nm_set_item_radio(m[nitems], "built-in/addon music", (GameCfg.MusicType == MUSIC_TYPE_BUILTIN), 0); nitems++;
 #endif
 
 	opt_sm_mtype2 = nitems;
-	nm_set_item_radio(&m[nitems], "cd music", (GameCfg.MusicType == MUSIC_TYPE_REDBOOK), 0); nitems++;
+	nm_set_item_radio(m[nitems], "cd music", (GameCfg.MusicType == MUSIC_TYPE_REDBOOK), 0); nitems++;
 
 #ifdef USE_SDLMIXER
 	opt_sm_mtype3 = nitems;
-	nm_set_item_radio(&m[nitems], "jukebox", (GameCfg.MusicType == MUSIC_TYPE_CUSTOM), 0); nitems++;
+	nm_set_item_radio(m[nitems], "jukebox", (GameCfg.MusicType == MUSIC_TYPE_CUSTOM), 0); nitems++;
 
 #endif
 
-	nm_set_item_text(& m[nitems++], "");
+	nm_set_item_text(m[nitems++], "");
 #ifdef USE_SDLMIXER
-	nm_set_item_text(& m[nitems++], "cd music / jukebox options:");
+	nm_set_item_text(m[nitems++], "cd music / jukebox options:");
 #else
-	nm_set_item_text(& m[nitems++], "cd music options:");
+	nm_set_item_text(m[nitems++], "cd music options:");
 #endif
 
 	opt_sm_redbook_playorder = nitems;
@@ -1824,64 +1833,64 @@ void do_sound_menu()
 #elif defined(DXX_BUILD_DESCENT_II)
 #define REDBOOK_PLAYORDER_TEXT	"force descent ][ cd track order"
 #endif
-	nm_set_item_checkbox(&m[nitems++], REDBOOK_PLAYORDER_TEXT, GameCfg.OrigTrackOrder);
+	nm_set_item_checkbox(m[nitems++], REDBOOK_PLAYORDER_TEXT, GameCfg.OrigTrackOrder);
 
 #ifdef USE_SDLMIXER
-	nm_set_item_text(& m[nitems++], "");
+	nm_set_item_text(m[nitems++], "");
 
-	nm_set_item_text(& m[nitems++], "jukebox options:");
+	nm_set_item_text(m[nitems++], "jukebox options:");
 
 	opt_sm_mtype3_lmpath = nitems;
 	nm_set_item_browse(&m[nitems++], "path for level music" BROWSE_TXT);
 
-	nm_set_item_input(&m[nitems++], NM_MAX_TEXT_LEN-1, GameCfg.CMLevelMusicPath);
+	nm_set_item_input(m[nitems++], GameCfg.CMLevelMusicPath);
 
-	nm_set_item_text(& m[nitems++], "");
+	nm_set_item_text(m[nitems++], "");
 
-	nm_set_item_text(& m[nitems++], "level music play order:");
+	nm_set_item_text(m[nitems++], "level music play order:");
 
 	opt_sm_mtype3_lmplayorder1 = nitems;
-	nm_set_item_radio(&m[nitems], "continuously", (GameCfg.CMLevelMusicPlayOrder == MUSIC_CM_PLAYORDER_CONT), 1); nitems++;
+	nm_set_item_radio(m[nitems], "continuously", (GameCfg.CMLevelMusicPlayOrder == MUSIC_CM_PLAYORDER_CONT), 1); nitems++;
 
 	opt_sm_mtype3_lmplayorder2 = nitems;
-	nm_set_item_radio(&m[nitems], "one track per level", (GameCfg.CMLevelMusicPlayOrder == MUSIC_CM_PLAYORDER_LEVEL), 1); nitems++;
+	nm_set_item_radio(m[nitems], "one track per level", (GameCfg.CMLevelMusicPlayOrder == MUSIC_CM_PLAYORDER_LEVEL), 1); nitems++;
 
 	opt_sm_mtype3_lmplayorder3 = nitems;
-	nm_set_item_radio(&m[nitems], "random", (GameCfg.CMLevelMusicPlayOrder == MUSIC_CM_PLAYORDER_RAND), 1); nitems++;
+	nm_set_item_radio(m[nitems], "random", (GameCfg.CMLevelMusicPlayOrder == MUSIC_CM_PLAYORDER_RAND), 1); nitems++;
 
-	nm_set_item_text(& m[nitems++], "");
+	nm_set_item_text(m[nitems++], "");
 
-	nm_set_item_text(& m[nitems++], "non-level music:");
+	nm_set_item_text(m[nitems++], "non-level music:");
 
 	opt_sm_cm_mtype3_file1_b = nitems;
 	nm_set_item_browse(&m[nitems++], "main menu" BROWSE_TXT);
 
 	opt_sm_cm_mtype3_file1 = nitems;
-	nm_set_item_input(&m[nitems++], NM_MAX_TEXT_LEN-1, GameCfg.CMMiscMusic[SONG_TITLE]);
+	nm_set_item_input(m[nitems++], GameCfg.CMMiscMusic[SONG_TITLE]);
 
 	opt_sm_cm_mtype3_file2_b = nitems;
 	nm_set_item_browse(&m[nitems++], "briefing" BROWSE_TXT);
 
 	opt_sm_cm_mtype3_file2 = nitems;
-	nm_set_item_input(&m[nitems++], NM_MAX_TEXT_LEN-1, GameCfg.CMMiscMusic[SONG_BRIEFING]);
+	nm_set_item_input(m[nitems++], GameCfg.CMMiscMusic[SONG_BRIEFING]);
 
 	opt_sm_cm_mtype3_file3_b = nitems;
 	nm_set_item_browse(&m[nitems++], "credits" BROWSE_TXT);
 
 	opt_sm_cm_mtype3_file3 = nitems;
-	nm_set_item_input(&m[nitems++], NM_MAX_TEXT_LEN-1, GameCfg.CMMiscMusic[SONG_CREDITS]);
+	nm_set_item_input(m[nitems++], GameCfg.CMMiscMusic[SONG_CREDITS]);
 
 	opt_sm_cm_mtype3_file4_b = nitems;
 	nm_set_item_browse(&m[nitems++], "escape sequence" BROWSE_TXT);
 
 	opt_sm_cm_mtype3_file4 = nitems;
-	nm_set_item_input(&m[nitems++], NM_MAX_TEXT_LEN-1, GameCfg.CMMiscMusic[SONG_ENDLEVEL]);
+	nm_set_item_input(m[nitems++], GameCfg.CMMiscMusic[SONG_ENDLEVEL]);
 
 	opt_sm_cm_mtype3_file5_b = nitems;
 	nm_set_item_browse(&m[nitems++], "game ending" BROWSE_TXT);
 
 	opt_sm_cm_mtype3_file5 = nitems;
-	nm_set_item_input(&m[nitems++], NM_MAX_TEXT_LEN-1, GameCfg.CMMiscMusic[SONG_ENDGAME]);
+	nm_set_item_input(m[nitems++], GameCfg.CMMiscMusic[SONG_ENDGAME]);
 #endif
 
 	Assert(nitems == SOUND_MENU_NITEMS);
@@ -1889,7 +1898,7 @@ void do_sound_menu()
 	newmenu_do1( NULL, "Sound Effects & Music", nitems, m, sound_menuset, unused_newmenu_userdata, 0 );
 
 #ifdef USE_SDLMIXER
-	if ( ((Game_wind != NULL) && strcmp(old_CMLevelMusicPath, GameCfg.CMLevelMusicPath)) || ((Game_wind == NULL) && strcmp(old_CMMiscMusic0, GameCfg.CMMiscMusic[SONG_TITLE])) )
+	if ( ((Game_wind != NULL) && strcmp(old_CMLevelMusicPath.data(), GameCfg.CMLevelMusicPath.data())) || ((Game_wind == NULL) && strcmp(old_CMMiscMusic0.data(), GameCfg.CMMiscMusic[SONG_TITLE].data())) )
 	{
 		songs_uninit();
 
@@ -1944,15 +1953,18 @@ void do_misc_menu()
 }
 
 #if defined(USE_UDP)
-static int multi_player_menu_handler(newmenu *menu, d_event *event, int *menu_choice)
+static int multi_player_menu_handler(newmenu *menu,const d_event &event, int *menu_choice)
 {
 	newmenu_item *items = newmenu_get_items(menu);
 
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_NEWMENU_SELECTED:
+		{
+			auto &citem = static_cast<const d_select_event &>(event).citem;
 			// stay in multiplayer menu, even after having played a game
-			return do_option(menu_choice[newmenu_get_citem(menu)]);
+			return do_option(menu_choice[citem]);
+		}
 
 		case EVENT_WINDOW_CLOSE:
 			d_free(menu_choice);
@@ -1999,36 +2011,20 @@ void do_multi_player_menu()
 
 void do_options_menu()
 {
-	newmenu_item *m;
-
-	MALLOC(m, newmenu_item, 10);
-	if (!m)
-		return;
-
-	nm_set_item_menu(&m[ 0],"Sound effects & music...");
-	nm_set_item_text(&m[ 1],"");
-	nm_set_item_menu(&m[ 2],TXT_CONTROLS_);
-	nm_set_item_text(&m[ 3],"");
-	nm_set_item_menu(&m[ 4],"Screen resolution...");
-	nm_set_item_menu(&m[ 5],"Graphics Options...");
-	nm_set_item_text(&m[ 6],"");
-	nm_set_item_menu(&m[ 7],"Primary autoselect ordering...");
-	nm_set_item_menu(&m[ 8],"Secondary autoselect ordering...");
-	nm_set_item_menu(&m[ 9],"Misc Options...");
-
+	auto items = new options_menu_items;
 	// Fall back to main event loop
 	// Allows clean closing and re-opening when resolution changes
-	newmenu_do3( NULL, TXT_OPTIONS, 10, m, options_menuset, unused_newmenu_userdata, 0, NULL );
+	newmenu_do3(nullptr, TXT_OPTIONS, items->m.size(), items->m.data(), options_menuset, items, 0, nullptr);
 }
 
 #ifndef RELEASE
-static int polygon_models_viewer_handler(window *wind, d_event *event, unused_window_userdata_t *)
+static window_event_result polygon_models_viewer_handler(window *wind,const d_event &event, const unused_window_userdata_t *)
 {
-	static int view_idx = 0;
+	static unsigned view_idx;
 	int key = 0;
 	static vms_angvec ang;
 
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_WINDOW_ACTIVATED:
 #if defined(DXX_BUILD_DESCENT_II)
@@ -2044,15 +2040,16 @@ static int polygon_models_viewer_handler(window *wind, d_event *event, unused_wi
 			switch (key)
 			{
 				case KEY_ESC:
-					window_close(wind);
-					break;
+					return window_event_result::close;
 				case KEY_SPACEBAR:
 					view_idx ++;
 					if (view_idx >= N_polygon_models) view_idx = 0;
 					break;
 				case KEY_BACKSP:
-					view_idx --;
-					if (view_idx < 0 ) view_idx = N_polygon_models - 1;
+					if (!view_idx)
+						view_idx = N_polygon_models - 1;
+					else
+						view_idx --;
 					break;
 				case KEY_A:
 					ang.h -= 100;
@@ -2079,7 +2076,7 @@ static int polygon_models_viewer_handler(window *wind, d_event *event, unused_wi
 				default:
 					break;
 			}
-			return 1;
+			return window_event_result::handled;
 		case EVENT_WINDOW_DRAW:
 			timer_delay(F1_0/60);
 			draw_model_picture(view_idx, &ang);
@@ -2094,8 +2091,7 @@ static int polygon_models_viewer_handler(window *wind, d_event *event, unused_wi
 		default:
 			break;
 	}
-	
-	return 0;
+	return window_event_result::ignored;
 }
 
 static void polygon_models_viewer()
@@ -2104,7 +2100,7 @@ static void polygon_models_viewer()
 	if (!wind)
 	{
 		d_event event = { EVENT_WINDOW_CLOSE };
-		polygon_models_viewer_handler(NULL, &event, NULL);
+		polygon_models_viewer_handler(NULL, event, NULL);
 		return;
 	}
 
@@ -2112,7 +2108,7 @@ static void polygon_models_viewer()
 		event_process();
 }
 
-static int gamebitmaps_viewer_handler(window *wind, d_event *event, unused_window_userdata_t *)
+static window_event_result gamebitmaps_viewer_handler(window *wind,const d_event &event, const unused_window_userdata_t *)
 {
 	static int view_idx = 0;
 	int key = 0;
@@ -2122,7 +2118,7 @@ static int gamebitmaps_viewer_handler(window *wind, d_event *event, unused_windo
 	bitmap_index bi;
 	grs_bitmap *bm;
 
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_WINDOW_ACTIVATED:
 #if defined(DXX_BUILD_DESCENT_II)
@@ -2136,8 +2132,7 @@ static int gamebitmaps_viewer_handler(window *wind, d_event *event, unused_windo
 			switch (key)
 			{
 				case KEY_ESC:
-					window_close(wind);
-					break;
+					return window_event_result::close;
 				case KEY_SPACEBAR:
 					view_idx ++;
 					if (view_idx >= Num_bitmap_files) view_idx = 0;
@@ -2149,7 +2144,7 @@ static int gamebitmaps_viewer_handler(window *wind, d_event *event, unused_windo
 				default:
 					break;
 			}
-			return 1;
+			return window_event_result::handled;
 		case EVENT_WINDOW_DRAW:
 			bi.index = view_idx;
 			bm = &GameBitmaps[view_idx];
@@ -2158,9 +2153,9 @@ static int gamebitmaps_viewer_handler(window *wind, d_event *event, unused_windo
 			gr_clear_canvas( BM_XRGB(0,0,0) );
 #ifdef OGL
 			scale = (bm->bm_w > bm->bm_h)?(SHEIGHT/bm->bm_w)*0.8:(SHEIGHT/bm->bm_h)*0.8;
-			ogl_ubitmapm_cs((SWIDTH/2)-(bm->bm_w*scale/2),(SHEIGHT/2)-(bm->bm_h*scale/2),bm->bm_w*scale,bm->bm_h*scale,bm,-1,F1_0);
+			ogl_ubitmapm_cs((SWIDTH/2)-(bm->bm_w*scale/2),(SHEIGHT/2)-(bm->bm_h*scale/2),bm->bm_w*scale,bm->bm_h*scale,*bm,-1,F1_0);
 #else
-			gr_bitmap((SWIDTH/2)-(bm->bm_w/2), (SHEIGHT/2)-(bm->bm_h/2), bm);
+			gr_bitmap((SWIDTH/2)-(bm->bm_w/2), (SHEIGHT/2)-(bm->bm_h/2), *bm);
 #endif
 			gr_set_curfont(GAME_FONT);
 			gr_set_fontcolor(BM_XRGB(255,255,255), -1);
@@ -2173,8 +2168,7 @@ static int gamebitmaps_viewer_handler(window *wind, d_event *event, unused_windo
 		default:
 			break;
 	}
-	
-	return 0;
+	return window_event_result::ignored;
 }
 
 static void gamebitmaps_viewer()
@@ -2183,7 +2177,7 @@ static void gamebitmaps_viewer()
 	if (!wind)
 	{
 		d_event event = { EVENT_WINDOW_CLOSE };
-		gamebitmaps_viewer_handler(NULL, &event, NULL);
+		gamebitmaps_viewer_handler(NULL, event, NULL);
 		return;
 	}
 
@@ -2191,26 +2185,53 @@ static void gamebitmaps_viewer()
 		event_process();
 }
 
-static int sandbox_menuset(newmenu *menu, d_event *event, unused_newmenu_userdata_t *)
+#define DXX_SANDBOX_MENU(VERB)	\
+	DXX_##VERB##_MENU("Polygon_models viewer", polygon_models)	\
+	DXX_##VERB##_MENU("GameBitmaps viewer", bitmaps)	\
+
+namespace {
+
+class sandbox_menu_items
 {
-	switch (event->type)
+public:
+	enum
+	{
+		DXX_SANDBOX_MENU(ENUM)
+	};
+	array<newmenu_item, DXX_SANDBOX_MENU(COUNT)> m;
+	sandbox_menu_items()
+	{
+		DXX_SANDBOX_MENU(ADD);
+	}
+};
+
+}
+
+static int sandbox_menuset(newmenu *menu,const d_event &event, sandbox_menu_items *items)
+{
+	switch (event.type)
 	{
 		case EVENT_NEWMENU_CHANGED:
 			break;
 
 		case EVENT_NEWMENU_SELECTED:
-			switch(newmenu_get_citem(menu))
+		{
+			auto &citem = static_cast<const d_select_event &>(event).citem;
+			switch (citem)
 			{
-				case  0: polygon_models_viewer(); break;
-				case  1: gamebitmaps_viewer(); break;
+				case sandbox_menu_items::polygon_models:
+					polygon_models_viewer();
+					break;
+				case sandbox_menu_items::bitmaps:
+					gamebitmaps_viewer();
+					break;
 			}
 			return 1; // stay in menu until escape
-			break;
+		}
 
 		case EVENT_WINDOW_CLOSE:
 		{
-			newmenu_item *items = newmenu_get_items(menu);
-			d_free(items);
+			std::default_delete<sandbox_menu_items>()(items);
 			break;
 		}
 
@@ -2222,15 +2243,7 @@ static int sandbox_menuset(newmenu *menu, d_event *event, unused_newmenu_userdat
 
 void do_sandbox_menu()
 {
-	newmenu_item *m;
-
-	MALLOC(m, newmenu_item, 2);
-	if (!m)
-		return;
-
-	nm_set_item_menu(&m[ 0],"Polygon_models viewer");
-	nm_set_item_menu(&m[ 1],"GameBitmaps viewer");
-
-	newmenu_do3( NULL, "Coder's sandbox", 2, m, sandbox_menuset, unused_newmenu_userdata, 0, NULL );
+	auto items = new sandbox_menu_items;
+	newmenu_do3(nullptr, "Coder's sandbox", items->m.size(), items->m.data(), sandbox_menuset, items, 0, nullptr);
 }
 #endif

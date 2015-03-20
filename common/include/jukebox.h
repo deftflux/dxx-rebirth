@@ -1,3 +1,9 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 #ifndef __JUKEBOX_H__
 #define __JUKEBOX_H__
 
@@ -5,7 +11,7 @@
 
 #ifdef __cplusplus
 
-extern const file_extension_t jukebox_exts[7];
+extern const array<file_extension_t, 6> jukebox_exts;
 
 void jukebox_unload();
 void jukebox_load();

@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -36,9 +42,9 @@ void ui_draw_inputbox( UI_DIALOG *dlg, UI_GADGET_INPUTBOX * inputbox )
 
 		gr_setcolor( CBLACK );
 		gr_rect( 0, 0, inputbox->width-1, inputbox->height-1 );
-		gr_get_string_size(inputbox->text, &w, &h, &aw  );
+		gr_get_string_size(inputbox->text.get(), &w, &h, &aw  );
 		
-		if (dlg->keyboard_focus_gadget == (UI_GADGET *)inputbox)
+		if (dlg->keyboard_focus_gadget == inputbox)
 		{
 			if (inputbox->first_time)
 			{
@@ -54,12 +60,12 @@ void ui_draw_inputbox( UI_DIALOG *dlg, UI_GADGET_INPUTBOX * inputbox )
 
 		inputbox->status = 0;
 
-		gr_string( 2, 2, inputbox->text );
+		gr_string(2, 2, inputbox->text.get());
 
 		//gr_setcolor( CBLACK );
 		//gr_rect( 2+w, 0, inputbox->width-1, inputbox->height-1 );
 
-		if (dlg->keyboard_focus_gadget == (UI_GADGET *)inputbox  && !inputbox->first_time )
+		if (dlg->keyboard_focus_gadget == inputbox  && !inputbox->first_time )
 		{
 			gr_setcolor(CRED);
 			Vline( 2,inputbox->height-3, 2+w+1 );
@@ -68,18 +74,15 @@ void ui_draw_inputbox( UI_DIALOG *dlg, UI_GADGET_INPUTBOX * inputbox )
 	}
 }
 
-UI_GADGET_INPUTBOX * ui_add_gadget_inputbox( UI_DIALOG * dlg, short x, short y, short length, short slength, const char * text )
+std::unique_ptr<UI_GADGET_INPUTBOX> ui_add_gadget_inputbox(UI_DIALOG * dlg, short x, short y, short length, short slength, const char * text)
 {
 	int h, w, aw;
-	UI_GADGET_INPUTBOX * inputbox;
-
 	gr_get_string_size( NULL, &w, &h, &aw );
-
-	inputbox = (UI_GADGET_INPUTBOX *)ui_gadget_add( dlg, 6, x, y, x+aw*slength-1, y+h-1+4 );
-
-	MALLOC(inputbox->text, char, length + 1);
-	strncpy( inputbox->text, text, length );
-	inputbox->position = strlen(inputbox->text);
+	std::unique_ptr<UI_GADGET_INPUTBOX> inputbox{ui_gadget_add<UI_GADGET_INPUTBOX>(dlg, x, y, x+aw*slength-1, y+h-1+4)};
+	MALLOC(inputbox->text, char[], length + 1);
+	auto ltext = strlen(text) + 1;
+	memcpy(inputbox->text.get(), text, ltext);
+	inputbox->position = ltext - 1;
 	inputbox->oldposition = inputbox->position;
 	inputbox->width = aw*slength;
 	inputbox->height = h+4;
@@ -87,25 +90,22 @@ UI_GADGET_INPUTBOX * ui_add_gadget_inputbox( UI_DIALOG * dlg, short x, short y, 
 	inputbox->slength = slength;
 	inputbox->pressed = 0;
 	inputbox->first_time = 1;
-
 	return inputbox;
-
 }
 
-
-int ui_inputbox_do( UI_DIALOG *dlg, UI_GADGET_INPUTBOX * inputbox, d_event *event )
+window_event_result ui_inputbox_do( UI_DIALOG *dlg, UI_GADGET_INPUTBOX * inputbox,const d_event &event )
 {
 	unsigned char ascii;
 	int keypress = 0;
-	int rval = 0;
 	
-	if (event->type == EVENT_KEY_COMMAND)
+	if (event.type == EVENT_KEY_COMMAND)
 		keypress = event_key_get(event);
 
 	inputbox->oldposition = inputbox->position;
 	inputbox->pressed=0;
 
-	if (dlg->keyboard_focus_gadget==(UI_GADGET *)inputbox)
+	window_event_result rval = window_event_result::ignored;
+	if (dlg->keyboard_focus_gadget==inputbox)
 	{
 		switch( keypress )
 		{
@@ -118,13 +118,13 @@ int ui_inputbox_do( UI_DIALOG *dlg, UI_GADGET_INPUTBOX * inputbox, d_event *even
 			inputbox->text[inputbox->position] = 0;
 			inputbox->status = 1;
 			if (inputbox->first_time) inputbox->first_time = 0;
-			rval = 1;
+			rval = window_event_result::handled;
 			break;
 		case (KEY_ENTER):
 			inputbox->pressed=1;
 			inputbox->status = 1;
 			if (inputbox->first_time) inputbox->first_time = 0;
-			rval = 1;
+			rval = window_event_result::handled;
 			break;
 		default:
 			ascii = key_ascii();
@@ -136,7 +136,7 @@ int ui_inputbox_do( UI_DIALOG *dlg, UI_GADGET_INPUTBOX * inputbox, d_event *even
 				}
 				inputbox->text[inputbox->position++] = ascii;
 				inputbox->text[inputbox->position] = 0;
-				rval = 1;
+				rval = window_event_result::handled;
 			}
 			inputbox->status = 1;
 			break;
@@ -147,11 +147,11 @@ int ui_inputbox_do( UI_DIALOG *dlg, UI_GADGET_INPUTBOX * inputbox, d_event *even
 	
 	if (inputbox->pressed)
 	{
-		ui_gadget_send_event(dlg, EVENT_UI_GADGET_PRESSED, (UI_GADGET *)inputbox);
-		rval = 1;
+		ui_gadget_send_event(dlg, EVENT_UI_GADGET_PRESSED, inputbox);
+		rval = window_event_result::handled;
 	}
 		
-	if (event->type == EVENT_WINDOW_DRAW)
+	if (event.type == EVENT_WINDOW_DRAW)
 		ui_draw_inputbox( dlg, inputbox );
 
 	return rval;
@@ -159,8 +159,10 @@ int ui_inputbox_do( UI_DIALOG *dlg, UI_GADGET_INPUTBOX * inputbox, d_event *even
 
 void ui_inputbox_set_text(UI_GADGET_INPUTBOX *inputbox, const char *text)
 {
-	strncpy(inputbox->text, text, inputbox->length + 1);
-	inputbox->position = strlen(text);
+	auto ltext = std::min(static_cast<std::size_t>(inputbox->length), strlen(text));
+	memcpy(inputbox->text.get(), text, ltext);
+	inputbox->text[ltext] = 0;
+	inputbox->position = ltext;
 	inputbox->oldposition = inputbox->position;
 	inputbox->status = 1;		// redraw
 	inputbox->first_time = 1;	// select all

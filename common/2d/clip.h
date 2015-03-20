@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -22,11 +28,7 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 */
 #define IABS(x)         (((x) < 0) ?  -(x) : (x))
 
-#define EXCHG(a,b) do {                                                 \
-	int __temp__ = (a);                                                 \
-	(a) = (b);                                                          \
-	(b) = __temp__;                                                     \
-} while(0)
+#define EXCHG(a,b) std::swap(a,b)
 
 // sort two values
 #define SORT2(a,b) do {                                                 \

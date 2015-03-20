@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,13 +23,13 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-#ifndef _FUELCEN_H
-#define _FUELCEN_H
-
-#include "segment.h"
-#include "object.h"
+#pragma once
 
 #ifdef __cplusplus
+#include "pack.h"
+#include "fwdsegment.h"
+
+struct vms_vector;
 
 //------------------------------------------------------------
 // A refueling center is one segment... to identify it in the
@@ -51,31 +57,26 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 // Destroys all fuel centers, clears segment backpointer array.
 void fuelcen_reset();
-// Create materialization center
-int create_matcen( segment * segp );
 // Makes a segment a fuel center.
-void fuelcen_create( segment * segp);
+void fuelcen_create( vsegptridx_t segp);
 // Makes a fuel center active... needs to be called when
 // a segment is loaded from disk.
-void fuelcen_activate( segment * segp, int station_type );
+void fuelcen_activate( vsegptridx_t segp, int station_type );
 // Deletes a segment as a fuel center.
-void fuelcen_delete( segment * segp );
+void fuelcen_delete( vsegptridx_t segp );
 
 // Charges all fuel centers to max capacity.
 void fuelcen_replentish_all();
 
 // Create a matcen robot
-objptridx_t create_morph_robot(segment *segp, vms_vector *object_pos, int object_id);
+objptridx_t create_morph_robot(vsegptridx_t segp, const vms_vector &object_pos, int object_id);
 
 // Returns the amount of fuel/shields this segment can give up.
 // Can be from 0 to 100.
-fix fuelcen_give_fuel(segment *segp, fix MaxAmountCanTake );
+fix fuelcen_give_fuel(vsegptr_t segp, fix MaxAmountCanTake );
 
 // Call once per frame.
 void fuelcen_update_all();
-
-// Called when hit by laser.
-void fuelcen_damage(segment *segp, fix AmountOfDamage );
 
 // Called to repair an object
 //--repair-- int refuel_do_repair_effect( object * obj, int first_time, int repair_seg );
@@ -83,7 +84,7 @@ void fuelcen_damage(segment *segp, fix AmountOfDamage );
 #if defined(DXX_BUILD_DESCENT_I)
 #define MAX_NUM_FUELCENS	50
 #elif defined(DXX_BUILD_DESCENT_II)
-fix repaircen_give_shields(segment *segp, fix MaxAmountCanTake );
+fix repaircen_give_shields(vsegptr_t segp, fix MaxAmountCanTake );
 #define MAX_NUM_FUELCENS    70
 #endif
 
@@ -97,103 +98,85 @@ fix repaircen_give_shields(segment *segp, fix MaxAmountCanTake );
 //--repair-- abort_repair_center();
 
 // An array of pointers to segments with fuel centers.
-struct FuelCenter
+struct FuelCenter : public prohibit_void_ptr<FuelCenter>
 {
 	int     Type;
-	int     segnum;
+	segnum_t     segnum;
 	sbyte   Flag;
 	sbyte   Enabled;
 	sbyte   Lives;          // Number of times this can be enabled.
-	sbyte   dum1;
 	fix     Capacity;
 	fix     MaxCapacity;
 	fix     Timer;          // used in matcen for when next robot comes out
 	fix     Disable_time;   // Time until center disabled.
-	fix __obsolete_pad_center[3];
-} __pack__;
-static_assert(sizeof(FuelCenter) == 40, "sizeof(FuelCenter) is wrong");
+};
 
 // The max number of robot centers per mine.
 #define MAX_ROBOT_CENTERS  20
 
-extern int Num_robot_centers;
-
-struct d1_matcen_info
+struct d1_matcen_info : public prohibit_void_ptr<d1_matcen_info>
 {
-	int     robot_flags[1];    // Up to 32 different robots
-	fix     hit_points;     // How hard it is to destroy this particular matcen
-	fix     interval;       // Interval between materialogrifizations
-	short   segnum;         // Segment this is attached to.
+	array<int, 1>     robot_flags;    // Up to 32 different robots
+	segnum_t   segnum;         // Segment this is attached to.
 	short   fuelcen_num;    // Index in fuelcen array.
-} __pack__;
+};
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 #if defined(DXX_BUILD_DESCENT_I)
 typedef d1_matcen_info matcen_info;
+void matcen_info_read(PHYSFS_file *fp, matcen_info &ps, int version);
 #elif defined(DXX_BUILD_DESCENT_II)
-struct matcen_info
+struct matcen_info : public prohibit_void_ptr<matcen_info>
 {
-	int     robot_flags[2]; // Up to 64 different robots
-	fix     hit_points;     // How hard it is to destroy this particular matcen
-	fix     interval;       // Interval between materialogrifizations
-	short   segnum;         // Segment this is attached to.
+	array<int, 2>     robot_flags; // Up to 64 different robots
+	segnum_t   segnum;         // Segment this is attached to.
 	short   fuelcen_num;    // Index in fuelcen array.
-} __pack__;
+};
+
+void matcen_info_read(PHYSFS_file *fp, matcen_info &ps);
 #endif
 
 extern const char Special_names[MAX_CENTER_TYPES][11];
 
-extern matcen_info RobotCenters[MAX_ROBOT_CENTERS];
-extern FuelCenter Station[MAX_NUM_FUELCENS];
-#endif
+extern unsigned Num_robot_centers;
+extern array<matcen_info, MAX_ROBOT_CENTERS> RobotCenters;
+extern array<FuelCenter, MAX_NUM_FUELCENS> Station;
 
-//--repair-- extern object *RepairObj;  // which object getting repaired, or NULL
+static inline long operator-(FuelCenter *s, array<FuelCenter, MAX_NUM_FUELCENS> &a)
+{
+	return std::distance(a.begin(), s);
+}
+#endif
 
 // Called when a materialization center gets triggered by the player
 // flying through some trigger!
-extern void trigger_matcen(int segnum);
+void trigger_matcen(vsegptridx_t segnum);
 
 extern void disable_matcens(void);
 
-extern int Num_fuelcenters;
+extern unsigned Num_fuelcenters;
 
 extern void init_all_matcens(void);
 
 extern const fix EnergyToCreateOneRobot;
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
-#if defined(DXX_BUILD_DESCENT_I)
 /*
  * reads a matcen_info structure from a PHYSFS_file
  */
-void matcen_info_read(matcen_info *ps, PHYSFS_file *fp, int version);
-#elif defined(DXX_BUILD_DESCENT_II)
-void fuelcen_check_for_hoard_goal(segment *segp);
+#if defined(DXX_BUILD_DESCENT_II)
+void fuelcen_check_for_hoard_goal(vsegptr_t segp);
 
 /*
  * reads an d1_matcen_info structure from a PHYSFS_file
  */
-void d1_matcen_info_read(d1_matcen_info *mi, PHYSFS_file *fp);
-
-/*
- * reads a matcen_info structure from a PHYSFS_file
- */
-void matcen_info_read(matcen_info *ps, PHYSFS_file *fp);
+void d1_matcen_info_read(PHYSFS_file *fp, matcen_info &mi);
 #endif
 
-/*
- * reads n matcen_info structs from a PHYSFS_file and swaps if specified
- */
-void matcen_info_read_n_swap(matcen_info *mi, int n, int swap, PHYSFS_file *fp);
-
-void matcen_info_write(matcen_info *mi, short version, PHYSFS_file *fp);
+void matcen_info_write(PHYSFS_file *fp, const matcen_info &mi, short version);
 #endif
 
-/*
- * reads n Station structs from a PHYSFS_file and swaps if specified
- */
-void fuelcen_read_n_swap(FuelCenter *fc, int n, int swap, PHYSFS_file *fp);
-
-#endif
+void fuelcen_read(PHYSFS_file *fp, FuelCenter &fc);
+void fuelcen_write(PHYSFS_file *fp, const FuelCenter &fc);
 
 #endif

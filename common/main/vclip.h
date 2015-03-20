@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,20 +23,15 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
+#pragma once
 
-#ifndef _VCLIP_H
-#define _VCLIP_H
-
-#include "gr.h"
 #include "piggy.h"
-#include "physfsx.h"
 
 #ifdef __cplusplus
 #include "dxxsconf.h"
 #include "compiler-array.h"
+#include "fwdvalptridx.h"
 
-struct object;
-struct objptridx_t;
 
 #define VCLIP_SMALL_EXPLOSION       2
 #define VCLIP_PLAYER_HIT            1
@@ -39,20 +40,20 @@ struct objptridx_t;
 #define VCLIP_POWERUP_DISAPPEARANCE 62
 #define VCLIP_VOLATILE_WALL_HIT     5
 #if defined(DXX_BUILD_DESCENT_I)
-#define VCLIP_MAXNUM			70
+static const std::size_t VCLIP_MAXNUM = 70;
 #elif defined(DXX_BUILD_DESCENT_II)
 #define VCLIP_WATER_HIT             84
 #define VCLIP_AFTERBURNER_BLOB      95
 #define VCLIP_MONITOR_STATIC        99
 
-#define VCLIP_MAXNUM                110
+static const std::size_t VCLIP_MAXNUM = 110;
 #endif
 #define VCLIP_MAX_FRAMES            30
 
 // vclip flags
 #define VF_ROD      1       // draw as a rod, not a blob
 
-struct vclip
+struct vclip : public prohibit_void_ptr<vclip>
 {
 	fix             play_time;          // total time (in seconds) of clip
 	unsigned        num_frames;
@@ -63,14 +64,16 @@ struct vclip
 	fix             light_value;
 };
 
+const int vclip_none = -1;
+
 extern unsigned Num_vclips;
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 extern array<vclip, VCLIP_MAXNUM> Vclip;
 #endif
 
 // draw an object which renders as a vclip.
-void draw_vclip_object(object *obj, fix timeleft, int lighted, int vclip_num);
-void draw_weapon_vclip(objptridx_t obj);
+void draw_vclip_object(vobjptridx_t obj, fix timeleft, int lighted, int vclip_num);
+void draw_weapon_vclip(vobjptridx_t obj);
 
 /*
  * reads n vclip structs from a PHYSFS_file
@@ -85,5 +88,3 @@ void vclip_write(PHYSFS_file *fp, const vclip &vc);
 	ASSERT_SERIAL_UDT_MESSAGE_SIZE(vclip, 82);
 
 #endif
-
-#endif /* _VCLIP_H */

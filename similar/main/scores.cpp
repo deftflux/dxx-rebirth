@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -44,6 +50,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "text.h"
 #include "strutil.h"
 #include "rbaudio.h"
+#include "physfsx.h"
 
 #ifdef OGL
 #include "ogl_init.h"
@@ -62,7 +69,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 struct stats_info
 {
-  	char	name[CALLSIGN_LEN+1];
+	callsign_t name;
 	int		score;
 	sbyte   starting_level;
 	sbyte   ending_level;
@@ -83,30 +90,28 @@ struct all_scores
 
 static void scores_read(all_scores *scores)
 {
-	PHYSFS_file *fp;
 	int fsize;
 
 	// clear score array...
-	memset( scores, 0, sizeof(all_scores) );
+	*scores = {};
 
-	fp = PHYSFS_openRead(SCORES_FILENAME);
-	if (fp==NULL) {
-		int i;
-
+	RAIIPHYSFS_File fp{PHYSFS_openRead(SCORES_FILENAME)};
+	if (!fp)
+	{
 	 	// No error message needed, code will work without a scores file
 		sprintf( scores->cool_saying, "%s", TXT_REGISTER_DESCENT );
-		sprintf( scores->stats[0].name, "Parallax" );
-		sprintf( scores->stats[1].name, "Matt" );
-		sprintf( scores->stats[2].name, "Mike" );
-		sprintf( scores->stats[3].name, "Adam" );
-		sprintf( scores->stats[4].name, "Mark" );
-		sprintf( scores->stats[5].name, "Jasen" );
-		sprintf( scores->stats[6].name, "Samir" );
-		sprintf( scores->stats[7].name, "Doug" );
-		sprintf( scores->stats[8].name, "Dan" );
-		sprintf( scores->stats[9].name, "Jason" );
+		scores->stats[0].name = "Parallax";
+		scores->stats[1].name = "Matt";
+		scores->stats[2].name = "Mike";
+		scores->stats[3].name = "Adam";
+		scores->stats[4].name = "Mark";
+		scores->stats[5].name = "Jasen";
+		scores->stats[6].name = "Samir";
+		scores->stats[7].name = "Doug";
+		scores->stats[8].name = "Dan";
+		scores->stats[9].name = "Jason";
 
-		for (i=0; i<10; i++)
+		for (int i=0; i<10; i++)
 			scores->stats[i].score = (10-i)*1000;
 		return;
 	}
@@ -114,25 +119,21 @@ static void scores_read(all_scores *scores)
 	fsize = PHYSFS_fileLength(fp);
 
 	if ( fsize != sizeof(all_scores) )	{
-		PHYSFS_close(fp);
 		return;
 	}
 	// Read 'em in...
 	PHYSFS_read(fp, scores, sizeof(all_scores), 1);
-	PHYSFS_close(fp);
-
 	if ( (scores->version!=VERSION_NUMBER)||(scores->signature[0]!='D')||(scores->signature[1]!='H')||(scores->signature[2]!='S') )	{
-		memset( scores, 0, sizeof(all_scores) );
+		*scores = {};
 		return;
 	}
 }
 
 static void scores_write(all_scores *scores)
 {
-	PHYSFS_file *fp;
-
-	fp = PHYSFS_openWrite(SCORES_FILENAME);
-	if (fp==NULL) {
+	RAIIPHYSFS_File fp{PHYSFS_openWrite(SCORES_FILENAME)};
+	if (!fp)
+	{
 		nm_messagebox( TXT_WARNING, 1, TXT_OK, "%s\n'%s'", TXT_UNABLE_TO_OPEN, SCORES_FILENAME  );
 		return;
 	}
@@ -142,12 +143,11 @@ static void scores_write(all_scores *scores)
 	scores->signature[2]='S';
 	scores->version = VERSION_NUMBER;
 	PHYSFS_write(fp, scores,sizeof(all_scores), 1);
-	PHYSFS_close(fp);
 }
 
 static void int_to_string( int number, char *dest )
 {
-	int i,l,c;
+	int l,c;
 	char buffer[20],*p;
 
 	sprintf( buffer, "%d", number );
@@ -161,7 +161,7 @@ static void int_to_string( int number, char *dest )
 
 	c = 0;
 	p=dest;
-	for (i=l-1; i>=0; i-- )	{
+	for (int i=l-1; i>=0; i-- ) {
 		if (c==3) {
 			*p++=',';
 			c = 0;
@@ -175,7 +175,7 @@ static void int_to_string( int number, char *dest )
 
 static void scores_fill_struct(stats_info * stats)
 {
-	strcpy( stats->name, Players[Player_num].callsign );
+	stats->name = Players[Player_num].callsign;
 	stats->score = Players[Player_num].score;
 	stats->ending_level = Players[Player_num].level;
 	if (Players[Player_num].num_robots_total > 0 )	
@@ -215,9 +215,7 @@ static inline const char *get_placement_slot_string(const unsigned position)
 
 void scores_maybe_add_player(int abort_flag)
 {
-	char text1[COOL_MESSAGE_LEN+10];
-	newmenu_item m[10];
-	int i,position;
+	int position;
 	all_scores scores;
 	stats_info last_game;
 
@@ -227,7 +225,7 @@ void scores_maybe_add_player(int abort_flag)
 	scores_read(&scores);
 	
 	position = MAX_HIGH_SCORES;
-	for (i=0; i<MAX_HIGH_SCORES; i++ )	{
+	for (int i=0; i<MAX_HIGH_SCORES; i++ ) {
 		if ( Players[Player_num].score > scores.stats[i].score )	{
 			position = i;
 			break;
@@ -240,11 +238,13 @@ void scores_maybe_add_player(int abort_flag)
 		scores_fill_struct( &last_game );
 	} else {
 		if ( position==0 )	{
-			strcpy( text1,  "" );
-			nm_set_item_text(& m[0], TXT_COOL_SAYING);
-			nm_set_item_input(&m[1], COOL_MESSAGE_LEN-5, text1);
-			newmenu_do( TXT_HIGH_SCORE, TXT_YOU_PLACED_1ST, 2, m, unused_newmenu_subfunction, unused_newmenu_userdata );
-			strncpy( scores.cool_saying, text1, COOL_MESSAGE_LEN );
+			array<char, COOL_MESSAGE_LEN+10> text1{};
+			array<newmenu_item, 2> m{
+				nm_item_text(TXT_COOL_SAYING),
+				nm_item_input(text1),
+			};
+			newmenu_do( TXT_HIGH_SCORE, TXT_YOU_PLACED_1ST, m, unused_newmenu_subfunction, unused_newmenu_userdata );
+			strncpy( scores.cool_saying, text1.data(), COOL_MESSAGE_LEN );
 			if (strlen(scores.cool_saying)<1)
 				sprintf( scores.cool_saying, "No Comment" );
 		} else {
@@ -252,7 +252,7 @@ void scores_maybe_add_player(int abort_flag)
 		}
 	
 		// move everyone down...
-		for ( i=MAX_HIGH_SCORES-1; i>position; i-- )	{
+		for ( int i=MAX_HIGH_SCORES-1; i>position; i-- ) {
 			scores.stats[i] = scores.stats[i-1];
 		}
 
@@ -346,7 +346,7 @@ static void scores_draw_item( int i, stats_info * stats )
 	}
 }
 
-struct scores_menu
+struct scores_menu : ignore_window_pointer_t
 {
 	int			citem;
 	fix64			t1;
@@ -355,14 +355,13 @@ struct scores_menu
 	stats_info	last_game;
 };
 
-static int scores_handler(window *wind, d_event *event, scores_menu *menu)
+static window_event_result scores_handler(window *wind,const d_event &event, scores_menu *menu)
 {
-	int i;
 	int k;
 	static const sbyte fades[64] = { 1,1,1,2,2,3,4,4,5,6,8,9,10,12,13,15,16,17,19,20,22,23,24,26,27,28,28,29,30,30,31,31,31,31,31,30,30,29,28,28,27,26,24,23,22,20,19,17,16,15,13,12,10,9,8,6,5,4,4,3,2,2,1,1 };
 	int w = FSPACX(290), h = FSPACY(170);
 
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_WINDOW_ACTIVATED:
 			game_flush_inputs();
@@ -377,16 +376,14 @@ static int scores_handler(window *wind, d_event *event, scores_menu *menu)
 						if ( nm_messagebox( NULL, 2,  TXT_NO, TXT_YES, TXT_RESET_HIGH_SCORES )==1 )	{
 							PHYSFS_delete(SCORES_FILENAME);
 							scores_view(&menu->last_game, menu->citem);	// create new scores window
-							window_close(wind);			// then remove the old one
+							return window_event_result::close;
 						}
 					}
-					return 1;
-					
+					return window_event_result::handled;
 				case KEY_ENTER:
 				case KEY_SPACEBAR:
 				case KEY_ESC:
-					window_close(wind);
-					return 1;
+					return window_event_result::close;
 			}
 			break;
 
@@ -394,8 +391,7 @@ static int scores_handler(window *wind, d_event *event, scores_menu *menu)
 		case EVENT_MOUSE_BUTTON_UP:
 			if (event_mouse_get_button(event) == MBTN_LEFT || event_mouse_get_button(event) == MBTN_RIGHT)
 			{
-				window_close(wind);
-				return 1;
+				return window_event_result::close;
 			}
 			break;
 
@@ -408,14 +404,10 @@ static int scores_handler(window *wind, d_event *event, scores_menu *menu)
 			
 			nm_draw_background(((SWIDTH-w)/2)-BORDERX,((SHEIGHT-h)/2)-BORDERY,((SWIDTH-w)/2)+w+BORDERX,((SHEIGHT-h)/2)+h+BORDERY);
 			
-			gr_set_current_canvas(window_get_canvas(wind));
-			
-			grd_curcanv->cv_font = MEDIUM3_FONT;
-			
+			gr_set_current_canvas(window_get_canvas(*wind));
+			gr_set_curfont(MEDIUM3_FONT);
 			gr_string( 0x8000, FSPACY(15), TXT_HIGH_SCORES );
-			
-			grd_curcanv->cv_font = GAME_FONT;
-			
+			gr_set_curfont(GAME_FONT);
 			gr_set_fontcolor( BM_XRGB(31,26,5), -1 );
 			gr_string( FSPACX( 71), FSPACY(50), TXT_NAME );
 			gr_string( FSPACX(122), FSPACY(50), TXT_SCORE );
@@ -428,9 +420,9 @@ static int scores_handler(window *wind, d_event *event, scores_menu *menu)
 			
 			gr_set_fontcolor( BM_XRGB(28,28,28), -1 );
 			
-			gr_printf( 0x8000, FSPACY(31), "%c%s%c  - %s", 34, menu->scores.cool_saying, 34, menu->scores.stats[0].name );
+			gr_printf( 0x8000, FSPACY(31), "%c%s%c  - %s", 34, menu->scores.cool_saying, 34, static_cast<const char *>(menu->scores.stats[0].name));
 			
-			for (i=0; i<MAX_HIGH_SCORES; i++ )		{
+			for (int i=0; i<MAX_HIGH_SCORES; i++ ) {
 				gr_set_fontcolor( BM_XRGB(28-i*2,28-i*2,28-i*2), -1 );
 				scores_draw_item( i, &menu->scores.stats[i] );
 			}
@@ -460,8 +452,7 @@ static int scores_handler(window *wind, d_event *event, scores_menu *menu)
 		default:
 			break;
 	}
-	
-	return 0;
+	return window_event_result::ignored;
 }
 
 void scores_view(stats_info *last_game, int citem)

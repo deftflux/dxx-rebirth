@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -30,6 +36,8 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "strutil.h"
 #include "args.h"
 
+#include "compiler-make_unique.h"
+
 #ifdef GENERATE_BUILTIN_TEXT_TABLE
 #include <ctype.h>
 #endif
@@ -41,15 +49,15 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define SHAREWARE_TEXTSIZE  14677
 #endif
 
-static char *text;
-static char *overwritten_text;
+static std::unique_ptr<char[]> text;
+static std::unique_ptr<char[]> overwritten_text;
 
 const char *Text_string[N_TEXT_STRINGS];
 
 void free_text()
 {
-	d_free(overwritten_text);
-	d_free(text);
+	overwritten_text.reset();
+	text.reset();
 }
 
 // rotates a byte left one bit, preserving the bit falling off the right
@@ -91,8 +99,6 @@ void decode_text(char *buf, int len)
 //load all the text strings for Descent
 void load_text()
 {
-	PHYSFS_file  *tfile;
-	PHYSFS_file *ifile;
 	int len,i, have_binary = 0;
 	char *tptr;
 	const char *filename="descent.tex";
@@ -211,9 +217,13 @@ void load_text()
 	if (GameArg.DbgAltTex)
 		filename = GameArg.DbgAltTex;
 
-	if ((tfile = PHYSFSX_openReadBuffered(filename)) == NULL) {
+	auto tfile = PHYSFSX_openReadBuffered(filename);
+	if (!tfile)
+	{
 		filename="descent.txb";
-		if ((ifile = PHYSFSX_openReadBuffered(filename)) == NULL) {
+		auto ifile = PHYSFSX_openReadBuffered(filename);
+		if (!ifile)
+		{
 			Error("Cannot open file DESCENT.TEX or DESCENT.TXB");
 			return;
 		}
@@ -222,13 +232,10 @@ void load_text()
 		len = PHYSFS_fileLength(ifile);
 
 //edited 05/17/99 Matt Mueller - malloc an extra byte, and null terminate.
-		MALLOC(text,char,len+1);
-
+		text = make_unique<char[]>(len + 1);
 		PHYSFS_read(ifile,text,1,len);
 		text[len]=0;
 //end edit -MM
-		PHYSFS_close(ifile);
-
 	} else {
 		int c;
 		char * p;
@@ -236,10 +243,9 @@ void load_text()
 		len = PHYSFS_fileLength(tfile);
 
 //edited 05/17/99 Matt Mueller - malloc an extra byte, and null terminate.
-		MALLOC(text,char,len+1);
-
+		text = make_unique<char[]>(len + 1);
 		//fread(text,1,len,tfile);
-		p = text;
+		p = text.get();
 		do {
 			c = PHYSFSX_fgetc( tfile );
 			if ( c != 13 )
@@ -247,11 +253,9 @@ void load_text()
 		} while ( c!=EOF );
 		*p=0;
 //end edit -MM
-
-		PHYSFS_close(tfile);
 	}
 
-	for (i=0,tptr=text;i<N_TEXT_STRINGS;i++) {
+	for (i=0,tptr=text.get();i<N_TEXT_STRINGS;i++) {
 		char *p;
 
 #if defined(DXX_BUILD_DESCENT_I)
@@ -313,7 +317,6 @@ void load_text()
 		}
 
           switch(i) {
-				  char *str;
 #if defined(DXX_BUILD_DESCENT_I)
 			case 116:
 				if (!d_stricmp(ts, "SPREADFIRE")) // This string is too long to fit in the cockpit-box
@@ -326,13 +329,11 @@ void load_text()
 			  case IDX_TEXT_OVERWRITTEN:
 				{
 				  static const char extra[] = "\n<Ctrl-C> converts format\nIntel <-> PowerPC";
-				  MALLOC(str, char, strlen(ts) + sizeof(extra));
-				  if (!str)
-					  break;
-				  strcpy(str, Text_string[i]);
-				  strcat(str, extra);
-				  overwritten_text = str;
-				  Text_string[i] = str;
+				std::size_t l = strlen(ts);
+				overwritten_text = make_unique<char[]>(l + sizeof(extra));
+				char *o = overwritten_text.get();
+				std::copy_n(extra, sizeof(extra), std::copy_n(ts, l, o));
+				Text_string[i] = o;
 				  break;
 				}
           }

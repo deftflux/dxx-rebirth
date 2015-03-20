@@ -1,3 +1,9 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 /* 8 bit decoding routines */
 
 #include <stdio.h>
@@ -6,18 +12,17 @@
 #include "decoders.h"
 #include "console.h"
 
-static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsigned char **pData, int *pDataRemain, int *curXb, int *curYb);
+static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, const unsigned char **pData, int *pDataRemain, int *curXb, int *curYb);
 
-void decodeFrame8(unsigned char *pFrame, unsigned char *pMap, int mapRemain, unsigned char *pData, int dataRemain)
+void decodeFrame8(unsigned char *pFrame, const unsigned char *pMap, int mapRemain, const unsigned char *pData, int dataRemain)
 {
-	int i, j;
 	int xb, yb;
 
 	xb = g_width >> 3;
 	yb = g_height >> 3;
-	for (j=0; j<yb; j++)
+	for (int j=0; j<yb; j++)
 	{
-		for (i=0; i<xb/2; i++)
+		for (int i=0; i<xb/2; i++)
 		{
 			dispatchDecoder(&pFrame, (*pMap) & 0xf, &pData, &dataRemain, &i, &j);
 			if (pFrame < (unsigned char *)g_vBackBuf1)
@@ -67,9 +72,7 @@ static void relFar(int i, int sign, int *x, int *y)
    pDest and pSrc are both g_width bytes wide */
 static void copyFrame(unsigned char *pDest, unsigned char *pSrc)
 {
-	int i;
-
-	for (i=0; i<8; i++)
+	for (int i=0; i<8; i++)
 	{
 		memcpy(pDest, pSrc, 8);
 		pDest += g_width;
@@ -143,10 +146,9 @@ static void patternQuadrant4Pixels(unsigned char *pFrame, unsigned char pat0, un
 {
 	unsigned long mask = 0x00000003UL;
 	int shift=0;
-	int i;
 	unsigned long pat = (pat3 << 24) | (pat2 << 16) | (pat1 << 8) | pat0;
 
-	for (i=0; i<16; i++)
+	for (int i=0; i<16; i++)
 	{
 		pFrame[i&3] = p[(pat & mask) >> shift];
 
@@ -195,12 +197,11 @@ static void patternQuadrant2Pixels(unsigned char *pFrame, unsigned char pat0, un
 {
 	unsigned char pel;
 	unsigned short mask = 0x0001;
-	int i, j;
 	unsigned short pat = (pat1 << 8) | pat0;
 
-	for (i=0; i<4; i++)
+	for (int i=0; i<4; i++)
 	{
-		for (j=0; j<4; j++)
+		for (int j=0; j<4; j++)
 		{
 			pel = p[(pat & mask) ? 1 : 0];
 
@@ -211,11 +212,10 @@ static void patternQuadrant2Pixels(unsigned char *pFrame, unsigned char pat0, un
 	}
 }
 
-static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsigned char **pData, int *pDataRemain, int *curXb, int *curYb)
+static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, const unsigned char **pData, int *pDataRemain, int *curXb, int *curYb)
 {
 	unsigned char p[4];
 	unsigned char pat[16];
-	int i, j, k;
 	int x, y;
 
 	/* Data is processed in 8x8 pixel blocks.
@@ -312,7 +312,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		   Note that if you've reached the end of a row, this means going on
 		   to the next row.
 		*/
-		for (i=0; i<2; i++)
+		for (int i=0; i<2; i++)
 		{
 			*pFrame += 16;
 			if (++*curXb == (g_width >> 3))
@@ -394,7 +394,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		p[1] = *(*pData)++;
 		if (p[0] <= p[1])
 		{
-			for (i=0; i<8; i++)
+			for (int i=0; i<8; i++)
 			{
 				patternRow2Pixels(*pFrame, *(*pData)++, p);
 				*pFrame += g_width;
@@ -402,7 +402,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		}
 		else
 		{
-			for (i=0; i<2; i++)
+			for (int i=0; i<2; i++)
 			{
 				patternRow2Pixels2(*pFrame, *(*pData) & 0xf, p);
 				*pFrame += 2*g_width;
@@ -505,7 +505,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		if ( (*pData)[0] <= (*pData)[1])
 		{
 			// four quadrant case
-			for (i=0; i<4; i++)
+			for (int i=0; i<4; i++)
 			{
 				p[0] = *(*pData)++;
 				p[1] = *(*pData)++;
@@ -523,7 +523,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		else if ( (*pData)[6] <= (*pData)[7])
 		{
 			// split horizontal
-			for (i=0; i<4; i++)
+			for (int i=0; i<4; i++)
 			{
 				if ((i & 1) == 0)
 				{
@@ -543,7 +543,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		else
 		{
 			// split vertical
-			for (i=0; i<8; i++)
+			for (int i=0; i<8; i++)
 			{
 				if ((i & 3) == 0)
 				{
@@ -592,7 +592,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 				p[2] = *(*pData)++;
 				p[3] = *(*pData)++;
 
-				for (i=0; i<8; i++)
+				for (int i=0; i<8; i++)
 				{
 					pat[0] = *(*pData)++;
 					pat[1] = *(*pData)++;
@@ -629,7 +629,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 				p[2] = *(*pData)++;
 				p[3] = *(*pData)++;
 
-				for (i=0; i<8; i++)
+				for (int i=0; i<8; i++)
 				{
 					pat[0] = *(*pData)++;
 					patternRow4Pixels2x1(*pFrame, pat[0], p);
@@ -646,7 +646,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 				p[2] = *(*pData)++;
 				p[3] = *(*pData)++;
 
-				for (i=0; i<4; i++)
+				for (int i=0; i<4; i++)
 				{
 					pat[0] = *(*pData)++;
 					pat[1] = *(*pData)++;
@@ -697,7 +697,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		*/
 		if ( (*pData)[0] <= (*pData)[1])
 		{
-			for (i=0; i<4; i++)
+			for (int i=0; i<4; i++)
 			{
 				p[0] = *(*pData)++;
 				p[1] = *(*pData)++;
@@ -721,7 +721,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 			if ( (*pData)[12] <= (*pData)[13])
 			{
 				// split vertical
-				for (i=0; i<4; i++)
+				for (int i=0; i<4; i++)
 				{
 					if ((i&1) == 0)
 					{
@@ -747,7 +747,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 			else
 			{
 				// split horizontal
-				for (i=0; i<8; i++)
+				for (int i=0; i<8; i++)
 				{
 					if ((i&3) == 0)
 					{
@@ -773,7 +773,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		   bytes of pixel data.  1 byte for each pixel, and in the standard
 		   order (l->r, t->b).
 		*/
-		for (i=0; i<8; i++)
+		for (int i=0; i<8; i++)
 		{
 			memcpy(*pFrame, *pData, 8);
 			*pFrame += g_width;
@@ -788,11 +788,11 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		   bytes of pixel data.  1 byte for each block of 2x2 pixels, and in
 		   the standard order (l->r, t->b).
 		*/
-		for (i=0; i<4; i++)
+		for (int i=0; i<4; i++)
 		{
-			for (j=0; j<2; j++)
+			for (int j=0; j<2; j++)
 			{
-				for (k=0; k<4; k++)
+				for (int k=0; k<4; k++)
 				{
 					(*pFrame)[2*k]   = (*pData)[k];
 					(*pFrame)[2*k+1] = (*pData)[k];
@@ -810,11 +810,11 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		   bytes of pixel data.  1 byte for each block of 4x4 pixels, and in
 		   the standard order (l->r, t->b).
 		*/
-		for (i=0; i<2; i++)
+		for (int i=0; i<2; i++)
 		{
-			for (j=0; j<4; j++)
+			for (int j=0; j<4; j++)
 			{
-				for (k=0; k<4; k++)
+				for (int k=0; k<4; k++)
 				{
 					(*pFrame)[k*g_width+j] = (*pData)[0];
 					(*pFrame)[k*g_width+j+4] = (*pData)[1];
@@ -831,7 +831,7 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		/* This encoding represents a solid 8x8 frame.  We get 1 byte of pixel
 		   data from the data stream.
 		*/
-		for (i=0; i<8; i++)
+		for (int i=0; i<8; i++)
 		{
 			memset(*pFrame, **pData, 8);
 			*pFrame += g_width;
@@ -853,9 +853,9 @@ static void dispatchDecoder(unsigned char **pFrame, unsigned char codeType, unsi
 		   P0 P1 P0 P1 P0 P1 P0 P1
 		   P1 P0 P1 P0 P1 P0 P1 P0
 		*/
-		for (i=0; i<8; i++)
+		for (int i=0; i<8; i++)
 		{
-			for (j=0; j<8; j++)
+			for (int j=0; j<8; j++)
 			{
 				(*pFrame)[j] = (*pData)[(i+j)&1];
 			}

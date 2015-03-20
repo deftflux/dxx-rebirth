@@ -1,3 +1,9 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 // Event header file
 
 #ifndef _EVENT_H
@@ -47,6 +53,29 @@ struct d_event
 	event_type type;
 };
 
+struct d_create_event : d_event
+{
+	const void *createdata;
+};
+
+struct d_change_event : d_event
+{
+	int citem;
+	d_change_event(const int c) :
+		d_event{EVENT_NEWMENU_CHANGED}, citem(c)
+	{
+	}
+};
+
+struct d_select_event : d_event
+{
+	int citem;
+	d_select_event(const int c) :
+		d_event{EVENT_NEWMENU_SELECTED}, citem(c)
+	{
+	}
+};
+
 int event_init();
 
 // Sends input events to event handlers
@@ -54,11 +83,11 @@ void event_poll();
 void event_flush();
 
 // Set and call the default event handler
-void set_default_handler(int (*handler)(d_event *event));
-int call_default_handler(d_event *event);
+void set_default_handler(int (*handler)(const d_event &event));
+int call_default_handler(const d_event &event);
 
 // Send an event to the front window as first priority, then to the windows behind if it's not modal (editor), then the default handler
-void event_send(d_event *event);
+void event_send(const d_event &event);
 
 // Sends input, idle and draw events to event handlers
 void event_process();

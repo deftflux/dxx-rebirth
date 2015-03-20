@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -47,16 +53,16 @@ struct morph_data
 
 extern morph_data morph_objects[];
 
-void morph_start(object *obj);
-void draw_morph_object(object *obj);
+void morph_start(vobjptr_t obj);
+void draw_morph_object(vobjptridx_t obj);
 
 //process the morphing object for one frame
-void do_morph_frame(object *obj);
+void do_morph_frame(vobjptr_t obj);
 
 //called at the start of a level
 void init_morphs();
 
-extern morph_data *find_morph_data(object *obj);
+morph_data *find_morph_data(vobjptr_t obj);
 
 #endif
 

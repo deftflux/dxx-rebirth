@@ -42,12 +42,17 @@ ehthumbs.db
 Thumbs.db
 
 # Xcode generated files #
-######################
+#########################
 # Note: committing these is optional
 *.mode1v3
 *.pbxuser
 *.perspectivev3
+xcuserdata
 
 # Vim Swap files #
 ##################
 *.swp
+
+# PyCharm generated files #
+###########################
+.idea

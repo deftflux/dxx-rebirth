@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,17 +23,18 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-#ifndef _SEGUVS_H
-#define _SEGUVS_H
+#pragma once
 
 #ifdef __cplusplus
+#include "segment.h"
 
-struct segment;
+void assign_light_to_side(side &);
+static inline void assign_light_to_side(segment &sp, uint_fast32_t sidenum)
+{
+	assign_light_to_side(sp.sides[sidenum]);
+}
 
-extern void assign_light_to_side(segment *sp, int sidenum);
 extern void assign_default_lighting_all(void);
-extern void stretch_uvs_from_curedge(segment *segp, int side);
-
-#endif
+void stretch_uvs_from_curedge(vsegptridx_t segp, int side);
 
 #endif

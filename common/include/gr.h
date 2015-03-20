@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,14 +23,17 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-#ifndef _GR_H
-#define _GR_H
+#pragma once
 
+#include <cstdint>
+#include <memory>
 #include "pstypes.h"
 #include "maths.h"
 #include "palette.h"
 #include "dxxsconf.h"
 #include "fmtcheck.h"
+#include "pack.h"
+#include "compiler-array.h"
 
 #ifdef DXX_BUILD_DESCENT_I
 extern int HiresGFXAvailable;
@@ -91,22 +100,27 @@ struct grs_point
 #define BM_FLAG_PAGED_OUT           16  // This bitmap's data is paged out.
 #define BM_FLAG_RLE_BIG             32  // for bitmaps that RLE to > 255 per row (i.e. cockpits)
 
-struct grs_bitmap
+struct grs_bitmap : prohibit_void_ptr<grs_bitmap>
 {
-	short   bm_x,bm_y;  // Offset from parent's origin
-	short   bm_w,bm_h;  // width,height
+	uint16_t bm_x,bm_y; // Offset from parent's origin
+	uint16_t bm_w,bm_h; // width,height
 	sbyte   bm_type;    // 0=Linear, 1=ModeX, 2=SVGA
 	sbyte   bm_flags;   // bit 0 on means it has transparency.
 	                    // bit 1 on means it has supertransparency
 	                    // bit 2 on means it doesn't get passed through lighting.
 	short   bm_rowsize; // unsigned char offset to next row
-	unsigned char *     bm_data;    // ptr to pixel data...
+	union {
+		const uint8_t *bm_data;     // ptr to pixel data...
 	                                //   Linear = *parent+(rowsize*y+x)
 	                                //   ModeX = *parent+(rowsize*y+x/4)
 	                                //   SVGA = *parent+(rowsize*y+x)
+		uint8_t *bm_mdata;
+	};
+	const uint8_t *get_bitmap_data() const { return bm_data; }
+	uint8_t *get_bitmap_data() { return bm_mdata; }
 	unsigned short      bm_handle;  //for application.  initialized to 0
 	ubyte   avg_color;  //  Average color of all pixels in texture map.
-	fix avg_color_rgb[3]; // same as above but real rgb value to be used to textured objects that should emit light
+	array<fix, 3> avg_color_rgb; // same as above but real rgb value to be used to textured objects that should emit light
 	struct grs_bitmap  *bm_parent;
 #ifdef OGL
 	struct ogl_texture *gltexture;
@@ -114,7 +128,7 @@ struct grs_bitmap
 };
 
 //font structure
-struct grs_font
+struct grs_font : public prohibit_void_ptr<grs_font>
 {
 	short       ft_w;           // Width in pixels
 	short       ft_h;           // Height in pixels
@@ -124,31 +138,31 @@ struct grs_font
 	ubyte       ft_maxchar;     // Last char defined by this font
 	short       ft_bytewidth;   // Width in unsigned chars
 	ubyte     * ft_data;        // Ptr to raw data.
-	ubyte    ** ft_chars;       // Ptrs to data for each char (required for prop font)
+	std::unique_ptr<ubyte *[]>    ft_chars;       // Ptrs to data for each char (required for prop font)
 	short     * ft_widths;      // Array of widths (required for prop font)
 	ubyte     * ft_kerndata;    // Array of kerning triplet data
 #ifdef OGL
 	// These fields do not participate in disk i/o!
-	grs_bitmap *ft_bitmaps;
+	std::unique_ptr<grs_bitmap[]> ft_bitmaps;
 	grs_bitmap ft_parent_bitmap;
 #endif /* def OGL */
 };
 
 #define GRS_FONT_SIZE 28    // how much space it takes up on disk
 
-struct grs_canvas
+struct grs_canvas : prohibit_void_ptr<grs_canvas>
 {
 	grs_bitmap  cv_bitmap;      // the bitmap for this canvas
-	short       cv_color;       // current color
-	int         cv_fade_level;  // transparency level
-	ubyte       cv_blend_func;  // blending function to use
+	const grs_font *  cv_font;        // the currently selected font
+	uint8_t     cv_color;       // current color
 	short       cv_drawmode;    // fill,XOR,etc.
-	grs_font *  cv_font;        // the currently selected font
 	short       cv_font_fg_color;   // current font foreground color (-1==Invisible)
 	short       cv_font_bg_color;   // current font background color (-1==Invisible)
+	int         cv_fade_level;  // transparency level
+	ubyte       cv_blend_func;  // blending function to use
 };
 
-struct grs_screen
+struct grs_screen : prohibit_void_ptr<grs_screen>
 {    // This is a video screen
 	grs_canvas  sc_canvas;  // Represents the entire screen
 	u_int32_t     sc_mode;        // Video mode number
@@ -167,7 +181,7 @@ struct grs_screen
 
 int gr_init(int mode);
 
-int gr_list_modes( u_int32_t gsmodes[] );
+int gr_list_modes( array<uint32_t, 50> &gsmodes );
 int gr_check_mode(u_int32_t mode);
 int gr_set_mode(u_int32_t mode);
 void gr_set_attributes(void);
@@ -181,72 +195,92 @@ void gr_close(void);
 // Makes a new canvas. allocates memory for the canvas and its bitmap,
 // including the raw pixel buffer.
 
-grs_canvas *gr_create_canvas(int w, int h);
+struct grs_main_canvas : grs_canvas
+{
+	~grs_main_canvas();
+};
+typedef std::unique_ptr<grs_main_canvas> grs_canvas_ptr;
+
+grs_canvas_ptr gr_create_canvas(uint16_t w, uint16_t h);
 
 // Creates a canvas that is part of another canvas.  this can be used to make
 // a window on the screen.  the canvas structure is malloc'd; the address of
 // the raw pixel data is inherited from the parent canvas.
 
-grs_canvas *gr_create_sub_canvas(grs_canvas *canv,int x,int y,int w, int h);
+struct grs_subcanvas : grs_canvas {};
+typedef std::unique_ptr<grs_subcanvas> grs_subcanvas_ptr;
+
+grs_subcanvas_ptr gr_create_sub_canvas(grs_canvas &canv,uint16_t x,uint16_t y,uint16_t w, uint16_t h);
 
 // Initialize the specified canvas. the raw pixel data buffer is passed as
 // a parameter. no memory allocation is performed.
 
-void gr_init_canvas(grs_canvas *canv,unsigned char *pixdata,int pixtype, int w,int h);
+void gr_init_canvas(grs_canvas &canv,unsigned char *pixdata, uint8_t pixtype, uint16_t w, uint16_t h);
 
 // Initialize the specified sub canvas. no memory allocation is performed.
 
-void gr_init_sub_canvas(grs_canvas *,grs_canvas *src,int x,int y,int w, int h);
-
-// Free up the canvas and its pixel data.
-
-void gr_free_canvas(grs_canvas *canv);
-
-// Free up the canvas. do not free the pixel data, which belongs to the
-// parent canvas.
-
-void gr_free_sub_canvas(grs_canvas *canv);
+void gr_init_sub_canvas(grs_canvas &n, grs_canvas &src, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 
 // Clear the current canvas to the specified color
-void gr_clear_canvas(int color);
+void gr_clear_canvas(color_t color);
 
 //=========================================================================
 // Bitmap functions:
 
 // these are the two workhorses, the others just use these
-extern void gr_init_bitmap( grs_bitmap *bm, int mode, int x, int y, int w, int h, int bytesperline, unsigned char * data );
-extern void gr_init_sub_bitmap (grs_bitmap *bm, grs_bitmap *bmParent, int x, int y, int w, int h );
+void gr_init_bitmap(grs_bitmap &bm, uint8_t mode, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t bytesperline, unsigned char * data);
+void gr_init_sub_bitmap (grs_bitmap &bm, grs_bitmap &bmParent, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 
-extern void gr_init_bitmap_alloc( grs_bitmap *bm, int mode, int x, int y, int w, int h, int bytesperline);
-
-// Allocate a bitmap and its pixel data buffer.
-grs_bitmap *gr_create_bitmap(int w,int h);
-
-// Allocated a bitmap and makes its data be raw_data that is already somewhere.
-grs_bitmap *gr_create_bitmap_raw(int w, int h, unsigned char * raw_data );
-
-// Creates a bitmap which is part of another bitmap
-grs_bitmap *gr_create_sub_bitmap(grs_bitmap *bm,int x,int y,int w, int h);
+void gr_init_bitmap_alloc(grs_bitmap &bm, uint8_t mode, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t bytesperline);
+void gr_free_bitmap_data(grs_bitmap &bm);
 
 // Free the bitmap and its pixel data
-void gr_free_bitmap(grs_bitmap *bm);
+class grs_main_bitmap : public grs_bitmap
+{
+public:
+	grs_main_bitmap() = default;
+	grs_main_bitmap(const grs_main_bitmap &) = delete;
+	grs_main_bitmap &operator=(const grs_main_bitmap &) = delete;
+	~grs_main_bitmap()
+	{
+		gr_free_bitmap_data(*this);
+	}
+};
 
-// Free the bitmap's data
-void gr_free_bitmap_data (grs_bitmap *bm);
-void gr_init_bitmap_data (grs_bitmap *bm);
+typedef std::unique_ptr<grs_main_bitmap> grs_bitmap_ptr;
+
+// Allocate a bitmap and its pixel data buffer.
+grs_bitmap_ptr gr_create_bitmap(uint16_t w,uint16_t h);
 
 // Free the bitmap, but not the pixel data buffer
-void gr_free_sub_bitmap(grs_bitmap *bm);
+class grs_subbitmap : public grs_bitmap
+{
+};
 
-void gr_bm_pixel( grs_bitmap * bm, int x, int y, unsigned char color );
-void gr_bm_bitblt(int w, int h, int dx, int dy, int sx, int sy, grs_bitmap * src, grs_bitmap * dest);
-void gr_bm_ubitblt( int w, int h, int dx, int dy, int sx, int sy, grs_bitmap * src, grs_bitmap * dest);
-void gr_bm_ubitbltm(int w, int h, int dx, int dy, int sx, int sy, grs_bitmap * src, grs_bitmap * dest);
+typedef std::unique_ptr<grs_subbitmap> grs_subbitmap_ptr;
 
-void gr_set_bitmap_flags(grs_bitmap *pbm, int flags);
-void gr_set_transparent(grs_bitmap *pbm, int bTransparent);
-void gr_set_super_transparent(grs_bitmap *pbm, int bTransparent);
-void gr_set_bitmap_data(grs_bitmap *bm, unsigned char *data);
+// Creates a bitmap which is part of another bitmap
+grs_subbitmap_ptr gr_create_sub_bitmap(grs_bitmap &bm, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+
+// Free the bitmap's data
+void gr_init_bitmap_data (grs_bitmap &bm);
+
+void gr_bm_pixel(grs_bitmap &bm, uint_fast32_t x, uint_fast32_t y, uint8_t color );
+void gr_bm_ubitblt(unsigned w, unsigned h, int dx, int dy, int sx, int sy, const grs_bitmap &src, grs_bitmap &dest);
+void gr_bm_ubitbltm(unsigned w, unsigned h, unsigned dx, unsigned dy, unsigned sx, unsigned sy, const grs_bitmap &src, grs_bitmap &dest);
+
+static inline void gr_set_bitmap_flags(grs_bitmap &bm, uint8_t flags)
+{
+	bm.bm_flags = flags;
+}
+
+static inline void gr_set_transparent(grs_bitmap &bm, bool bTransparent)
+{
+	auto bm_flags = bm.bm_flags;
+	gr_set_bitmap_flags(bm, bTransparent ? bm_flags | BM_FLAG_TRANSPARENT : bm_flags & ~BM_FLAG_TRANSPARENT);
+}
+
+void gr_set_bitmap_data(grs_bitmap &bm, unsigned char *data);
 
 //=========================================================================
 // Color functions:
@@ -260,7 +294,7 @@ void gr_use_palette_table(const char * filename );
 // Drawing functions:
 
 // Sets the color in the current canvas.
-void gr_setcolor(int color);
+void gr_setcolor(color_t color);
 // Sets transparency and blending function
 void gr_settransblend(int fade_level, ubyte blend_func);
 
@@ -269,24 +303,24 @@ void gr_pixel(int x,int y);
 void gr_upixel(int x,int y);
 
 // Gets a pixel;
-unsigned char gr_gpixel( grs_bitmap * bitmap, int x, int y );
-unsigned char gr_ugpixel( grs_bitmap * bitmap, int x, int y );
+unsigned char gr_gpixel(const grs_bitmap &bitmap, int x, int y );
+unsigned char gr_ugpixel(const grs_bitmap &bitmap, int x, int y );
 
 // Draws a line into the current canvas in the current color and drawmode.
 int gr_line(fix x0,fix y0,fix x1,fix y1);
 int gr_uline(fix x0,fix y0,fix x1,fix y1);
 
 // Draw the bitmap into the current canvas at the specified location.
-void gr_bitmap(int x,int y,grs_bitmap *bm);
-void gr_ubitmap(int x,int y,grs_bitmap *bm);
-void show_fullscr(grs_bitmap *bm);
+void gr_bitmap(unsigned x,unsigned y,grs_bitmap &bm);
+void gr_ubitmap(grs_bitmap &bm);
+void show_fullscr(grs_bitmap &bm);
 
 // Find transparent area in bitmap
-void gr_bitblt_find_transparent_area(grs_bitmap *bm, int *minx, int *miny, int *maxx, int *maxy);
+void gr_bitblt_find_transparent_area(const grs_bitmap &bm, unsigned &minx, unsigned &miny, unsigned &maxx, unsigned &maxy);
 
 // bitmap function with transparency
-void gr_bitmapm( int x, int y, grs_bitmap *bm );
-void gr_ubitmapm( int x, int y, grs_bitmap *bm );
+void gr_bitmapm(unsigned x, unsigned y, const grs_bitmap &bm);
+void gr_ubitmapm(unsigned x, unsigned y, grs_bitmap &bm);
 
 // Draw a rectangle into the current canvas.
 void gr_rect(int left,int top,int right,int bot);
@@ -300,16 +334,26 @@ int gr_circle(fix x,fix y,fix r);
 int gr_ucircle(fix x,fix y,fix r);
 
 // Draw an unfilled rectangle into the current canvas
-void gr_box(int left,int top,int right,int bot);
+void gr_box(uint_fast32_t left,uint_fast32_t top,uint_fast32_t right,uint_fast32_t bot);
 void gr_ubox(int left,int top,int right,int bot);
 
 void gr_scanline( int x1, int x2, int y );
 void gr_uscanline( int x1, int x2, int y );
 
+void gr_close_font(std::unique_ptr<grs_font> font);
+
+struct font_delete
+{
+	void operator()(grs_font *p) const
+	{
+		gr_close_font(std::unique_ptr<grs_font>(p));
+	}
+};
+
+typedef std::unique_ptr<grs_font, font_delete> grs_font_ptr;
 
 // Reads in a font file... current font set to this one.
-grs_font * gr_init_font( const char * fontfile );
-void gr_close_font( grs_font * font );
+grs_font_ptr gr_init_font( const char * fontfile );
 
 #if defined(DXX_BUILD_DESCENT_I)
 #define DXX_SDL_WINDOW_CAPTION	"Descent"
@@ -328,7 +372,11 @@ void gr_remap_mono_fonts();
 #endif
 
 // Writes a string using current font. Returns the next column after last char.
-void gr_set_curfont( grs_font * );
+void gr_set_curfont(const grs_font *);
+static inline void gr_set_curfont(const grs_font_ptr &p)
+{
+	gr_set_curfont(p.get());
+}
 void gr_set_fontcolor( int fg_color, int bg_color );
 void gr_string(int x, int y, const char *s );
 void gr_ustring(int x, int y, const char *s );
@@ -340,14 +388,44 @@ void gr_get_string_size(const char *s, int *string_width, int *string_height, in
 
 
 // From scale.c
-void scale_bitmap(grs_bitmap *bp, grs_point *vertbuf, int orientation );
+void scale_bitmap(const grs_bitmap &bp, const array<grs_point, 3> &vertbuf, int orientation );
 
 //===========================================================================
 // Global variables
 extern grs_canvas *grd_curcanv;             //active canvas
-extern grs_screen *grd_curscreen;           //active screen
+extern std::unique_ptr<grs_screen> grd_curscreen;           //active screen
 
-extern void gr_set_current_canvas( grs_canvas *canv );
+void gr_set_default_canvas();
+void gr_set_current_canvas(grs_canvas &);
+void _gr_set_current_canvas(grs_canvas *);
+
+static inline void _gr_set_current_canvas_inline(grs_canvas *canv)
+{
+	if (canv)
+		gr_set_current_canvas(*canv);
+	else
+		gr_set_default_canvas();
+}
+
+static inline void gr_set_current_canvas(grs_canvas *canv)
+{
+#ifdef DXX_HAVE_BUILTIN_CONSTANT_P
+	if (__builtin_constant_p(!canv))
+		_gr_set_current_canvas_inline(canv);
+	else
+#endif
+		_gr_set_current_canvas(canv);
+}
+
+static inline void gr_set_current_canvas(grs_canvas_ptr &canv)
+{
+	gr_set_current_canvas(canv.get());
+}
+
+static inline void gr_set_current_canvas(grs_subcanvas_ptr &canv)
+{
+	gr_set_current_canvas(canv.get());
+}
 
 //flags for fonts
 #define FT_COLOR        1
@@ -355,7 +433,9 @@ extern void gr_set_current_canvas( grs_canvas *canv );
 #define FT_KERNED       4
 
 extern palette_array_t gr_palette;
-extern ubyte gr_fade_table[256*GR_FADE_LEVELS];
+typedef array<color_t, 256> gft_array0;
+typedef array<gft_array0, GR_FADE_LEVELS> gft_array1;
+extern gft_array1 gr_fade_table;
 extern ubyte gr_inverse_table[32*32*32];
 
 extern ushort gr_palette_selector;
@@ -376,7 +456,7 @@ void gr_remap_bitmap( grs_bitmap * bmp, palette_array_t &palette, int transparen
 
 // Same as above, but searches using gr_find_closest_color which uses
 // 18-bit accurracy instead of 15bit when translating colors.
-void gr_remap_bitmap_good( grs_bitmap * bmp, palette_array_t &palette, int transparent_color, int super_transparent_color );
+void gr_remap_bitmap_good(grs_bitmap &bmp, palette_array_t &palette, uint_fast32_t transparent_color, uint_fast32_t super_transparent_color);
 
 void gr_palette_step_up( int r, int g, int b );
 
@@ -387,7 +467,7 @@ extern void gr_bitmap_check_transparency( grs_bitmap * bmp );
 
 // Given: r,g,b, each in range of 0-63, return the color index that
 // best matches the input.
-int gr_find_closest_color( int r, int g, int b );
+color_t gr_find_closest_color( int r, int g, int b );
 int gr_find_closest_color_15bpp( int rgb );
 
 extern void gr_flip(void);
@@ -409,5 +489,3 @@ void ogl_close_pixel_buffers(void);
 void ogl_cache_polymodel_textures(int model_num);;
 
 #endif
-
-#endif /* def _GR_H */

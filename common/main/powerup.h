@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -26,6 +32,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "fmtcheck.h"
 
 #ifdef __cplusplus
+#include "fwdvalptridx.h"
 
 enum powerup_type_t
 {
@@ -111,27 +118,27 @@ enum powerup_type_t
 #define POWERUP_NAME_LENGTH 16      // Length of a robot or powerup name.
 extern char Powerup_names[MAX_POWERUP_TYPES][POWERUP_NAME_LENGTH];
 
-struct powerup_type_info
+struct powerup_type_info : public prohibit_void_ptr<powerup_type_info>
 {
 	int vclip_num;
 	int hit_sound;
 	fix size;       // 3d size of longest dimension
 	fix light;      // amount of light cast by this powerup, set in bitmaps.tbl
-} __pack__;
+};
 
-extern int N_powerup_types;
-extern powerup_type_info Powerup_info[MAX_POWERUP_TYPES];
+extern unsigned N_powerup_types;
+extern array<powerup_type_info, MAX_POWERUP_TYPES> Powerup_info;
 #else
 struct powerup_type_info;
 #endif
 
-void draw_powerup(objptridx_t obj);
+void draw_powerup(vobjptridx_t obj);
 
 //returns true if powerup consumed
-int do_powerup(objptridx_t obj);
+int do_powerup(vobjptridx_t obj);
 
 //process (animate) a powerup for one frame
-void do_powerup_frame(objptridx_t obj);
+void do_powerup_frame(vobjptridx_t obj);
 
 // Diminish shields and energy towards max in case they exceeded it.
 extern void diminish_towards_max(void);
@@ -142,10 +149,8 @@ void powerup_basic_str(int redadd, int greenadd, int blueadd, int score, const c
 extern void powerup_basic(int redadd, int greenadd, int blueadd, int score, const char *format, ...) __attribute_format_printf(5, 6);
 #define powerup_basic(A1,A2,A3,A4,F,...)	dxx_call_printf_checked(powerup_basic,powerup_basic_str,(A1,A2,A3,A4),(F),##__VA_ARGS__)
 
-/*
- * reads n powerup_type_info structs from a PHYSFS_file
- */
-extern int powerup_type_info_read_n(powerup_type_info *pti, int n, PHYSFS_file *fp);
+void powerup_type_info_read(PHYSFS_file *fp, powerup_type_info &pti);
+void powerup_type_info_write(PHYSFS_file *fp, const powerup_type_info &pti);
 
 #endif
 

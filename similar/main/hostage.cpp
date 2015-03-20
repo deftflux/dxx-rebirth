@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -39,14 +45,14 @@ int Hostage_vclip_num[MAX_HOSTAGE_TYPES];	// vclip num for each tpye of hostage
 
 
 //-------------- Renders a hostage --------------------------------------------
-void draw_hostage(object *obj)
+void draw_hostage(const vobjptridx_t obj)
 {
 	draw_object_tmap_rod(obj, Vclip[obj->rtype.vclip_info.vclip_num].frames[obj->rtype.vclip_info.framenum], 1);
 }
 
 
 //------------- Called once when a hostage is rescued -------------------------
-void hostage_rescue(int blah)
+void hostage_rescue()
 {
 	PALETTE_FLASH_ADD(0, 0, 25);		//small blue flash
 

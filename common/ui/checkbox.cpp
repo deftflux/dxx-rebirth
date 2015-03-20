@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -36,7 +42,7 @@ void ui_draw_checkbox( UI_DIALOG *dlg, UI_GADGET_CHECKBOX * checkbox )
 
 		gr_set_current_canvas( checkbox->canvas );
 
-		if (dlg->keyboard_focus_gadget == (UI_GADGET *)checkbox)
+		if (dlg->keyboard_focus_gadget == checkbox)
 			gr_set_fontcolor( CRED, -1 );
 		else
 			gr_set_fontcolor( CBLACK, -1 );
@@ -56,20 +62,18 @@ void ui_draw_checkbox( UI_DIALOG *dlg, UI_GADGET_CHECKBOX * checkbox )
 				ui_string_centered(  Middle(checkbox->width)+1, Middle(checkbox->height)+1, " " );
 		}
 
-		gr_ustring( checkbox->width+4, 2, checkbox->text );
+		gr_ustring(checkbox->width+4, 2, checkbox->text.get());
 
 	}
 }
 
 
-UI_GADGET_CHECKBOX * ui_add_gadget_checkbox( UI_DIALOG * dlg, short x, short y, short w, short h, short group, const char * text )
+std::unique_ptr<UI_GADGET_CHECKBOX> ui_add_gadget_checkbox(UI_DIALOG * dlg, short x, short y, short w, short h, short group, const char * text)
 {
-	UI_GADGET_CHECKBOX * checkbox;
-
-	checkbox = (UI_GADGET_CHECKBOX *)ui_gadget_add( dlg, 5, x, y, x+w-1, y+h-1 );
-
-	MALLOC(checkbox->text, char, strlen(text) + 5);
-	strcpy(checkbox->text,text);
+	std::unique_ptr<UI_GADGET_CHECKBOX> checkbox{ui_gadget_add<UI_GADGET_CHECKBOX>(dlg, x, y, x+w-1, y+h-1)};
+	auto ltext = strlen(text) + 1;
+	MALLOC(checkbox->text, char[], ltext + 4);
+	memcpy(checkbox->text.get(), text, ltext);
 	checkbox->width = w;
 	checkbox->height = h;
 	checkbox->position = 0;
@@ -77,29 +81,24 @@ UI_GADGET_CHECKBOX * ui_add_gadget_checkbox( UI_DIALOG * dlg, short x, short y, 
 	checkbox->pressed = 0;
 	checkbox->flag = 0;
 	checkbox->group = group;
-
 	return checkbox;
-
 }
 
-
-int ui_checkbox_do( UI_DIALOG *dlg, UI_GADGET_CHECKBOX * checkbox, d_event *event )
+window_event_result ui_checkbox_do( UI_DIALOG *dlg, UI_GADGET_CHECKBOX * checkbox,const d_event &event )
 {
-	int rval = 0;
-	
 	checkbox->oldposition = checkbox->position;
 	checkbox->pressed = 0;
 
-	if (event->type == EVENT_MOUSE_BUTTON_DOWN || event->type == EVENT_MOUSE_BUTTON_UP)
+	if (event.type == EVENT_MOUSE_BUTTON_DOWN || event.type == EVENT_MOUSE_BUTTON_UP)
 	{
 		int OnMe;
 		
-		OnMe = ui_mouse_on_gadget( (UI_GADGET *)checkbox );
+		OnMe = ui_mouse_on_gadget( checkbox );
 		
 		if (B1_JUST_PRESSED && OnMe)
 		{
 			checkbox->position = 1;
-			rval = 1;
+			return window_event_result::handled;
 		}
 		else if (B1_JUST_RELEASED)
 		{
@@ -111,19 +110,19 @@ int ui_checkbox_do( UI_DIALOG *dlg, UI_GADGET_CHECKBOX * checkbox, d_event *even
 	}
 
 
-	if (event->type == EVENT_KEY_COMMAND)
+	if (event.type == EVENT_KEY_COMMAND)
 	{
 		int key;
 		
 		key = event_key_get(event);
 		
-		if ((dlg->keyboard_focus_gadget==(UI_GADGET *)checkbox) && ((key==KEY_SPACEBAR) || (key==KEY_ENTER)) )
+		if ((dlg->keyboard_focus_gadget==checkbox) && ((key==KEY_SPACEBAR) || (key==KEY_ENTER)) )
 		{
 			checkbox->position = 2;
-			rval = 1;
+			return window_event_result::handled;
 		}
 	}
-	else if (event->type == EVENT_KEY_RELEASE)
+	else if (event.type == EVENT_KEY_RELEASE)
 	{
 		int key;
 		
@@ -131,21 +130,21 @@ int ui_checkbox_do( UI_DIALOG *dlg, UI_GADGET_CHECKBOX * checkbox, d_event *even
 		
 		checkbox->position = 0;
 		
-		if ((dlg->keyboard_focus_gadget==(UI_GADGET *)checkbox) && ((key==KEY_SPACEBAR) || (key==KEY_ENTER)) )
+		if ((dlg->keyboard_focus_gadget==checkbox) && ((key==KEY_SPACEBAR) || (key==KEY_ENTER)) )
 			checkbox->pressed = 1;
 	}
 		
 	if (checkbox->pressed == 1)
 	{
 		checkbox->flag ^= 1;
-		ui_gadget_send_event(dlg, EVENT_UI_GADGET_PRESSED, (UI_GADGET *)checkbox);
-		rval = 1;
+		ui_gadget_send_event(dlg, EVENT_UI_GADGET_PRESSED, checkbox);
+		return window_event_result::handled;
 	}
 
-	if (event->type == EVENT_WINDOW_DRAW)
+	if (event.type == EVENT_WINDOW_DRAW)
 		ui_draw_checkbox( dlg, checkbox );
 
-	return rval;
+	return window_event_result::ignored;
 }
 
 void ui_checkbox_check(UI_GADGET_CHECKBOX * checkbox, int check)

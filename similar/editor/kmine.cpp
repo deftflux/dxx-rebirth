@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -32,6 +38,7 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "kdefs.h"
 #include "info.h"
 #include "game.h"
+#include "physfsx.h"
 #include "gameseq.h"
 #include "object.h"
 
@@ -123,7 +130,7 @@ int CreateNewMine()
 		create_new_mine();
 		LargeView.ev_matrix = vmd_identity_matrix;	//FrontView.ev_matrix;
 		set_view_target_from_segment(Cursegp);
-		vm_vec_make(&Seg_scale,DEFAULT_X_SIZE,DEFAULT_Y_SIZE,DEFAULT_Z_SIZE);
+		Seg_scale = {DEFAULT_X_SIZE, DEFAULT_Y_SIZE, DEFAULT_Z_SIZE};
 		Update_flags = UF_WORLD_CHANGED;
 		SetPlayerFromCurseg();
 		SetPlayerPosition();		//say default is permanant position
@@ -185,9 +192,7 @@ static int med_load_situation(char * filename)
 //	-----------------------------------------------------------------------------
 static int med_save_situation(char * filename)
 {
-	PHYSFS_file * SaveFile;
-
-	SaveFile = PHYSFSX_openWriteBuffered( filename );
+	auto SaveFile = PHYSFSX_openWriteBuffered(filename);
 	if (!SaveFile)	{
 		char  ErrorMessage[200];
 
@@ -209,9 +214,6 @@ static int med_save_situation(char * filename)
         PHYSFSX_printf(SaveFile, "%8x %8x %8x\n",(unsigned int) ConsoleObject->orient.uvec.x,(unsigned int) ConsoleObject->orient.uvec.y,(unsigned int) ConsoleObject->orient.uvec.z);                       
         PHYSFSX_printf(SaveFile, "%8x %8x %8x\n",(unsigned int) ConsoleObject->orient.fvec.x,(unsigned int) ConsoleObject->orient.fvec.y,(unsigned int) ConsoleObject->orient.fvec.z);
 	PHYSFSX_printf(SaveFile, "%i\n", ConsoleObject->segnum);
-
-	PHYSFS_close( SaveFile);
-
 	return 1;
 }
 

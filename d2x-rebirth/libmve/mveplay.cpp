@@ -1,5 +1,12 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 //#define DEBUG
 
+#include <vector>
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
@@ -20,11 +27,7 @@
 
 #include <SDL.h>
 #ifdef USE_SDLMIXER
-#if !(defined(__APPLE__) && defined(__MACH__))
 #include <SDL_mixer.h>
-#else
-#include <SDL_mixer/SDL_mixer.h>
-#endif
 #endif
 
 #include "digi.h"
@@ -35,6 +38,9 @@
 #include "args.h"
 #include "console.h"
 #include "u_mem.h"
+
+#include "compiler-exchange.h"
+#include "compiler-make_unique.h"
 
 #define MVE_OPCODE_ENDOFSTREAM          0x00
 #define MVE_OPCODE_ENDOFCHUNK           0x01
@@ -63,38 +69,31 @@ int g_spdFactorNum=0;
 static int g_spdFactorDenom=10;
 static int g_frameUpdated = 0;
 
-static short get_short(unsigned char *data)
+static int16_t get_short(const unsigned char *data)
 {
 	short value;
 	value = data[0] | (data[1] << 8);
 	return value;
 }
 
-static unsigned short get_ushort(unsigned char *data)
+static uint16_t get_ushort(const unsigned char *data)
 {
 	unsigned short value;
 	value = data[0] | (data[1] << 8);
 	return value;
 }
 
-static int get_int(unsigned char *data)
+static int32_t get_int(const unsigned char *data)
 {
 	int value;
 	value = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
 	return value;
 }
 
-static int default_seg_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
-{
-	//con_printf(CON_CRITICAL, "unknown chunk type %02x/%02x", major, minor);
-	return 1;
-}
-
-
 /*************************
  * general handlers
  *************************/
-static int end_movie_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int end_movie_handler(unsigned char, unsigned char, const unsigned char *, int, void *)
 {
 	return 0;
 }
@@ -148,7 +147,7 @@ int gettimeofday(struct timeval *tv, void *tz)
 #endif //  defined(_WIN32) || defined(macintosh)
 
 
-static int create_timer_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int create_timer_handler(unsigned char, unsigned char, const unsigned char *data, int, void *)
 {
 
 #if !defined(_WIN32) && !defined(macintosh) // FIXME
@@ -240,9 +239,18 @@ static void do_timer_wait(void)
  *************************/
 #define TOTAL_AUDIO_BUFFERS 64
 
+class MVE_audio_deleter
+{
+public:
+	void operator()(int16_t *p) const
+	{
+		mve_free(p);
+	}
+};
+
 static int audiobuf_created = 0;
 static void mve_audio_callback(void *userdata, unsigned char *stream, int len);
-static short *mve_audio_buffers[TOTAL_AUDIO_BUFFERS];
+static array<std::unique_ptr<short[], MVE_audio_deleter>, TOTAL_AUDIO_BUFFERS> mve_audio_buffers;
 static int    mve_audio_buflens[TOTAL_AUDIO_BUFFERS];
 static int    mve_audio_curbuf_curpos=0;
 static int mve_audio_bufhead=0;
@@ -251,9 +259,9 @@ static int mve_audio_playing=0;
 static int mve_audio_canplay=0;
 static int mve_audio_compressed=0;
 static int mve_audio_enabled = 1;
-static SDL_AudioSpec *mve_audio_spec=NULL;
+static std::unique_ptr<SDL_AudioSpec> mve_audio_spec;
 
-static void mve_audio_callback(void *userdata, unsigned char *stream, int len)
+static void mve_audio_callback(void *, unsigned char *stream, int len)
 {
 	int total=0;
 	int length;
@@ -267,14 +275,13 @@ static void mve_audio_callback(void *userdata, unsigned char *stream, int len)
 	{
 		length = mve_audio_buflens[mve_audio_bufhead]-mve_audio_curbuf_curpos;
 		memcpy(stream,                                                                  /* cur output position */
-		       ((unsigned char *)mve_audio_buffers[mve_audio_bufhead])+mve_audio_curbuf_curpos,           /* cur input position  */
+		       (reinterpret_cast<uint8_t *>(mve_audio_buffers[mve_audio_bufhead].get()))+mve_audio_curbuf_curpos,           /* cur input position  */
 		       length);                                                                 /* cur input length    */
 
 		total += length;
 		stream += length;                                                               /* advance output */
 		len -= length;                                                                  /* decrement avail ospace */
-		mve_free(mve_audio_buffers[mve_audio_bufhead]);                                 /* free the buffer */
-		mve_audio_buffers[mve_audio_bufhead]=NULL;                                      /* free the buffer */
+		mve_audio_buffers[mve_audio_bufhead].reset();                                 /* free the buffer */
 		mve_audio_buflens[mve_audio_bufhead]=0;                                         /* free the buffer */
 
 		if (++mve_audio_bufhead == TOTAL_AUDIO_BUFFERS)                                 /* next buffer */
@@ -289,7 +296,7 @@ static void mve_audio_callback(void *userdata, unsigned char *stream, int len)
 		&&  mve_audio_bufhead != mve_audio_buftail)                                     /* buffers remaining */
 	{
 		memcpy(stream,                                                                  /* dest */
-			   ((unsigned char *)mve_audio_buffers[mve_audio_bufhead]) + mve_audio_curbuf_curpos,         /* src */
+		       (reinterpret_cast<uint8_t *>(mve_audio_buffers[mve_audio_bufhead].get()))+mve_audio_curbuf_curpos,         /* src */
 			   len);                                                                    /* length */
 
 		mve_audio_curbuf_curpos += len;                                                 /* advance input */
@@ -298,8 +305,7 @@ static void mve_audio_callback(void *userdata, unsigned char *stream, int len)
 
 		if (mve_audio_curbuf_curpos >= mve_audio_buflens[mve_audio_bufhead])            /* if this ends the current chunk */
 		{
-			mve_free(mve_audio_buffers[mve_audio_bufhead]);                             /* free buffer */
-			mve_audio_buffers[mve_audio_bufhead]=NULL;
+			mve_audio_buffers[mve_audio_bufhead].reset();                             /* free buffer */
 			mve_audio_buflens[mve_audio_bufhead]=0;
 
 			if (++mve_audio_bufhead == TOTAL_AUDIO_BUFFERS)                             /* next buffer */
@@ -311,7 +317,7 @@ static void mve_audio_callback(void *userdata, unsigned char *stream, int len)
 	//con_printf(CON_CRITICAL, "- <%d (%d), %d, %d>", mve_audio_bufhead, mve_audio_curbuf_curpos, mve_audio_buftail, len);
 }
 
-static int create_audiobuf_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int create_audiobuf_handler(unsigned char, unsigned char minor, const unsigned char *data, int, void *)
 {
 	int flags;
 	int sample_rate;
@@ -356,16 +362,14 @@ static int create_audiobuf_handler(unsigned char major, unsigned char minor, uns
 		format = AUDIO_U8;
 	}
 
-#ifdef USE_SDLMIXER
 	if (GameArg.SndDisableSdlMixer)
-#endif
 	{
 		con_printf(CON_CRITICAL, "creating audio buffers:");
 		con_printf(CON_CRITICAL, "sample rate = %d, desired buffer = %d, stereo = %d, bitsize = %d, compressed = %d",
 				sample_rate, desired_buffer, stereo, bitsize ? 16 : 8, compressed);
 	}
 
-	mve_audio_spec = (SDL_AudioSpec *)mve_alloc(sizeof(SDL_AudioSpec));
+	mve_audio_spec = make_unique<SDL_AudioSpec>();
 	mve_audio_spec->freq = sample_rate;
 	mve_audio_spec->format = format;
 	mve_audio_spec->channels = (stereo) ? 2 : 1;
@@ -374,11 +378,9 @@ static int create_audiobuf_handler(unsigned char major, unsigned char minor, uns
 	mve_audio_spec->userdata = NULL;
 
 	// MD2211: if using SDL_Mixer, we never reinit the sound system
-#ifdef USE_SDLMIXER
 	if (GameArg.SndDisableSdlMixer)
-#endif
 	{
-		if (SDL_OpenAudio(mve_audio_spec, NULL) >= 0) {
+		if (SDL_OpenAudio(mve_audio_spec.get(), NULL) >= 0) {
 			con_printf(CON_CRITICAL, "   success");
 			mve_audio_canplay = 1;
 		}
@@ -396,19 +398,17 @@ static int create_audiobuf_handler(unsigned char major, unsigned char minor, uns
 	}
 #endif
 
-	memset(mve_audio_buffers, 0, sizeof(mve_audio_buffers));
+	mve_audio_buffers = {};
 	memset(mve_audio_buflens, 0, sizeof(mve_audio_buflens));
 
 	return 1;
 }
 
-static int play_audio_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int play_audio_handler(unsigned char, unsigned char, const unsigned char *, int, void *)
 {
 	if (mve_audio_canplay  &&  !mve_audio_playing  &&  mve_audio_bufhead != mve_audio_buftail)
 	{
-#ifdef USE_SDLMIXER
 		if (GameArg.SndDisableSdlMixer)
-#endif
 			SDL_PauseAudio(0);
 #ifdef USE_SDLMIXER
 		else
@@ -419,7 +419,7 @@ static int play_audio_handler(unsigned char major, unsigned char minor, unsigned
 	return 1;
 }
 
-static int audio_data_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int audio_data_handler(unsigned char major, unsigned char, const unsigned char *data, int, void *)
 {
 
 #ifdef USE_SDLMIXER
@@ -450,21 +450,21 @@ static int audio_data_handler(unsigned char major, unsigned char minor, unsigned
 					nsamp += 4;
 
 					mve_audio_buflens[mve_audio_buftail] = nsamp;
-					mve_audio_buffers[mve_audio_buftail] = (short *)mve_alloc(nsamp);
-					mveaudio_uncompress(mve_audio_buffers[mve_audio_buftail], data, -1); /* XXX */
+					mve_audio_buffers[mve_audio_buftail].reset((short *)mve_alloc(nsamp));
+					mveaudio_uncompress(mve_audio_buffers[mve_audio_buftail].get(), data, -1); /* XXX */
 				} else {
 					nsamp -= 8;
 					data += 8;
 
 					mve_audio_buflens[mve_audio_buftail] = nsamp;
-					mve_audio_buffers[mve_audio_buftail] = (short *)mve_alloc(nsamp);
-					memcpy(mve_audio_buffers[mve_audio_buftail], data, nsamp);
+					mve_audio_buffers[mve_audio_buftail].reset((short *)mve_alloc(nsamp));
+					memcpy(mve_audio_buffers[mve_audio_buftail].get(), data, nsamp);
 				}
 			} else {
 				mve_audio_buflens[mve_audio_buftail] = nsamp;
-				mve_audio_buffers[mve_audio_buftail] = (short *)mve_alloc(nsamp);
+				mve_audio_buffers[mve_audio_buftail].reset((short *)mve_alloc(nsamp));
 
-				memset(mve_audio_buffers[mve_audio_buftail], 0, nsamp); /* XXX */
+				memset(mve_audio_buffers[mve_audio_buftail].get(), 0, nsamp); /* XXX */
 			}
 
 			// MD2211: the following block does on-the-fly audio conversion for SDL_mixer
@@ -477,22 +477,21 @@ static int audio_data_handler(unsigned char major, unsigned char minor, unsigned
 					out_format, out_channels, out_freq);
 
 				clen = nsamp * cvt.len_mult;
-				RAIIdmem<Uint8> cvtbuf;
-				MALLOC(cvtbuf, Uint8, clen);
-				cvt.buf = cvtbuf;
+				RAIIdmem<uint8_t[]> cvtbuf;
+				MALLOC(cvtbuf, uint8_t[], clen);
+				cvt.buf = cvtbuf.get();
 				cvt.len = nsamp;
 
 				// read the audio buffer into the conversion buffer
-				memcpy(cvt.buf, mve_audio_buffers[mve_audio_buftail], nsamp);
+				memcpy(cvt.buf, mve_audio_buffers[mve_audio_buftail].get(), nsamp);
 
 				// do the conversion
 				if (SDL_ConvertAudio(&cvt)) con_printf(CON_DEBUG,"audio conversion failed!");
 
 				// copy back to the audio buffer
-				mve_free(mve_audio_buffers[mve_audio_buftail]); // free the old audio buffer
+				mve_audio_buffers[mve_audio_buftail].reset((short *)mve_alloc(clen)); // free the old audio buffer
 				mve_audio_buflens[mve_audio_buftail] = clen;
-				mve_audio_buffers[mve_audio_buftail] = (short *)mve_alloc(clen);
-				memcpy(mve_audio_buffers[mve_audio_buftail], cvt.buf, clen);
+				memcpy(mve_audio_buffers[mve_audio_buftail].get(), cvt.buf, clen);
 			}
 #endif
 
@@ -517,16 +516,16 @@ static int audio_data_handler(unsigned char major, unsigned char minor, unsigned
 static int videobuf_created = 0;
 static int video_initialized = 0;
 int g_width, g_height;
-static unsigned char *g_vBuffers;
+static std::vector<unsigned char> g_vBuffers;
 unsigned char *g_vBackBuf1, *g_vBackBuf2;
 
 static int g_destX, g_destY;
 static int g_screenWidth, g_screenHeight;
-static unsigned char *g_pCurMap=NULL;
+static const unsigned char *g_pCurMap;
 static int g_nMapLength=0;
 static int g_truecolor;
 
-static int create_videobuf_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int create_videobuf_handler(unsigned char, unsigned char minor, const unsigned char *data, int, void *)
 {
 	short w, h,
 #ifdef DEBUG
@@ -561,16 +560,13 @@ static int create_videobuf_handler(unsigned char major, unsigned char minor, uns
 
 	/* TODO: * 4 causes crashes on some files */
 	/* only malloc once */
-	if (g_vBuffers == NULL)
-		g_vBackBuf1 = g_vBuffers = (unsigned char *)mve_alloc(g_width * g_height * 8);
+	g_vBuffers.assign(g_width * g_height * 8, 0);
+	g_vBackBuf1 = &g_vBuffers[0];
 	if (truecolor) {
 		g_vBackBuf2 = (unsigned char *)((unsigned short *)g_vBackBuf1) + (g_width * g_height);
 	} else {
 		g_vBackBuf2 = (g_vBackBuf1 + (g_width * g_height));
 	}
-
-	memset(g_vBackBuf1, 0, g_width * g_height * 4);
-
 #ifdef DEBUG
 	con_printf(CON_CRITICAL, "DEBUG: w,h=%d,%d count=%d, tc=%d", w, h, count, truecolor);
 #endif
@@ -580,7 +576,7 @@ static int create_videobuf_handler(unsigned char major, unsigned char minor, uns
 	return 1;
 }
 
-static int display_video_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int display_video_handler(unsigned char, unsigned char, const unsigned char *, int, void *)
 {
 	mve_showframe(g_vBackBuf1, g_destX, g_destY, g_width, g_height, g_screenWidth, g_screenHeight);
 
@@ -589,7 +585,7 @@ static int display_video_handler(unsigned char major, unsigned char minor, unsig
 	return 1;
 }
 
-static int init_video_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int init_video_handler(unsigned char, unsigned char, const unsigned char *data, int, void *)
 {
 	short width, height;
 
@@ -606,29 +602,25 @@ static int init_video_handler(unsigned char major, unsigned char minor, unsigned
 	return 1;
 }
 
-static int video_palette_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int video_palette_handler(unsigned char, unsigned char, const unsigned char *data, int, void *)
 {
 	short start, count;
-	unsigned char *p;
-
 	start = get_short(data);
 	count = get_short(data+2);
 
-	p = data + 4;
-
+	auto p = data + 4;
 	mve_setpalette(p - 3*start, start, count);
-
 	return 1;
 }
 
-static int video_codemap_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int video_codemap_handler(unsigned char, unsigned char, const unsigned char *data, int len, void *)
 {
 	g_pCurMap = data;
 	g_nMapLength = len;
 	return 1;
 }
 
-static int video_data_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int video_data_handler(unsigned char, unsigned char, const unsigned char *data, int len, void *)
 {
 	unsigned short nFlags;
 	unsigned char *temp;
@@ -651,7 +643,7 @@ static int video_data_handler(unsigned char major, unsigned char minor, unsigned
 
 	/* convert the frame */
 	if (g_truecolor) {
-		decodeFrame16((unsigned char *)g_vBackBuf1, g_pCurMap, g_nMapLength, data+14, len-14);
+		decodeFrame16(g_vBackBuf1, g_pCurMap, g_nMapLength, data+14, len-14);
 	} else {
 		decodeFrame8(g_vBackBuf1, g_pCurMap, g_nMapLength, data+14, len-14);
 	}
@@ -659,14 +651,11 @@ static int video_data_handler(unsigned char major, unsigned char minor, unsigned
 	return 1;
 }
 
-static int end_chunk_handler(unsigned char major, unsigned char minor, unsigned char *data, int len, void *context)
+static int end_chunk_handler(unsigned char, unsigned char, const unsigned char *, int, void *)
 {
 	g_pCurMap=NULL;
 	return 1;
 }
-
-
-static MVESTREAM *mve = NULL;
 
 void MVE_ioCallbacks(mve_cb_Read io_read)
 {
@@ -689,26 +678,22 @@ void MVE_palCallbacks(mve_cb_SetPalette setpalette)
 	mve_setpalette = setpalette;
 }
 
-int MVE_rmPrepMovie(void *src, int x, int y, int track)
+int MVE_rmPrepMovie(MVESTREAM_ptr_t &pMovie, void *src, int x, int y, int)
 {
-	int i;
-
-	if (mve) {
-		mve_reset(mve);
+	if (pMovie) {
+		mve_reset(pMovie.get());
 		return 0;
 	}
 
-	mve = mve_open(src);
+	pMovie = mve_open(src);
 
-	if (!mve)
+	if (!pMovie)
 		return 1;
 
 	g_destX = x;
 	g_destY = y;
 
-	for (i = 0; i < 32; i++)
-		mve_set_handler(mve, i, default_seg_handler);
-
+	auto mve = pMovie.get();
 	mve_set_handler(mve, MVE_OPCODE_ENDOFSTREAM,          end_movie_handler);
 	mve_set_handler(mve, MVE_OPCODE_ENDOFCHUNK,           end_chunk_handler);
 	mve_set_handler(mve, MVE_OPCODE_CREATETIMER,          create_timer_handler);
@@ -722,8 +707,6 @@ int MVE_rmPrepMovie(void *src, int x, int y, int track)
 	mve_set_handler(mve, MVE_OPCODE_INITVIDEOMODE,        init_video_handler);
 
 	mve_set_handler(mve, MVE_OPCODE_SETPALETTE,           video_palette_handler);
-	mve_set_handler(mve, MVE_OPCODE_SETPALETTECOMPRESSED, default_seg_handler);
-
 	mve_set_handler(mve, MVE_OPCODE_SETDECODINGMAP,       video_codemap_handler);
 
 	mve_set_handler(mve, MVE_OPCODE_VIDEODATA,            video_data_handler);
@@ -745,7 +728,7 @@ void MVE_getVideoSpec(MVE_videoSpec *vSpec)
 }
 
 
-int MVE_rmStepMovie()
+int MVE_rmStepMovie(MVESTREAM *const mve)
 {
 	static int init_timer=0;
 	int cont=1;
@@ -770,28 +753,20 @@ int MVE_rmStepMovie()
 	return 0;
 }
 
-void MVE_rmEndMovie()
+void MVE_rmEndMovie(std::unique_ptr<MVESTREAM>)
 {
-	int i;
-
 	timer_stop();
 	timer_created = 0;
 
 	if (mve_audio_canplay) {
 		// MD2211: if using SDL_Mixer, we never reinit sound, hence never close it
-#ifdef USE_SDLMIXER
 		if (GameArg.SndDisableSdlMixer)
-#endif
 		{
 			SDL_CloseAudio();
 		}
 		mve_audio_canplay = 0;
 	}
-	for (i = 0; i < TOTAL_AUDIO_BUFFERS; i++)
-		if (mve_audio_buffers[i] != NULL)
-			mve_free(mve_audio_buffers[i]);
-
-	memset(mve_audio_buffers, 0, sizeof(mve_audio_buffers));
+	mve_audio_buffers = {};
 	memset(mve_audio_buflens, 0, sizeof(mve_audio_buflens));
 
 	mve_audio_curbuf_curpos=0;
@@ -801,20 +776,13 @@ void MVE_rmEndMovie()
 	mve_audio_canplay=0;
 	mve_audio_compressed=0;
 
-	if (mve_audio_spec)
-		mve_free(mve_audio_spec);
-	mve_audio_spec=NULL;
+	mve_audio_spec.reset();
 	audiobuf_created = 0;
-
-	mve_free(g_vBuffers);
-	g_vBuffers = NULL;
+	g_vBuffers.clear();
 	g_pCurMap=NULL;
 	g_nMapLength=0;
 	videobuf_created = 0;
 	video_initialized = 0;
-
-	mve_close(mve);
-	mve = NULL;
 }
 
 

@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * OGL video functions. - Added 9/15/99 Matthew Mueller
  *
@@ -65,6 +71,8 @@
 #include <GL/glu.h>
 #endif
 #endif
+
+#include "compiler-make_unique.h"
 
 using std::max;
 
@@ -136,7 +144,7 @@ void ogl_swap_buffers_internal(void)
 #define ELEMENT_CHANGE_MASK_RESOURCE  (1<<4)
 #define ELEMENT_CHANGE_TRANSFORM      (1<<5)
 
-void rpi_destroy_element(void)
+static void rpi_destroy_element()
 {
 	if (dispman_element != DISPMANX_NO_HANDLE) {
 		DISPMANX_UPDATE_HANDLE_T dispman_update;
@@ -150,7 +158,7 @@ void rpi_destroy_element(void)
 	}
 }
 
-int rpi_setup_element(int x, int y, Uint32 video_flags, int update)
+static int rpi_setup_element(int x, int y, Uint32 video_flags, int update)
 {
 	// this code is based on the work of Ben O'Steen
 	// http://benosteen.wordpress.com/2012/04/27/using-opengl-es-2-0-on-the-raspberry-pi-without-x-windows/
@@ -261,7 +269,7 @@ int rpi_setup_element(int x, int y, Uint32 video_flags, int update)
 #endif // RPI
 
 #ifdef OGLES
-void ogles_destroy(void)
+static void ogles_destroy()
 {
 	if( eglDisplay != EGL_NO_DISPLAY ) {
 		eglMakeCurrent(eglDisplay, NULL, NULL, EGL_NO_CONTEXT);
@@ -567,10 +575,10 @@ static void ogl_get_verinfo(void)
 }
 
 // returns possible (fullscreen) resolutions if any.
-int gr_list_modes( u_int32_t gsmodes[] )
+int gr_list_modes( array<uint32_t, 50> &gsmodes )
 {
 	SDL_Rect** modes;
-	int i = 0, modesnum = 0;
+	int modesnum = 0;
 #ifdef OGLES
 	int sdl_check_flags = SDL_FULLSCREEN; // always use Fullscreen as lead.
 #else
@@ -594,7 +602,7 @@ int gr_list_modes( u_int32_t gsmodes[] )
 	}
 	else
 	{
-		for (i = 0; modes[i]; ++i)
+		for (int i = 0; modes[i]; ++i)
 		{
 			if (modes[i]->w > 0xFFF0 || modes[i]->h > 0xFFF0 // resolutions saved in 32bits. so skip bigger ones (unrealistic in 2010) (changed to 0xFFF0 to fix warning)
 				|| modes[i]->w < 320 || modes[i]->h < 200) // also skip everything smaller than 320x200
@@ -642,16 +650,16 @@ int gr_set_mode(u_int32_t mode)
 		Game_screen_mode=mode=SM(w,h);
 	}
 
-	gr_bm_data=grd_curscreen->sc_canvas.cv_bitmap.bm_data;//since we use realloc, we want to keep this pointer around.
+	gr_bm_data = grd_curscreen->sc_canvas.cv_bitmap.get_bitmap_data();//since we use realloc, we want to keep this pointer around.
 	unsigned char *gr_new_bm_data = (unsigned char *)d_realloc(gr_bm_data,w*h);
 	if (!gr_new_bm_data)
 		return 0;
-	memset( grd_curscreen, 0, sizeof(grs_screen));
+	*grd_curscreen = {};
 	grd_curscreen->sc_mode = mode;
 	grd_curscreen->sc_w = w;
 	grd_curscreen->sc_h = h;
 	grd_curscreen->sc_aspect = fixdiv(grd_curscreen->sc_w*GameCfg.AspectX,grd_curscreen->sc_h*GameCfg.AspectY);
-	gr_init_canvas(&grd_curscreen->sc_canvas, gr_new_bm_data, BM_OGL, w, h);
+	gr_init_canvas(grd_curscreen->sc_canvas, gr_new_bm_data, BM_OGL, w, h);
 	gr_set_current_canvas(NULL);
 
 	ogl_init_window(w,h);//platform specific code
@@ -763,7 +771,7 @@ int gr_init(int mode)
 
 	ogl_init_texture_list_internal();
 
-	CALLOC( grd_curscreen,grs_screen,1 );
+	grd_curscreen = make_unique<grs_screen, grs_screen>({});
 	grd_curscreen->sc_canvas.cv_bitmap.bm_data = NULL;
 
 	// Set the mode.
@@ -797,9 +805,9 @@ void gr_close()
 
 	if (grd_curscreen)
 	{
-		if (grd_curscreen->sc_canvas.cv_bitmap.bm_data)
-			d_free(grd_curscreen->sc_canvas.cv_bitmap.bm_data);
-		d_free(grd_curscreen);
+		if (grd_curscreen->sc_canvas.cv_bitmap.bm_mdata)
+			d_free(grd_curscreen->sc_canvas.cv_bitmap.bm_mdata);
+		grd_curscreen.reset();
 	}
 	ogl_close_pixel_buffers();
 #ifdef _WIN32
@@ -846,7 +854,7 @@ void ogl_upixelc(int x, int y, int c)
 	glDisableClientState(GL_COLOR_ARRAY);
 }
 
-unsigned char ogl_ugpixel( grs_bitmap * bitmap, int x, int y )
+unsigned char ogl_ugpixel(const grs_bitmap &bitmap, unsigned x, unsigned y)
 {
 	GLint gl_draw_buffer;
 	ubyte buf[4];
@@ -856,7 +864,7 @@ unsigned char ogl_ugpixel( grs_bitmap * bitmap, int x, int y )
 	glReadBuffer(gl_draw_buffer);
 #endif
 
-	glReadPixels(bitmap->bm_x + x, SHEIGHT - bitmap->bm_y - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+	glReadPixels(bitmap.bm_x + x, SHEIGHT - bitmap.bm_y - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, buf);
 	
 	return gr_find_closest_color(buf[0]/4, buf[1]/4, buf[2]/4);
 }
@@ -1027,24 +1035,22 @@ struct TGA_header
 //if we got really spiffy, we could optionally link in libpng or something, and use that.
 static void write_bmp(char *savename,unsigned w,unsigned h)
 {
-	PHYSFS_file* TGAFile;
 	TGA_header TGA;
 	GLbyte HeightH,HeightL,WidthH,WidthL;
-	unsigned int pixel;
+	RAIIdmem<uint8_t[]> buf;
+	CALLOC(buf, uint8_t[], w*h*4);
 
-	RAIIdubyte buf;
-	CALLOC( buf,unsigned char, w*h*4);
-
-	RAIIdubyte rgbaBuf;
-	CALLOC(rgbaBuf, unsigned char, w * h * 4);
-	glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgbaBuf);
-	for(pixel = 0; pixel < w * h; pixel++) {
-		*(buf + pixel * 3) = *(rgbaBuf + pixel * 4 + 2);
-		*(buf + pixel * 3 + 1) = *(rgbaBuf + pixel * 4 + 1);
-		*(buf + pixel * 3 + 2) = *(rgbaBuf + pixel * 4);
+	RAIIdmem<uint8_t[]> rgbaBuf;
+	CALLOC(rgbaBuf, uint8_t[], w * h * 4);
+	glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgbaBuf.get());
+	for(unsigned int pixel = 0; pixel < w * h; pixel++) {
+		buf[pixel * 3] = rgbaBuf[pixel * 4 + 2];
+		buf[pixel * 3 + 1] = rgbaBuf[pixel * 4 + 1];
+		buf[pixel * 3 + 2] = rgbaBuf[pixel * 4];
 	}
 
-	if (!(TGAFile = PHYSFSX_openWriteBuffered(savename)))
+	auto TGAFile = PHYSFSX_openWriteBuffered(savename);
+	if (!TGAFile)
 	{
 		con_printf(CON_URGENT,"Could not create TGA file to dump screenshot!");
 		return;
@@ -1075,7 +1081,6 @@ static void write_bmp(char *savename,unsigned w,unsigned h)
 	TGA.header[5] = 0;
 	PHYSFS_write(TGAFile,&TGA,sizeof(TGA_header),1);
 	PHYSFS_write(TGAFile,buf,w*h*3*sizeof(unsigned char),1);
-	PHYSFS_close(TGAFile);
 }
 
 void save_screen_shot(int automap_flag)

@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -32,6 +38,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "gamemine.h"
 #include "dxxerror.h"
 #include "gameseg.h"
+#include "physfsx.h"
 #include "switch.h"
 #include "game.h"
 #include "newmenu.h"
@@ -43,8 +50,12 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "hash.h"
 #include "key.h"
 #include "piggy.h"
-#include "byteswap.h"
+#include "byteutil.h"
 #include "gamesave.h"
+#include "poison.h"
+#include "compiler-range_for.h"
+#include "highest_valid.h"
+#include "partial_range.h"
 
 #define REMOVE_EXT(s)  (*(strchr( (s), '.' ))='\0')
 
@@ -54,7 +65,7 @@ int New_file_format_load = 1; // "new file format" is everything newer than d1 s
 typedef segment v16_segment;
 #elif defined(DXX_BUILD_DESCENT_II)
 fix Level_shake_frequency = 0, Level_shake_duration = 0;
-int Secret_return_segment = 0;
+segnum_t Secret_return_segment;
 vms_matrix Secret_return_orient;
 
 struct v16_segment {
@@ -382,17 +393,12 @@ struct me mine_editor;
 int load_mine_data(PHYSFS_file *LoadFile)
 {
 	char old_tmap_list[MAX_TEXTURES][FILENAME_LEN];
-	short tmap_times_used[MAX_TEXTURES];
-	int   i, j;
 	short tmap_xlate;
 	int 	translate;
 	char 	*temptr;
 	int	mine_start = PHYSFS_tell(LoadFile);
 
 	fuelcen_reset();
-
-	for (i=0; i < sizeof(tmap_times_used)/sizeof(tmap_times_used[0]); i++ )
-		tmap_times_used[i] = 0;
 
 	#ifdef EDITOR
 	// Create a new mine to initialize things.
@@ -451,12 +457,12 @@ int load_mine_data(PHYSFS_file *LoadFile)
 
 	mine_fileinfo.segment2_offset		= -1;
 	mine_fileinfo.segment2_howmany	= 0;
-	mine_fileinfo.segment2_sizeof    = sizeof(segment2);
+	mine_fileinfo.segment2_sizeof    = 0;
 #endif
 
 	// Read in mine_top_fileinfo to get size of saved fileinfo.
 	
-	memset( &mine_top_fileinfo, 0, sizeof(mine_top_fileinfo) );
+	mine_top_fileinfo = {};
 
 	if (PHYSFSX_fseek( LoadFile, mine_start, SEEK_SET ))
 		Error( "Error moving to top of file in gamemine.c" );
@@ -482,7 +488,7 @@ int load_mine_data(PHYSFS_file *LoadFile)
 	if (mine_top_fileinfo.fileinfo_version < 18) {
 		Level_shake_frequency = 0;
 		Level_shake_duration = 0;
-		Secret_return_segment = 0;
+		Secret_return_segment = segment_first;
 		Secret_return_orient = vmd_identity_matrix;
 	} else {
 		Level_shake_frequency = mine_fileinfo.level_shake_frequency << 12;
@@ -533,7 +539,7 @@ int load_mine_data(PHYSFS_file *LoadFile)
 		if (PHYSFSX_fseek( LoadFile, mine_fileinfo.texture_offset, SEEK_SET ))
 			Error( "Error seeking to texture_offset in gamemine.c" );
 
-		for (i=0; i< mine_fileinfo.texture_howmany; i++ )
+		for (int i=0; i< mine_fileinfo.texture_howmany; i++ )
 		{
 			if (PHYSFS_read( LoadFile, &old_tmap_list[i], mine_fileinfo.texture_sizeof, 1 )!=1)
 				Error( "Error reading old_tmap_list[i] in gamemine.c" );
@@ -548,20 +554,17 @@ int load_mine_data(PHYSFS_file *LoadFile)
 
 	{
 		hashtable ht;
-	
-		hashtable_init( &ht, NumTextures );
-	
 		// Remove all the file extensions in the textures list
 	
-		for (i=0;i<NumTextures;i++)	{
-			temptr = strchr(TmapInfo[i].filename, '.');
+		for (uint_fast32_t i = 0; i < NumTextures;i++)	{
+			temptr = strchr(&TmapInfo[i].filename[0u], '.');
 			if (temptr) *temptr = '\0';
-			hashtable_insert( &ht, TmapInfo[i].filename, i );
+			hashtable_insert( &ht, &TmapInfo[i].filename[0u], i );
 		}
 	
 		// For every texture, search through the texture list
 		// to find a matching name.
-		for (j=0;j<mine_fileinfo.texture_howmany;j++) 	{
+		for (int j=0;j<mine_fileinfo.texture_howmany;j++) {
 			// Remove this texture name's extension
 			temptr = strchr(old_tmap_list[j], '.');
 			if (temptr) *temptr = '\0';
@@ -571,18 +574,7 @@ int load_mine_data(PHYSFS_file *LoadFile)
 				;
 			}
 			if (tmap_xlate_table[j] != j ) translate = 1;
-			if (tmap_xlate_table[j] >= 0)
-				tmap_times_used[tmap_xlate_table[j]]++;
 		}
-	
-		{
-			int count = 0;
-			for (i=0; i<MAX_TEXTURES; i++ )
-				if (tmap_times_used[i])
-					count++;
-		}
-	
-		hashtable_free( &ht );
 	}
 
 	//====================== READ VERTEX INFO ==========================
@@ -596,7 +588,7 @@ int load_mine_data(PHYSFS_file *LoadFile)
 		if (PHYSFSX_fseek( LoadFile, mine_fileinfo.vertex_offset, SEEK_SET ))
 			Error( "Error seeking to vertex_offset in gamemine.c" );
 
-		for (i=0; i< mine_fileinfo.vertex_howmany; i++ )
+		for (int i=0; i< mine_fileinfo.vertex_howmany; i++ )
 		{
 			// Set the default values for this vertex
 			Vertices[i].x = 1;
@@ -628,7 +620,7 @@ int load_mine_data(PHYSFS_file *LoadFile)
 
 		Highest_segment_index = mine_fileinfo.segment_howmany-1;
 
-		for (i=0; i< mine_fileinfo.segment_howmany; i++ ) {
+		for (int i=0; i< mine_fileinfo.segment_howmany; i++ ) {
 
 			// Set the default values for this segment (clear to zero )
 			//memset( &Segments[i], 0, sizeof(segment) );
@@ -658,22 +650,22 @@ int load_mine_data(PHYSFS_file *LoadFile)
 				// -- Segments[i].pad = v16_seg.pad;
 				#endif
 
-				for (j=0; j<MAX_SIDES_PER_SEGMENT; j++)
+				for (int j=0; j<MAX_SIDES_PER_SEGMENT; j++)
 					Segments[i].sides[j] = v16_seg.sides[j];
 
-				for (j=0; j<MAX_SIDES_PER_SEGMENT; j++)
+				for (int j=0; j<MAX_SIDES_PER_SEGMENT; j++)
 					Segments[i].children[j] = v16_seg.children[j];
 
-				for (j=0; j<MAX_VERTICES_PER_SEGMENT; j++)
+				for (int j=0; j<MAX_VERTICES_PER_SEGMENT; j++)
 					Segments[i].verts[j] = v16_seg.verts[j];
 
-				Segment2s[i].special = v16_seg.special;
-				Segment2s[i].value = v16_seg.value;
-				Segment2s[i].s2_flags = 0;
-				Segment2s[i].matcen_num = v16_seg.matcen_num;
-				Segment2s[i].static_light = v16_seg.static_light;
+				Segments[i].special = v16_seg.special;
+				Segments[i].value = v16_seg.value;
+				Segments[i].s2_flags = 0;
+				Segments[i].matcen_num = v16_seg.matcen_num;
+				Segments[i].static_light = v16_seg.static_light;
 #endif
-				fuelcen_activate( &Segments[i], Segment2s[i].special );
+				fuelcen_activate( &Segments[i], Segments[i].special );
 			}
 			else 
 				Error("Invalid mine version");
@@ -684,11 +676,12 @@ int load_mine_data(PHYSFS_file *LoadFile)
 			#endif
 
 			if (translate == 1)
-				for (j=0;j<MAX_SIDES_PER_SEGMENT;j++) {
+				for (int j=0;j<MAX_SIDES_PER_SEGMENT;j++) {
 					unsigned short orient;
 					tmap_xlate = Segments[i].sides[j].tmap_num;
 					Segments[i].sides[j].tmap_num = tmap_xlate_table[tmap_xlate];
-					if ((WALL_IS_DOORWAY(&Segments[i],j) & WID_RENDER_FLAG))
+					auto render = (WALL_IS_DOORWAY(&Segments[i],j) & WID_RENDER_FLAG);
+					if (render)
 						if (Segments[i].sides[j].tmap_num < 0)	{
 							Int3();
 							Segments[i].sides[j].tmap_num = NumTextures-1;
@@ -698,7 +691,7 @@ int load_mine_data(PHYSFS_file *LoadFile)
 					if (tmap_xlate != 0) {
 						int xlated_tmap = tmap_xlate_table[tmap_xlate];
 
-						if ((WALL_IS_DOORWAY(&Segments[i],j) & WID_RENDER_FLAG))
+						if (render)
 							if (xlated_tmap <= 0)	{
 								Int3();
 								Segments[i].sides[j].tmap_num2 = NumTextures-1;
@@ -710,9 +703,10 @@ int load_mine_data(PHYSFS_file *LoadFile)
 
 #if defined(DXX_BUILD_DESCENT_II)
 		if (mine_top_fileinfo.fileinfo_version >= 20)
-			for (i=0; i<=Highest_segment_index; i++) {
-				PHYSFS_read(LoadFile, &Segment2s[i], sizeof(segment2), 1);
-				fuelcen_activate( &Segments[i], Segment2s[i].special );
+			range_for (const auto i, highest_valid(Segments))
+			{
+				segment2_read(&Segments[i], LoadFile);
+				fuelcen_activate( &Segments[i], Segments[i].special );
 			}
 #endif
 	}
@@ -722,8 +716,7 @@ int load_mine_data(PHYSFS_file *LoadFile)
 	#ifdef EDITOR
 
 	{		// Default segment created.
-		vms_vector	sizevec;
-		med_create_new_segment(vm_vec_make(&sizevec,DEFAULT_X_SIZE,DEFAULT_Y_SIZE,DEFAULT_Z_SIZE));		// New_segment = Segments[0];
+		med_create_new_segment({DEFAULT_X_SIZE, DEFAULT_Y_SIZE, DEFAULT_Z_SIZE});		// New_segment = Segments[0];
 		//memset( &New_segment, 0, sizeof(segment) );
 	}
 
@@ -739,7 +732,7 @@ int load_mine_data(PHYSFS_file *LoadFile)
 	{
 		if (PHYSFSX_fseek( LoadFile, mine_fileinfo.newseg_verts_offset, SEEK_SET ))
 			Error( "Error seeking to newseg_verts_offset in gamemine.c" );
-		for (i=0; i< mine_fileinfo.newseg_verts_howmany; i++ )
+		for (int i=0; i< mine_fileinfo.newseg_verts_howmany; i++ )
 		{
 			// Set the default values for this vertex
 			Vertices[NEW_SEGMENT_VERTICES+i].x = 1;
@@ -764,7 +757,7 @@ int load_mine_data(PHYSFS_file *LoadFile)
 	
  	Markedside = mine_editor.Markedside;
 	Curside = mine_editor.Curside;
-	for (i=0;i<10;i++)
+	for (int i=0;i<10;i++)
 		Groupside[i] = mine_editor.Groupside[i];
 
 	if ( mine_editor.current_seg != -1 )
@@ -817,39 +810,36 @@ int load_mine_data(PHYSFS_file *LoadFile)
 
 #define COMPILED_MINE_VERSION 0
 
-static void read_children(int segnum,ubyte bit_mask,PHYSFS_file *LoadFile)
+static void read_children(const vsegptr_t segp,ubyte bit_mask,PHYSFS_file *LoadFile)
 {
-	int bit;
-
-	for (bit=0; bit<MAX_SIDES_PER_SEGMENT; bit++) {
+	for (int bit=0; bit<MAX_SIDES_PER_SEGMENT; bit++) {
 		if (bit_mask & (1 << bit)) {
-			Segments[segnum].children[bit] = PHYSFSX_readShort(LoadFile);
+			segp->children[bit] = PHYSFSX_readShort(LoadFile);
 		} else
-			Segments[segnum].children[bit] = segment_none;
+			segp->children[bit] = segment_none;
 	}
 }
 
-static void read_verts(int segnum,PHYSFS_file *LoadFile)
+static void read_verts(const vsegptr_t segp,PHYSFS_file *LoadFile)
 {
-	int i;
 	// Read short Segments[segnum].verts[MAX_VERTICES_PER_SEGMENT]
-	for (i = 0; i < MAX_VERTICES_PER_SEGMENT; i++)
-		Segments[segnum].verts[i] = PHYSFSX_readShort(LoadFile);
+	range_for (auto &i, segp->verts)
+		i = PHYSFSX_readShort(LoadFile);
 }
 
-static void read_special(int segnum,ubyte bit_mask,PHYSFS_file *LoadFile)
+static void read_special(const vsegptr_t segp,ubyte bit_mask,PHYSFS_file *LoadFile)
 {
 	if (bit_mask & (1 << MAX_SIDES_PER_SEGMENT)) {
 		// Read ubyte	Segments[segnum].special
-		Segments[segnum].special = PHYSFSX_readByte(LoadFile);
+		segp->special = PHYSFSX_readByte(LoadFile);
 		// Read byte	Segments[segnum].matcen_num
-		Segments[segnum].matcen_num = PHYSFSX_readByte(LoadFile);
+		segp->matcen_num = PHYSFSX_readByte(LoadFile);
 		// Read short	Segments[segnum].value
-		Segments[segnum].value = PHYSFSX_readShort(LoadFile);
+		segp->value = PHYSFSX_readShort(LoadFile);
 	} else {
-		Segments[segnum].special = 0;
-		Segments[segnum].matcen_num = -1;
-		Segments[segnum].value = 0;
+		segp->special = 0;
+		segp->matcen_num = -1;
+		segp->value = 0;
 	}
 }
 
@@ -857,7 +847,7 @@ static void read_special(int segnum,ubyte bit_mask,PHYSFS_file *LoadFile)
 /*
  * reads a segment2 structure from a PHYSFS_file
  */
-static void segment2_read(segment *s2, PHYSFS_file *fp)
+static void segment2_read(const vsegptr_t s2, PHYSFS_file *fp)
 {
 	s2->special = PHYSFSX_readByte(fp);
 	if (s2->special >= MAX_CENTER_TYPES)
@@ -871,7 +861,6 @@ static void segment2_read(segment *s2, PHYSFS_file *fp)
 
 int load_mine_data_compiled(PHYSFS_file *LoadFile)
 {
-	int     i, segnum, sidenum;
 	ubyte   compiled_version;
 	short   temp_short;
 	ushort  temp_ushort = 0;
@@ -891,7 +880,7 @@ int load_mine_data_compiled(PHYSFS_file *LoadFile)
 	// Although in a cloud of arrogant glee, he forgot to ifdef it on EDITOR!
 	// (Matt told me to write that!)
 #ifdef EDITOR
-	for (i=0; i<MAX_TEXTURES; i++)
+	for (int i=0; i<MAX_TEXTURES; i++)
 		tmap_xlate_table[i] = i;
 #endif
 
@@ -902,6 +891,7 @@ int load_mine_data_compiled(PHYSFS_file *LoadFile)
 	compiled_version = PHYSFSX_readByte(LoadFile);
 	(void)compiled_version;
 
+	DXX_MAKE_MEM_UNDEFINED(Vertices.begin(), Vertices.end());
 	if (New_file_format_load)
 		Num_vertices = PHYSFSX_readShort(LoadFile);
 	else
@@ -914,14 +904,16 @@ int load_mine_data_compiled(PHYSFS_file *LoadFile)
 		Num_segments = PHYSFSX_readInt(LoadFile);
 	Assert( Num_segments <= MAX_SEGMENTS );
 
-	for (i = 0; i < Num_vertices; i++)
-		PHYSFSX_readVector( &(Vertices[i]), LoadFile);
+	range_for (auto &i, partial_range(Vertices, Num_vertices))
+		PHYSFSX_readVector(LoadFile, i);
 
-	for (segnum=0; segnum<Num_segments; segnum++ )	{
+	DXX_MAKE_MEM_UNDEFINED(Segments.begin(), Segments.end());
+	for (segnum_t segnum=0; segnum < Num_segments; segnum++ )	{
+		const auto segp = vsegptr(segnum);
 
 		#ifdef EDITOR
-		Segments[segnum].segnum = segnum;
-		Segments[segnum].group = 0;
+		segp->segnum = segnum;
+		segp->group = 0;
 		#endif
 
 		if (New_file_format_load)
@@ -930,101 +922,96 @@ int load_mine_data_compiled(PHYSFS_file *LoadFile)
 			bit_mask = 0x7f; // read all six children and special stuff...
 
 		if (Gamesave_current_version == 5) { // d2 SHAREWARE level
-			read_special(segnum,bit_mask,LoadFile);
-			read_verts(segnum,LoadFile);
-			read_children(segnum,bit_mask,LoadFile);
+			read_special(segp,bit_mask,LoadFile);
+			read_verts(segp,LoadFile);
+			read_children(segp,bit_mask,LoadFile);
 		} else {
-			read_children(segnum,bit_mask,LoadFile);
-			read_verts(segnum,LoadFile);
+			read_children(segp,bit_mask,LoadFile);
+			read_verts(segp,LoadFile);
 			if (Gamesave_current_version <= 1) { // descent 1 level
-				read_special(segnum,bit_mask,LoadFile);
+				read_special(segp,bit_mask,LoadFile);
 			}
 		}
 
-		Segments[segnum].objects = object_none;
+		segp->objects = object_none;
 
 		if (Gamesave_current_version <= 5) { // descent 1 thru d2 SHAREWARE level
 			// Read fix	Segments[segnum].static_light (shift down 5 bits, write as short)
 			temp_ushort = PHYSFSX_readShort(LoadFile);
-			Segments[segnum].static_light	= ((fix)temp_ushort) << 4;
+			segp->static_light	= ((fix)temp_ushort) << 4;
 			//PHYSFS_read( LoadFile, &Segments[segnum].static_light, sizeof(fix), 1 );
 		}
 
 		// Read the walls as a 6 byte array
-		for (sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++ )	{
-			Segments[segnum].sides[sidenum].pad = 0;
-		}
-
 		if (New_file_format_load)
 			bit_mask = PHYSFSX_readByte(LoadFile);
 		else
 			bit_mask = 0x3f; // read all six sides
-		for (sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++) {
+		for (int sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++) {
 			ubyte byte_wallnum;
 
 			if (bit_mask & (1 << sidenum)) {
 				byte_wallnum = PHYSFSX_readByte(LoadFile);
 				if ( byte_wallnum == 255 )
-					Segments[segnum].sides[sidenum].wall_num = -1;
+					segp->sides[sidenum].wall_num = wall_none;
 				else
-					Segments[segnum].sides[sidenum].wall_num = byte_wallnum;
+					segp->sides[sidenum].wall_num = byte_wallnum;
 			} else
-					Segments[segnum].sides[sidenum].wall_num = -1;
+					segp->sides[sidenum].wall_num = wall_none;
 		}
 
-		for (sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++ )	{
-
-			if ( (Segments[segnum].children[sidenum]==segment_none) || (Segments[segnum].sides[sidenum].wall_num!=-1) )	{
+		for (int sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++ ) {
+			if (segp->children[sidenum] == segment_none || segp->sides[sidenum].wall_num != wall_none)	{
 				// Read short Segments[segnum].sides[sidenum].tmap_num;
 				temp_ushort = PHYSFSX_readShort(LoadFile);
 #if defined(DXX_BUILD_DESCENT_I)
-				Segments[segnum].sides[sidenum].tmap_num = convert_tmap(temp_ushort & 0x7fff);
+				segp->sides[sidenum].tmap_num = convert_tmap(temp_ushort & 0x7fff);
 
 				if (New_file_format_load && !(temp_ushort & 0x8000))
-					Segments[segnum].sides[sidenum].tmap_num2 = 0;
+					segp->sides[sidenum].tmap_num2 = 0;
 				else {
 					// Read short Segments[segnum].sides[sidenum].tmap_num2;
-					Segments[segnum].sides[sidenum].tmap_num2 = PHYSFSX_readShort(LoadFile);
-					Segments[segnum].sides[sidenum].tmap_num2 =
-						(convert_tmap(Segments[segnum].sides[sidenum].tmap_num2 & 0x3fff)) |
-						(Segments[segnum].sides[sidenum].tmap_num2 & 0xc000);
+					segp->sides[sidenum].tmap_num2 = PHYSFSX_readShort(LoadFile);
+					segp->sides[sidenum].tmap_num2 =
+						(convert_tmap(segp->sides[sidenum].tmap_num2 & 0x3fff)) |
+						(segp->sides[sidenum].tmap_num2 & 0xc000);
 				}
 #elif defined(DXX_BUILD_DESCENT_II)
 				if (New_file_format_load) {
-					Segments[segnum].sides[sidenum].tmap_num = temp_ushort & 0x7fff;
+					segp->sides[sidenum].tmap_num = temp_ushort & 0x7fff;
 				} else
-					Segments[segnum].sides[sidenum].tmap_num = temp_ushort;
+					segp->sides[sidenum].tmap_num = temp_ushort;
 
 				if (Gamesave_current_version <= 1)
-					Segments[segnum].sides[sidenum].tmap_num = convert_d1_tmap_num(Segments[segnum].sides[sidenum].tmap_num);
+					segp->sides[sidenum].tmap_num = convert_d1_tmap_num(segp->sides[sidenum].tmap_num);
 
 				if (New_file_format_load && !(temp_ushort & 0x8000))
-					Segments[segnum].sides[sidenum].tmap_num2 = 0;
+					segp->sides[sidenum].tmap_num2 = 0;
 				else {
 					// Read short Segments[segnum].sides[sidenum].tmap_num2;
-					Segments[segnum].sides[sidenum].tmap_num2 = PHYSFSX_readShort(LoadFile);
-					if (Gamesave_current_version <= 1 && Segments[segnum].sides[sidenum].tmap_num2 != 0)
-						Segments[segnum].sides[sidenum].tmap_num2 = convert_d1_tmap_num(Segments[segnum].sides[sidenum].tmap_num2);
+					segp->sides[sidenum].tmap_num2 = PHYSFSX_readShort(LoadFile);
+					if (Gamesave_current_version <= 1 && segp->sides[sidenum].tmap_num2 != 0)
+						segp->sides[sidenum].tmap_num2 = convert_d1_tmap_num(segp->sides[sidenum].tmap_num2);
 				}
 #endif
 
 				// Read uvl Segments[segnum].sides[sidenum].uvls[4] (u,v>>5, write as short, l>>1 write as short)
-				for (i=0; i<4; i++ )	{
+				range_for (auto &i, segp->sides[sidenum].uvls) {
 					temp_short = PHYSFSX_readShort(LoadFile);
-					Segments[segnum].sides[sidenum].uvls[i].u = ((fix)temp_short) << 5;
+					i.u = ((fix)temp_short) << 5;
 					temp_short = PHYSFSX_readShort(LoadFile);
-					Segments[segnum].sides[sidenum].uvls[i].v = ((fix)temp_short) << 5;
+					i.v = ((fix)temp_short) << 5;
 					temp_ushort = PHYSFSX_readShort(LoadFile);
-					Segments[segnum].sides[sidenum].uvls[i].l = ((fix)temp_ushort) << 1;
-					//PHYSFS_read( LoadFile, &Segments[segnum].sides[sidenum].uvls[i].l, sizeof(fix), 1 );
+					i.l = ((fix)temp_ushort) << 1;
+					//PHYSFS_read( LoadFile, &i.l, sizeof(fix), 1 );
 				}
 			} else {
-				Segments[segnum].sides[sidenum].tmap_num = 0;
-				Segments[segnum].sides[sidenum].tmap_num2 = 0;
-				for (i=0; i<4; i++ )	{
-					Segments[segnum].sides[sidenum].uvls[i].u = 0;
-					Segments[segnum].sides[sidenum].uvls[i].v = 0;
-					Segments[segnum].sides[sidenum].uvls[i].l = 0;
+				segp->sides[sidenum].tmap_num = 0;
+				segp->sides[sidenum].tmap_num2 = 0;
+				range_for (auto &i, segp->sides[sidenum].uvls) {
+					i.u = 0;
+					i.v = 0;
+					i.l = 0;
 				}
 			}
 		}
@@ -1035,10 +1022,10 @@ int load_mine_data_compiled(PHYSFS_file *LoadFile)
 
 	validate_segment_all();			// Fill in side type and normals.
 
-	for (i=0; i<Num_segments; i++) {
+	range_for (auto &i, partial_range(Segments, Num_segments)) {
 		if (Gamesave_current_version > 5)
-			segment2_read(&Segments[i], LoadFile);
-		fuelcen_activate( &Segments[i], Segments[i].special );
+			segment2_read(&i, LoadFile);
+		fuelcen_activate( &i, i.special );
 	}
 
 	reset_objects(1);		//one object, the player

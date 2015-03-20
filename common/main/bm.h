@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,13 +23,16 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-#ifndef _BM_H
-#define _BM_H
+#pragma once
 
-#include "gr.h"
-#include "piggy.h"
+#include <physfs.h>
+#include "inferno.h"
+
+struct bitmap_index;
 
 #ifdef __cplusplus
+
+struct grs_bitmap;
 
 #if defined(DXX_BUILD_DESCENT_I)
 #define MAX_TEXTURES		800
@@ -42,32 +51,30 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #endif
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
-struct tmap_info
+struct tmap_info : prohibit_void_ptr<tmap_info>
 {
 #if defined(DXX_BUILD_DESCENT_I)
-	char			filename[13];
+	d_fname filename;
 	ubyte			flags;
 	fix			lighting;		// 0 to 1
 	fix			damage;			//how much damage being against this does
 	int			eclip_num;		//if not -1, the eclip that changes this   
 #define N_COCKPIT_BITMAPS 4
 #elif defined(DXX_BUILD_DESCENT_II)
-	ubyte   flags;     //values defined above
-	ubyte   pad[3];    //keep alignment
 	fix     lighting;  //how much light this casts
 	fix     damage;    //how much damage being against this does (for lava)
 	short   eclip_num; //the eclip that changes this, or -1
 	short   destroyed; //bitmap to show when destroyed, or -1
 	short   slide_u,slide_v;    //slide rates of texture, stored in 8:8 fix
+	ubyte   flags;     //values defined above
 	#ifdef EDITOR
-	char    filename[13];       //used by editor to remap textures
-	char    pad2[3];
+	d_fname filename;       //used by editor to remap textures
 	#endif
 
 #define TMAP_INFO_SIZE 20   // how much space it takes up on disk
 #define N_COCKPIT_BITMAPS 6
 #endif
-} __pack__;
+};
 
 extern int Num_object_types;
 
@@ -76,13 +83,12 @@ struct player_ship;
 //adding an array and setting the pointer to the active ship.
 extern struct player_ship only_player_ship;
 static struct player_ship *const Player_ship=&only_player_ship;
-extern int Num_cockpits;
-extern bitmap_index cockpit_bitmap[N_COCKPIT_BITMAPS];
+extern unsigned Num_cockpits;
+extern array<bitmap_index, N_COCKPIT_BITMAPS> cockpit_bitmap;
 extern short tmap_xlate_table[MAX_TEXTURES];
 
-extern int Num_tmaps;
-
-extern tmap_info TmapInfo[MAX_TEXTURES];
+extern unsigned Num_tmaps;
+extern array<tmap_info, MAX_TEXTURES> TmapInfo;
 
 // Initializes the palette, bitmap system...
 void gamedata_close();
@@ -123,10 +129,10 @@ extern int extra_bitmap_num;
 
 extern int  Num_object_subtypes;     // Number of possible IDs for the current type of object to be placed
 
-extern bitmap_index ObjBitmaps[MAX_OBJ_BITMAPS];
+extern array<bitmap_index, MAX_OBJ_BITMAPS> ObjBitmaps;
 extern ushort ObjBitmapPtrs[MAX_OBJ_BITMAPS];
 extern int First_multi_bitmap_num;
-void compute_average_rgb(grs_bitmap *bm, fix *rgb);
+void compute_average_rgb(grs_bitmap *bm, array<fix, 3> &rgb);
 #endif
 
 // Initializes all bitmaps from BITMAPS.TBL file.
@@ -135,15 +141,22 @@ int gamedata_read_tbl(int pc_shareware);
 extern void bm_read_all(PHYSFS_file * fp);
 
 int load_exit_models();
-void load_robot_replacements(char *level_name);
+void load_robot_replacements(const d_fname &level_name);
 void bm_read_extra_robots(const char *fname,int type);
 #if defined(DXX_BUILD_DESCENT_I)
 void properties_read_cmp(PHYSFS_file * fp);
 #endif
 int ds_load(int skip, const char * filename );
 int compute_average_pixel(grs_bitmap *n);
-void bm_write_all(PHYSFS_file *fp);
 
+#if defined(DXX_BUILD_DESCENT_II)
+//these values are the number of each item in the release of d2
+//extra items added after the release get written in an additional hamfile
+static const unsigned N_D2_ROBOT_TYPES = 66;
+static const unsigned N_D2_ROBOT_JOINTS = 1145;
+static const unsigned N_D2_OBJBITMAPS = 422;
+static const unsigned N_D2_OBJBITMAPPTRS = 502;
+static const unsigned N_D2_WEAPON_TYPES = 62;
 #endif
 
-#endif /* _BM_H */
+#endif

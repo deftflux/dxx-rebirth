@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -21,11 +27,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "physfsx.h"
 #include "pstypes.h"
 #include "dxxerror.h"
 #include "args.h"
 #include "console.h"
+#include "u_mem.h"
 
 #define MEMSTATS 0
 #define FULL_MEM_CHECKING 1
@@ -58,11 +64,9 @@ int out_of_memory = 0;
 
 void mem_init()
 {
-	int i;
-
 	Initialized = 1;
 
-	for (i=0; i<MAX_INDEX; i++ )
+	for (int i=0; i<MAX_INDEX; i++ )
 	{
 		free_list[i] = i;
 		MallocBase[i] = 0;
@@ -85,9 +89,9 @@ static void PrintInfo( int id )
 }
 
 
-void * mem_malloc( unsigned int size, const char * var, const char * filename, unsigned line)
+void *mem_malloc(size_t size, const char * var, const char * filename, unsigned line)
 {
-	int i, id;
+	int id;
 	void *ptr;
 	char * pc;
 
@@ -148,7 +152,7 @@ void * mem_malloc( unsigned int size, const char * var, const char * filename, u
 
 	BytesMalloced += size;
 
-	for (i=0; i<CHECKSIZE; i++ )
+	for (int i=0; i<CHECKSIZE; i++ )
 		pc[size+i] = CHECKBYTE;
 
 	return ptr;
@@ -171,9 +175,7 @@ void *(mem_calloc)( size_t nmemb, size_t size, const char * var, const char * fi
 
 static int mem_find_id( void * buffer )
 {
-	int i;
-
-	for (i=0; i<=LargestIndex; i++ )
+	for (int i=0; i<=LargestIndex; i++ )
 	  if (Present[i]==1)
 	    if (MallocBase[i] == buffer )
 	      return i;
@@ -184,14 +186,14 @@ static int mem_find_id( void * buffer )
 
 static int mem_check_integrity( int block_number )
 {
-	int i, ErrorCount;
+	int ErrorCount;
 	ubyte * CheckData;
 
 	CheckData = (ubyte *)((char *)MallocBase[block_number] + MallocSize[block_number]);
 
 	ErrorCount = 0;
 			
-	for (i=0; i<CHECKSIZE; i++ )
+	for (int i=0; i<CHECKSIZE; i++ )
 		if (CheckData[i] != CHECKBYTE ) {
 			ErrorCount++;
 			con_printf(CON_CRITICAL, "OA: %p ", &CheckData[i] );
@@ -260,7 +262,7 @@ void mem_free( void * buffer )
 	free_list[ --num_blocks ] = id;
 }
 
-void *mem_realloc(void * buffer, unsigned int size, const char * var, const char * filename, int line)
+void *mem_realloc(void *buffer, size_t size, const char *var, const char *filename, unsigned line)
 {
 	void *newbuffer;
 	int id;
@@ -288,7 +290,7 @@ void *mem_realloc(void * buffer, unsigned int size, const char * var, const char
 
 void mem_display_blocks()
 {
-	int i, numleft;
+	int numleft;
 
 	if (Initialized==0) return;
 	
@@ -309,7 +311,7 @@ void mem_display_blocks()
 #endif	// end of ifdef memstats
 
 	numleft = 0;
-	for (i=0; i<=LargestIndex; i++ )
+	for (int i=0; i<=LargestIndex; i++ )
 	{
 		if (Present[i]==1 &&  (!out_of_memory))
 		{
@@ -331,9 +333,7 @@ void mem_display_blocks()
 
 void mem_validate_heap()
 {
-	int i;
-	
-	for (i=0; i<LargestIndex; i++  )
+	for (int i=0; i<LargestIndex; i++  )
 		if (Present[i]==1 )
 			mem_check_integrity( i );
 }

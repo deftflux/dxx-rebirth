@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,18 +23,13 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-
-#ifndef _TEXTURES_H
-#define _TEXTURES_H
+#pragma once
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 #include "bm.h"
-#include "piggy.h"
 
 // Texture stuff... in mglobal.c
 
-extern int NumTextures;
-extern bitmap_index Textures[MAX_TEXTURES]; // Array of all texture tmaps.
+extern unsigned NumTextures;
+extern array<bitmap_index, MAX_TEXTURES> Textures; // Array of all texture tmaps.
 #endif
-
-#endif /* _TEXTURES_H */

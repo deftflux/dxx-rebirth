@@ -1,7 +1,14 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  * Load custom textures & robot data
  */
 
+#include <memory>
 #include <string.h>
 #include "gr.h"
 #include "pstypes.h"
@@ -13,6 +20,12 @@
 #include "hash.h"
 #include "u_mem.h"
 #include "custom.h"
+#include "physfsx.h"
+
+#include "compiler-begin.h"
+#include "compiler-make_unique.h"
+#include "compiler-range_for.h"
+#include "partial_range.h"
 
 //#define D2TMAP_CONV // used for testing
 
@@ -64,36 +77,15 @@ struct custom_info
 static grs_bitmap BitmapOriginal[MAX_BITMAP_FILES];
 static struct snd_info SoundOriginal[MAX_SOUND_FILES];
 
-static void change_ext(char *filename, const char *newext, int filename_size)
-{
-	char *p;
-	int len, extlen;
-	len = strlen(filename);
-	extlen = strlen(newext);
-
-	if ((p = strrchr(filename, '.')))
-	{
-		len = p - filename;
-		*p = 0;
-	}
-
-	if (len + extlen + 1 < filename_size)
-	{
-		strcat(filename, ".");
-		strcat(filename, newext);
-	}
-}
-
-static int load_pig1(PHYSFS_file *f, int num_bitmaps, int num_sounds, int *num_custom, RAIIdmem<custom_info> *ci)
+static int load_pig1(PHYSFS_file *f, unsigned num_bitmaps, unsigned num_sounds, unsigned &num_custom, std::unique_ptr<custom_info[]> &ci)
 {
 	int data_ofs;
 	int i;
-	struct custom_info *cip;
 	DiskBitmapHeader bmh;
 	DiskSoundHeader sndh;
 	char name[15];
 
-	*num_custom = 0;
+	num_custom = 0;
 
 	if ((unsigned int)num_bitmaps <= MAX_BITMAP_FILES) // <v1.4 pig?
 	{
@@ -112,10 +104,8 @@ static int load_pig1(PHYSFS_file *f, int num_bitmaps, int num_sounds, int *num_c
 
 	if ((unsigned int)num_bitmaps >= MAX_BITMAP_FILES || (unsigned int)num_sounds >= MAX_SOUND_FILES)
 		return -1; // invalid pig file
-
-	if (!(*ci = MALLOC(cip, struct custom_info, (num_bitmaps + num_sounds))))
-		return -1; // out of memory
-
+	ci = make_unique<custom_info[]>(num_bitmaps + num_sounds);
+	custom_info *cip = ci.get();
 	data_ofs += num_bitmaps * sizeof(DiskBitmapHeader) + num_sounds * sizeof(DiskSoundHeader);
 	i = num_bitmaps;
 
@@ -123,7 +113,6 @@ static int load_pig1(PHYSFS_file *f, int num_bitmaps, int num_sounds, int *num_c
 	{
 		if (PHYSFS_read(f, &bmh, sizeof(DiskBitmapHeader), 1) < 1)
 		{
-			d_free(*ci);
 			return -1;
 		}
 
@@ -143,7 +132,6 @@ static int load_pig1(PHYSFS_file *f, int num_bitmaps, int num_sounds, int *num_c
 	{
 		if (PHYSFS_read(f, &sndh, sizeof(DiskSoundHeader), 1) < 1)
 		{
-			d_free(*ci);
 			return -1;
 		}
 
@@ -155,18 +143,17 @@ static int load_pig1(PHYSFS_file *f, int num_bitmaps, int num_sounds, int *num_c
 		cip++;
 	}
 
-	*num_custom = num_bitmaps + num_sounds;
+	num_custom = num_bitmaps + num_sounds;
 
 	return 0;
 }
 
-static int load_pog(PHYSFS_file *f, int pog_sig, int pog_ver, int *num_custom, RAIIdmem<custom_info> *ci)
+static int load_pog(PHYSFS_file *f, int pog_sig, int pog_ver, unsigned &num_custom, std::unique_ptr<custom_info[]> &ci)
 {
 	int data_ofs;
 	int num_bitmaps;
 	int no_repl = 0;
 	int i;
-	struct custom_info *cip;
 	DiskBitmapHeader2 bmh;
 
 #ifdef D2TMAP_CONV
@@ -183,7 +170,7 @@ static int load_pog(PHYSFS_file *f, int pog_sig, int pog_ver, int *num_custom, R
 	}
 #endif
 
-	*num_custom = 0;
+	num_custom = 0;
 
 	if (pog_sig == 0x47495050 && pog_ver == 2) /* PPIG */
 		no_repl = 1;
@@ -191,10 +178,8 @@ static int load_pog(PHYSFS_file *f, int pog_sig, int pog_ver, int *num_custom, R
 		return -1; // no pig2/pog file/unknown version
 
 	num_bitmaps = PHYSFSX_readInt(f);
-
-	if (!(*ci = MALLOC(cip, struct custom_info, num_bitmaps)))
-		return -1; // out of memory
-
+	ci = make_unique<custom_info[]>(num_bitmaps);
+	custom_info *cip = ci.get();
 	data_ofs = 12 + num_bitmaps * sizeof(DiskBitmapHeader2);
 
 	if (!no_repl)
@@ -204,7 +189,7 @@ static int load_pog(PHYSFS_file *f, int pog_sig, int pog_ver, int *num_custom, R
 		while (i--)
 			(cip++)->repl_idx = PHYSFSX_readShort(f);
 
-		cip = *ci;
+		cip = ci.get();
 		data_ofs += num_bitmaps * 2;
 	}
 
@@ -230,7 +215,6 @@ static int load_pog(PHYSFS_file *f, int pog_sig, int pog_ver, int *num_custom, R
 	{
 		if (PHYSFS_read(f, &bmh, sizeof(DiskBitmapHeader2), 1) < 1)
 		{
-			d_free(*ci);
 			return -1;
 		}
 
@@ -241,38 +225,36 @@ static int load_pog(PHYSFS_file *f, int pog_sig, int pog_ver, int *num_custom, R
 		cip++;
 	}
 
-	*num_custom = num_bitmaps;
+	num_custom = num_bitmaps;
 
 	return 0;
 }
 
 // load custom textures/sounds from pog/pig file
 // returns 0 if ok, <0 on error
-static int load_pigpog(const char *pogname)
+static int load_pigpog(const d_fname &pogname)
 {
-	int num_custom;
+	unsigned num_custom;
 	grs_bitmap *bmp;
 	digi_sound *snd;
 	ubyte *p;
-	PHYSFS_file *f;
-	struct custom_info *cip;
+	auto f = PHYSFSX_openReadBuffered(pogname);
 	int i, j, rc = -1;
 	unsigned int x = 0;
 
-	if (!(f = PHYSFSX_openReadBuffered(pogname)))
+	if (!f)
 		return -1; // pog file doesn't exist
 
 	i = PHYSFSX_readInt(f);
 	x = PHYSFSX_readInt(f);
 
-	RAIIdmem<custom_info> custom_info;
-	if (load_pog(f, i, x, &num_custom, &custom_info) && load_pig1(f, i, x, &num_custom, &custom_info))
+	std::unique_ptr<custom_info[]> ci;
+	if (load_pog(f, i, x, num_custom, ci) && load_pig1(f, i, x, num_custom, ci))
 	{
-		PHYSFS_close(f);
 		return rc;
 	}
 
-	cip = custom_info;
+	custom_info *cip = ci.get();
 	i = num_custom;
 
 	while (i--)
@@ -289,14 +271,13 @@ static int load_pigpog(const char *pogname)
 
 			if (!MALLOC(p, ubyte, j))
 			{
-				PHYSFS_close(f);
 				return rc;
 			}
 
 			bmp = &GameBitmaps[x];
 
 			if (BitmapOriginal[x].bm_flags & 0x80) // already customized?
-				gr_free_bitmap_data(bmp);
+				gr_free_bitmap_data(*bmp);
 			else
 			{
 				// save original bitmap info
@@ -310,9 +291,9 @@ static int load_pigpog(const char *pogname)
 			}
 
 			GameBitmapOffset[x] = 0; // not in pig
-			memset(bmp, 0, sizeof(*bmp));
-			gr_init_bitmap (bmp, 0, 0, 0, cip->width, cip->height, cip->width, p);
-			gr_set_bitmap_flags(bmp, cip->flags & 255);
+			*bmp = {};
+			gr_init_bitmap(*bmp, 0, 0, 0, cip->width, cip->height, cip->width, p);
+			gr_set_bitmap_flags(*bmp, cip->flags & 255);
 			bmp->avg_color = cip->flags >> 8;
 
 			if ( cip->flags & BM_FLAG_RLE )
@@ -325,7 +306,6 @@ static int load_pigpog(const char *pogname)
 
 			if (PHYSFS_read(f, p, 1, j) < 1)
 			{
-				PHYSFS_close(f);
 				return rc;
 			}
 
@@ -338,7 +318,6 @@ static int load_pigpog(const char *pogname)
 			j = cip->width;
 			if (!MALLOC(p, ubyte, j))
 			{
-				PHYSFS_close(f);
 				return rc;
 			}
 
@@ -363,16 +342,12 @@ static int load_pigpog(const char *pogname)
 
 			if (PHYSFS_read(f, p, j, 1) < 1)
 			{
-				PHYSFS_close(f);
 				return rc;
 			}
 		}
 		cip++;
 	}
 	rc = 0;
-
-	PHYSFS_close(f);
-
 	return rc;
 }
 
@@ -383,7 +358,7 @@ static int read_d2_robot_info(PHYSFS_file *fp, robot_info *ri)
 	ri->model_num = PHYSFSX_readInt(fp);
 
 	for (j = 0; j < MAX_GUNS; j++)
-		PHYSFSX_readVector(&ri->gun_points[j], fp);
+		PHYSFSX_readVector(fp, ri->gun_points[j]);
 	for (j = 0; j < MAX_GUNS; j++)
 		ri->gun_submodels[j] = PHYSFSX_readByte(fp);
 	ri->exp1_vclip_num = PHYSFSX_readShort(fp);
@@ -465,25 +440,25 @@ static int read_d2_robot_info(PHYSFS_file *fp, robot_info *ri)
 	return 1;
 }
 
-static void load_hxm(const char *hxmname)
+static void load_hxm(const d_fname &hxmname)
 {
 	unsigned int repl_num;
 	int i;
-	PHYSFS_file *f;
+	auto f = PHYSFSX_openReadBuffered(hxmname);
 	int n_items;
 
-	if (!(f = PHYSFSX_openReadBuffered(hxmname)))
+	if (!f)
 		return; // hxm file doesn't exist
 
 	if (PHYSFSX_readInt(f) != 0x21584d48) /* HMX! */
 	{
-		PHYSFS_close(f); // invalid hxm file
+		// invalid hxm file
 		return;
 	}
 
 	if (PHYSFSX_readInt(f) != 1)
 	{
-		PHYSFS_close(f); // unknown version
+		// unknown version
 		return;
 	}
 
@@ -502,7 +477,6 @@ static void load_hxm(const char *hxmname)
 			{
 				if (!(read_d2_robot_info(f, &Robot_info[repl_num])))
 				{
-					PHYSFS_close(f);
 					return;
 				}
 			}
@@ -520,11 +494,7 @@ static void load_hxm(const char *hxmname)
 				PHYSFSX_fseek(f, sizeof(jointpos), SEEK_CUR);
 			else
 			{
-				if (PHYSFS_read(f, &Robot_joints[repl_num], sizeof(jointpos), 1) < 1)
-				{
-					PHYSFS_close(f);
-					return;
-				}
+				jointpos_read(f, Robot_joints[repl_num]);
 			}
 		}
 	}
@@ -545,26 +515,11 @@ static void load_hxm(const char *hxmname)
 			else
 			{
 				pm = &Polygon_models[repl_num];
-				if (pm->model_data)
-					d_free(pm->model_data);
-
-				if (PHYSFS_read(f, pm, sizeof(polymodel), 1) < 1)
-				{
-					pm->model_data = NULL;
-					PHYSFS_close(f);
-					return;
-				}
-
-				if (!MALLOC(pm->model_data, ubyte, pm->model_data_size))
-				{
-					PHYSFS_close(f);
-					return;
-				}
-
+				polymodel_read(pm, f);
+				pm->model_data = make_unique<ubyte[]>(pm->model_data_size);
 				if (PHYSFS_read(f, pm->model_data, pm->model_data_size, 1) < 1)
 				{
-					d_free(pm->model_data);
-					PHYSFS_close(f);
+					pm->model_data.reset();
 					return;
 				}
 
@@ -586,8 +541,6 @@ static void load_hxm(const char *hxmname)
 				ObjBitmaps[repl_num].index = PHYSFSX_readShort(f);
 		}
 	}
-
-	PHYSFS_close(f);
 }
 
 // undo customized items
@@ -600,18 +553,18 @@ static void custom_remove()
 	for (i = 0; i < MAX_BITMAP_FILES; bmo++, bmp++, i++)
 		if (bmo->bm_flags & 0x80)
 		{
-			gr_free_bitmap_data(bmp);
+			gr_free_bitmap_data(*bmp);
 			*bmp = *bmo;
 
 			if (bmo->bm_flags & BM_FLAG_PAGED_OUT)
 			{
 				GameBitmapOffset[i] = (int)(size_t)BitmapOriginal[i].bm_data;
-				gr_set_bitmap_flags(bmp, BM_FLAG_PAGED_OUT);
-				gr_set_bitmap_data(bmp, Piggy_bitmap_cache_data);
+				gr_set_bitmap_flags(*bmp, BM_FLAG_PAGED_OUT);
+				gr_set_bitmap_data(*bmp, Piggy_bitmap_cache_data);
 			}
 			else
 			{
-				gr_set_bitmap_flags(bmp, bmo->bm_flags & 0x7f);
+				gr_set_bitmap_flags(*bmp, bmo->bm_flags & 0x7f);
 			}
 			bmo->bm_flags = 0;
 		}
@@ -629,18 +582,25 @@ static void custom_remove()
 		}
 }
 
-void load_custom_data(char *level_name)
+void load_custom_data(const d_fname &level_name)
 {
-	char custom_file[64];
-
 	custom_remove();
-	strncpy(custom_file, level_name, 63);
-	custom_file[63] = 0;
-	change_ext(custom_file, "pg1", sizeof(custom_file));
+	d_fname custom_file;
+	using std::copy;
+	using std::next;
+	auto bl = begin(level_name);
+	auto bc = begin(custom_file);
+	auto &pg1 = ".pg1";
+	copy(bl, next(bl, custom_file.size() - sizeof(pg1)), bc);
+	auto o = std::find(bc, next(bc, custom_file.size() - sizeof(pg1)), '.');
+	copy(begin(pg1), end(pg1), o);
 	load_pigpog(custom_file);
-	change_ext(custom_file, "dtx", sizeof(custom_file));
+	auto &dtx = "dtx";
+	++o;
+	copy(begin(dtx), end(dtx), o);
 	load_pigpog(custom_file);
-	change_ext(custom_file, "hx1", sizeof(custom_file));
+	auto &hx1 = "hx1";
+	copy(begin(hx1), end(hx1), o);
 	load_hxm(custom_file);
 }
 

@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -25,6 +31,7 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "gamesave.h"
 #include "kdefs.h"
 #include "compiler-range_for.h"
+#include "highest_valid.h"
 
 //  ---------- Create a bridge segment between current segment/side and marked segment/side ----------
 int CreateBridge()
@@ -66,10 +73,10 @@ int FormJoint()
 int CreateAdjacentJoint()
 {
 	int		adj_side;
-	segment	*adj_sp;
+	segptridx_t adj_sp = segment_none;
 
-	if (med_find_adjacent_segment_side(Cursegp, Curside, &adj_sp, &adj_side)) {
-		if (Cursegp->children[Curside] != adj_sp-Segments) {
+	if (med_find_adjacent_segment_side(Cursegp, Curside, adj_sp, &adj_side)) {
+		if (Cursegp->children[Curside] != adj_sp) {
 			med_form_joint(Cursegp,Curside,adj_sp,adj_side);
 			Update_flags |= UF_WORLD_CHANGED;
 			mine_changed = 1;
@@ -89,12 +96,12 @@ int CreateAdjacentJoint()
 int CreateSloppyAdjacentJoint()
 {
 	int		adj_side;
-	segment	*adj_sp;
+	segptridx_t adj_sp = segment_none;
 
 	save_level("SLOPPY.LVL");
 
-	if (med_find_closest_threshold_segment_side(Cursegp, Curside, &adj_sp, &adj_side, 20*F1_0)) {
-		if (Cursegp->children[Curside] != adj_sp-Segments) {
+	if (med_find_closest_threshold_segment_side(Cursegp, Curside, adj_sp, &adj_side, 20*F1_0)) {
+		if (Cursegp->children[Curside] != adj_sp) {
 			if (!med_form_joint(Cursegp,Curside,adj_sp,adj_side))
 				{
 				Update_flags |= UF_WORLD_CHANGED;
@@ -118,24 +125,23 @@ int CreateSloppyAdjacentJoint()
 int CreateSloppyAdjacentJointsGroup()
 {
 	int		adj_side;
-	segment	*adj_sp;
-	segment	*segp;
 	int		done_been_a_change = 0;
-	int		sidenum;
-
 	range_for(const auto &gs, GroupList[current_group].segments)
 	{
-		segp = &Segments[gs];
+		auto segp = vsegptridx(gs);
 
-		for (sidenum=0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
+		for (int sidenum=0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
 			if (!IS_CHILD(segp->children[sidenum]))
-				if (med_find_closest_threshold_segment_side(segp, sidenum, &adj_sp, &adj_side, 5*F1_0)) {
+			{
+				segptridx_t adj_sp = segment_none;
+				if (med_find_closest_threshold_segment_side(segp, sidenum, adj_sp, &adj_side, 5*F1_0)) {
 					if (adj_sp->group == segp->group) {
-						if (segp->children[sidenum] != adj_sp-Segments)
+						if (segp->children[sidenum] != adj_sp)
 							if (!med_form_joint(segp, sidenum, adj_sp,adj_side))
 								done_been_a_change = 1;
 					}
 				}
+			}
 	}
 
 	if (done_been_a_change) {
@@ -154,14 +160,14 @@ int CreateSloppyAdjacentJointsGroup()
 //  ---------- Create a bridge segment between current segment and all adjacent segment:side ----------
 int CreateAdjacentJointsSegment()
 {
-	int		adj_side,s;
-	segment	*adj_sp;
+	int		adj_side;
 
 	med_combine_duplicate_vertices(Vertex_active);
 
-	for (s=0; s<MAX_SIDES_PER_SEGMENT; s++) {
-		if (med_find_adjacent_segment_side(Cursegp, s, &adj_sp, &adj_side))
-			if (Cursegp->children[s] != adj_sp-Segments)
+	for (int s=0; s<MAX_SIDES_PER_SEGMENT; s++) {
+		segptridx_t adj_sp = segment_none;
+		if (med_find_adjacent_segment_side(Cursegp, s, adj_sp, &adj_side))
+			if (Cursegp->children[s] != adj_sp)
 					{
 					med_form_joint(Cursegp,s,adj_sp,adj_side);
 					Update_flags |= UF_WORLD_CHANGED;
@@ -179,16 +185,18 @@ int CreateAdjacentJointsSegment()
 //  ---------- Create a bridge segment between all segment:side and all adjacent segment:side ----------
 int CreateAdjacentJointsAll()
 {
-	int		adj_side,seg,s;
-	segment	*adj_sp;
+	int		adj_side;
 
 	med_combine_duplicate_vertices(Vertex_active);
 
-	for (seg=0; seg<=Highest_segment_index; seg++)
-		for (s=0; s<MAX_SIDES_PER_SEGMENT; s++)
-			if (med_find_adjacent_segment_side(&Segments[seg], s, &adj_sp, &adj_side))
-				if (Segments[seg].children[s] != adj_sp-Segments)
+	range_for (const auto seg, highest_valid(Segments))
+		for (int s=0; s<MAX_SIDES_PER_SEGMENT; s++)
+		{
+			segptridx_t adj_sp = segment_none;
+			if (med_find_adjacent_segment_side(&Segments[seg], s, adj_sp, &adj_side))
+				if (Segments[seg].children[s] != adj_sp)
 						med_form_joint(&Segments[seg],s,adj_sp,adj_side);
+		}
 
 	Update_flags |= UF_WORLD_CHANGED;
 	mine_changed = 1;

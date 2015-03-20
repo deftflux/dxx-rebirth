@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,19 +23,14 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-#ifndef _MEDWALL_H
-#define _MEDWALL_H
+#pragma once
 
-#include "wall.h"
-#include "segment.h"
+#include "fwdvalptridx.h"
 
 #ifdef __cplusplus
 
 // Restores all the walls to original status
 extern int wall_restore_all();
-
-// Reset a wall.
-extern void wall_reset(segment *seg, short side);
 
 // Adds a removable wall (medwall.c)
 extern int wall_add_removable();
@@ -51,7 +52,7 @@ extern int wall_add_to_markedside(sbyte type);
 extern int wall_remove();
 
 // Removes a specific side.
-int wall_remove_side(segment *seg, short side);
+int wall_remove_side(vsegptridx_t seg, short side);
 
 extern int bind_wall_to_control_center();
 
@@ -65,6 +66,3 @@ extern void copy_group_walls(int old_group, int new_group);
 void check_wall_validity(void);
 
 #endif
-
-#endif
-

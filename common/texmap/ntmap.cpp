@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,14 +23,6 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-#define VESA 0
-#define NUM_TMAPS 16
-
-#define HEADLIGHT_LIGHTING 0
-
-#define WIREFRAME 0
-#define PERSPECTIVE 1
-
 #include "pstypes.h"
 #include "maths.h"
 #include "vecmat.h"
@@ -38,6 +36,9 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "scanline.h"
 #include "u_mem.h"
 
+#include "dxxsconf.h"
+#include "compiler-integer_sequence.h"
+
 #ifdef EDITOR
 #define EDITOR_TMAP 1       //if in, include extra stuff
 #endif
@@ -45,63 +46,38 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define F15_5 (F1_0*15 + F0_5)
 
 // Temporary texture map, interface from Matt's 3d system to Mike's texture mapper.
-g3ds_tmap Tmap1;
 
 int	Interpolation_method=0;	// 0 = choose best method
 int     Lighting_on=1;                  // initialize to no lighting
-int	Current_seg_depth;		// HACK INTERFACE: how far away the current segment (& thus texture) is
+unsigned	Current_seg_depth;		// HACK INTERFACE: how far away the current segment (& thus texture) is
 
 // These variables are the interface to assembler.  They get set for each texture map, which is a real waste of time.
 //	They should be set only when they change, which is generally when the window bounds change.  And, even still, it's
 //	a pretty bad interface.
 int	bytes_per_row=-1;
 unsigned char *write_buffer;
-int  	window_left;
-int	window_right;
-int	window_top;
-int	window_bottom;
-int  	window_width;
-int  	window_height;
-int	*y_pointers=NULL;
-
-fix fix_recip[FIX_RECIP_TABLE_SIZE];
-
-int	Lighting_enabled;
-int	Fix_recip_table_computed=0;
 
 fix fx_l, fx_u, fx_v, fx_z, fx_du_dx, fx_dv_dx, fx_dz_dx, fx_dl_dx;
 int fx_xleft, fx_xright, fx_y;
-unsigned char * pixptr;
-int per2_flag = 0;
+const unsigned char *pixptr;
 int Transparency_on = 0;
 
-ubyte * tmap_flat_cthru_table;
 ubyte tmap_flat_color;
 ubyte tmap_flat_shade_value;
 
 
 
+#ifndef OGL
 // -------------------------------------------------------------------------------------
-static void init_fix_recip_table(void)
+template <std::size_t... N>
+static inline constexpr const array<fix, 1 + sizeof...(N)> init_fix_recip_table(index_sequence<0, N...>)
 {
-	int	i;
-
-	fix_recip[0] = F1_0;
-
-	for (i=1; i<FIX_RECIP_TABLE_SIZE; i++)
-		fix_recip[i] = F1_0/i;
-
-	Fix_recip_table_computed = 1;
+	/* gcc 4.5 fails on bare initializer list */
+	return array<fix, 1 + sizeof...(N)>{{F1_0, (F1_0 / N)...}};
 }
 
-static void free_ypointers()
-{
-	if (y_pointers != NULL)
-	{
-		d_free(y_pointers);
-		y_pointers = NULL;
-	}
-}
+const array<fix, FIX_RECIP_TABLE_SIZE> fix_recip_table = init_fix_recip_table(make_tree_index_sequence<FIX_RECIP_TABLE_SIZE>());
+#endif
 
 // -------------------------------------------------------------------------------------
 //	Initialize interface variables to assembler.
@@ -111,58 +87,25 @@ static void free_ypointers()
 void init_interface_vars_to_assembler(void)
 {
 	grs_bitmap	*bp;
-	static int callclose = 1;
-
 	bp = &grd_curcanv->cv_bitmap;
 
 	Assert(bp!=NULL);
 	Assert(bp->bm_data!=NULL);
-
-	if (y_pointers != NULL)
-	{
-		d_free(y_pointers);
-		y_pointers = NULL;
-	}
-	MALLOC(y_pointers, int, bp->bm_h);
-
 	//	If bytes_per_row has changed, create new table of pointers.
 	if (bytes_per_row != (int) bp->bm_rowsize) {
-		int	y_val, i;
-
 		bytes_per_row = (int) bp->bm_rowsize;
-
-		y_val = 0;
-		for (i=0; i<bp->bm_h; i++) {
-			y_pointers[i] = y_val;
-			y_val += bytes_per_row;
-		}
 	}
 
         write_buffer = (unsigned char *) bp->bm_data;
 
-	window_left = 0;
-	window_right = (int) bp->bm_w-1;
-	window_top = 0;
-	window_bottom = (int) bp->bm_h-1;
-
-	Window_clip_left = window_left;
-	Window_clip_right = window_right;
-	Window_clip_top = window_top;
-	Window_clip_bot = window_bottom;
-
-	window_width = bp->bm_w;
-	window_height = bp->bm_h;
-
-	if (!Fix_recip_table_computed)
-		init_fix_recip_table();
-
-	if (callclose)
-	{
-		callclose=0;
-		atexit(free_ypointers);
-	}
+	Window_clip_left = 0;
+	Window_clip_right = (int) bp->bm_w-1;
+	Window_clip_top = 0;
+	Window_clip_bot = (int) bp->bm_h-1;
 }
 
+#ifndef OGL
+static int Lighting_enabled;
 // -------------------------------------------------------------------------------------
 //                             VARIABLES
 
@@ -207,35 +150,34 @@ int succmod(int val,int modulus)
 //		*min_y_ind
 //		*max_y_ind
 // -------------------------------------------------------------------------------------
-void compute_y_bounds(g3ds_tmap *t, int *vlt, int *vlb, int *vrt, int *vrb,int *bottom_y_ind)
+void compute_y_bounds(const g3ds_tmap &t, int &vlt, int &vlb, int &vrt, int &vrb,int &bottom_y_ind)
 {
-	int	i;
 	int	min_y,max_y;
 	int	min_y_ind;
 	int	original_vrt;
 	fix	min_x;
 
 	// Scan all vertices, set min_y_ind to vertex with smallest y coordinate.
-	min_y = f2i(t->verts[0].y2d);
+	min_y = f2i(t.verts[0].y2d);
 	max_y = min_y;
 	min_y_ind = 0;
-	min_x = f2i(t->verts[0].x2d);
-	*bottom_y_ind = 0;
+	min_x = f2i(t.verts[0].x2d);
+	bottom_y_ind = 0;
 
-	for (i=1; i<t->nv; i++) {
-		if (f2i(t->verts[i].y2d) < min_y) {
-			min_y = f2i(t->verts[i].y2d);
+	for (int i=1; i<t.nv; i++) {
+		if (f2i(t.verts[i].y2d) < min_y) {
+			min_y = f2i(t.verts[i].y2d);
 			min_y_ind = i;
-			min_x = f2i(t->verts[i].x2d);
-		} else if (f2i(t->verts[i].y2d) == min_y) {
-			if (f2i(t->verts[i].x2d) < min_x) {
+			min_x = f2i(t.verts[i].x2d);
+		} else if (f2i(t.verts[i].y2d) == min_y) {
+			if (f2i(t.verts[i].x2d) < min_x) {
 				min_y_ind = i;
-				min_x = f2i(t->verts[i].x2d);
+				min_x = f2i(t.verts[i].x2d);
 			}
 		}
-		if (f2i(t->verts[i].y2d) > max_y) {
-			max_y = f2i(t->verts[i].y2d);
-			*bottom_y_ind = i;
+		if (f2i(t.verts[i].y2d) > max_y) {
+			max_y = f2i(t.verts[i].y2d);
+			bottom_y_ind = i;
 		}
 	}
 
@@ -268,23 +210,21 @@ void compute_y_bounds(g3ds_tmap *t, int *vlt, int *vlb, int *vrt, int *vrb,int *
 //--removed mk, 11/27/94--}
 
 	// Set "vertex left top", etc. based on vertex with topmost y coordinate
-	*vlt = min_y_ind;
-	*vrt = *vlt;
-	*vlb = prevmod(*vlt,t->nv);
-	*vrb = succmod(*vrt,t->nv);
+	vlb = prevmod(vlt = min_y_ind,t.nv);
+	vrb = succmod(vrt = vlt,t.nv);
 
 	// If right edge is horizontal, then advance along polygon bound until it no longer is or until all
 	// vertices have been examined.
 	// (Left edge cannot be horizontal, because *vlt is set to leftmost point with highest y coordinate.)
 
-	original_vrt = *vrt;
+	original_vrt = vrt;
 
-	while (f2i(t->verts[*vrt].y2d) == f2i(t->verts[*vrb].y2d)) {
-		if (succmod(*vrt,t->nv) == original_vrt) {
+	while (f2i(t.verts[vrt].y2d) == f2i(t.verts[vrb].y2d)) {
+		if (succmod(vrt,t.nv) == original_vrt) {
 			break;
 		}
-		*vrt = succmod(*vrt,t->nv);
-		*vrb = succmod(*vrt,t->nv);
+		vrt = succmod(vrt,t.nv);
+		vrb = succmod(vrt,t.nv);
 	}
 }
 
@@ -305,50 +245,48 @@ void compute_y_bounds(g3ds_tmap *t, int *vlt, int *vlb, int *vrt, int *vrb,int *
 //--
 //--}
 
-fix compute_du_dy_lin(g3ds_tmap *t, int top_vertex,int bottom_vertex, fix recip_dy)
+//#ifndef OGL
+static fix compute_du_dy_lin(const g3ds_tmap &t, int top_vertex,int bottom_vertex, fix recip_dy)
 {
-	return fixmul(t->verts[bottom_vertex].u - t->verts[top_vertex].u, recip_dy);
+	return fixmul(t.verts[bottom_vertex].u - t.verts[top_vertex].u, recip_dy);
 }
 
 
-fix compute_dv_dy_lin(g3ds_tmap *t, int top_vertex,int bottom_vertex, fix recip_dy)
+static fix compute_dv_dy_lin(const g3ds_tmap &t, int top_vertex,int bottom_vertex, fix recip_dy)
 {
-	return fixmul(t->verts[bottom_vertex].v - t->verts[top_vertex].v, recip_dy);
+	return fixmul(t.verts[bottom_vertex].v - t.verts[top_vertex].v, recip_dy);
 }
 
-static fix compute_dl_dy_lin(g3ds_tmap *t, int top_vertex,int bottom_vertex, fix recip_dy)
+static fix compute_dl_dy_lin(const g3ds_tmap &t, int top_vertex,int bottom_vertex, fix recip_dy)
 {
-	return fixmul(t->verts[bottom_vertex].l - t->verts[top_vertex].l, recip_dy);
-
+	return fixmul(t.verts[bottom_vertex].l - t.verts[top_vertex].l, recip_dy);
 }
 
-fix compute_dx_dy(g3ds_tmap *t, int top_vertex,int bottom_vertex, fix recip_dy)
+fix compute_dx_dy(const g3ds_tmap &t, int top_vertex,int bottom_vertex, fix recip_dy)
 {
-	return fixmul(t->verts[bottom_vertex].x2d - t->verts[top_vertex].x2d, recip_dy);
+	return fixmul(t.verts[bottom_vertex].x2d - t.verts[top_vertex].x2d, recip_dy);
 }
 
-static fix compute_du_dy(g3ds_tmap *t, int top_vertex,int bottom_vertex, fix recip_dy)
+static fix compute_du_dy(const g3ds_tmap &t, int top_vertex,int bottom_vertex, fix recip_dy)
 {
-	return fixmul(fixmul(t->verts[bottom_vertex].u,t->verts[bottom_vertex].z) - fixmul(t->verts[top_vertex].u,t->verts[top_vertex].z), recip_dy);
+	return fixmul(fixmul(t.verts[bottom_vertex].u,t.verts[bottom_vertex].z) - fixmul(t.verts[top_vertex].u,t.verts[top_vertex].z), recip_dy);
 }
 
-
-static fix compute_dv_dy(g3ds_tmap *t, int top_vertex,int bottom_vertex, fix recip_dy)
+static fix compute_dv_dy(const g3ds_tmap &t, int top_vertex,int bottom_vertex, fix recip_dy)
 {
-	return fixmul(fixmul(t->verts[bottom_vertex].v,t->verts[bottom_vertex].z) - fixmul(t->verts[top_vertex].v,t->verts[top_vertex].z), recip_dy);
-
+	return fixmul(fixmul(t.verts[bottom_vertex].v,t.verts[bottom_vertex].z) - fixmul(t.verts[top_vertex].v,t.verts[top_vertex].z), recip_dy);
 }
 
-static fix compute_dz_dy(g3ds_tmap *t, int top_vertex,int bottom_vertex, fix recip_dy)
+static fix compute_dz_dy(const g3ds_tmap &t, int top_vertex,int bottom_vertex, fix recip_dy)
 {
-	return fixmul(t->verts[bottom_vertex].z - t->verts[top_vertex].z, recip_dy);
+	return fixmul(t.verts[bottom_vertex].z - t.verts[top_vertex].z, recip_dy);
 
 }
 
 // -------------------------------------------------------------------------------------
 //	Texture map current scanline in perspective.
 // -------------------------------------------------------------------------------------
-static void ntmap_scanline_lighted(grs_bitmap *srcb, int y, fix xleft, fix xright, fix uleft, fix uright, fix vleft, fix vright, fix zleft, fix zright, fix lleft, fix lright)
+static void ntmap_scanline_lighted(const grs_bitmap &srcb, int y, fix xleft, fix xright, fix uleft, fix uright, fix vleft, fix vright, fix zleft, fix zright, fix lleft, fix lright)
 {
 	fix	dx,recip_dx;
 
@@ -366,10 +304,7 @@ static void ntmap_scanline_lighted(grs_bitmap *srcb, int y, fix xleft, fix xrigh
 		return;
 
 	// setup to call assembler scanline renderer
-	if (dx < FIX_RECIP_TABLE_SIZE)
-		recip_dx = fix_recip[dx];
-	else
-		recip_dx = F1_0/dx;
+	recip_dx = fix_recip(dx);
 
 	fx_u = uleft;
 	fx_v = vleft;
@@ -379,7 +314,7 @@ static void ntmap_scanline_lighted(grs_bitmap *srcb, int y, fix xleft, fix xrigh
 	fx_dv_dx = fixmul(vright - vleft,recip_dx);
 	fx_dz_dx = fixmul(zright - zleft,recip_dx);
 	fx_y = y;
-	pixptr = srcb->bm_data;
+	pixptr = srcb.bm_data;
 
 	switch (Lighting_enabled) {
 		case 0:
@@ -438,10 +373,10 @@ static void ntmap_scanline_lighted(grs_bitmap *srcb, int y, fix xleft, fix xrigh
 // -------------------------------------------------------------------------------------
 //	Render a texture map with lighting using perspective interpolation in inner and outer loops.
 // -------------------------------------------------------------------------------------
-static void ntexture_map_lighted(grs_bitmap *srcb, g3ds_tmap *t)
+static void ntexture_map_lighted(const grs_bitmap &srcb, const g3ds_tmap &t)
 {
 	int	vlt,vrt,vlb,vrb;	// vertex left top, vertex right top, vertex left bottom, vertex right bottom
-	int	topy,boty,y, dy;
+	int	topy,boty,dy;
 	fix	dx_dy_left,dx_dy_right;
 	fix	du_dy_left,du_dy_right;
 	fix	dv_dy_left,dv_dy_right;
@@ -452,18 +387,16 @@ static void ntexture_map_lighted(grs_bitmap *srcb, g3ds_tmap *t)
 	fix	xleft,xright,uleft,vleft,uright,vright,zleft,zright,lleft,lright;
 	int	next_break_left, next_break_right;
 
-     	g3ds_vertex *v3d;
-
         //remove stupid warnings in compile
         dl_dy_left = F1_0;
         dl_dy_right = F1_0;
         lleft = F1_0;
         lright = F1_0;
 
-	v3d = t->verts;
+	auto &v3d = t.verts;
 
 	// Determine top and bottom y coords.
-	compute_y_bounds(t,&vlt,&vlb,&vrt,&vrb,&max_y_vertex);
+	compute_y_bounds(t,vlt,vlb,vrt,vrb,max_y_vertex);
 
 	// Set top and bottom (of entire texture map) y coordinates.
 	topy = f2i(v3d[vlt].y2d);
@@ -474,22 +407,16 @@ static void ntexture_map_lighted(grs_bitmap *srcb, g3ds_tmap *t)
 		boty = Window_clip_bot;
 
 	// Set amount to change x coordinate for each advance to next scanline.
-	dy = f2i(t->verts[vlb].y2d) - f2i(t->verts[vlt].y2d);
-	if (dy < FIX_RECIP_TABLE_SIZE)
-		recip_dyl = fix_recip[dy];
-	else
-		recip_dyl = F1_0/dy;
+	dy = f2i(t.verts[vlb].y2d) - f2i(t.verts[vlt].y2d);
+	recip_dyl = fix_recip(dy);
 
 	dx_dy_left = compute_dx_dy(t,vlt,vlb, recip_dyl);
 	du_dy_left = compute_du_dy(t,vlt,vlb, recip_dyl);
 	dv_dy_left = compute_dv_dy(t,vlt,vlb, recip_dyl);
 	dz_dy_left = compute_dz_dy(t,vlt,vlb, recip_dyl);
 
-	dy = f2i(t->verts[vrb].y2d) - f2i(t->verts[vrt].y2d);
-	if (dy < FIX_RECIP_TABLE_SIZE)
-		recip_dyr = fix_recip[dy];
-	else
-		recip_dyr = F1_0/dy;
+	dy = f2i(t.verts[vrb].y2d) - f2i(t.verts[vrt].y2d);
+	recip_dyr = fix_recip(dy);
 
 	du_dy_right = compute_du_dy(t,vrt,vrb, recip_dyr);
 	dx_dy_right = compute_dx_dy(t,vrt,vrb, recip_dyr);
@@ -520,7 +447,7 @@ static void ntexture_map_lighted(grs_bitmap *srcb, g3ds_tmap *t)
 	next_break_left = f2i(v3d[vlb].y2d);
 	next_break_right = f2i(v3d[vrb].y2d);
 
-	for (y = topy; y < boty; y++) {
+	for (int y = topy; y < boty; y++) {
 
 		// See if we have reached the end of the current left edge, and if so, set
 		// new values for dx_dy and x,u,v
@@ -532,15 +459,12 @@ static void ntexture_map_lighted(grs_bitmap *srcb, g3ds_tmap *t)
 			// because in the for loop, we don't scan all spanlines.
 			while (y == f2i(v3d[vlb].y2d)) {
 				vlt = vlb;
-				vlb = prevmod(vlb,t->nv);
+				vlb = prevmod(vlb,t.nv);
 			}
 			next_break_left = f2i(v3d[vlb].y2d);
 
-			dy = f2i(t->verts[vlb].y2d) - f2i(t->verts[vlt].y2d);
-			if (dy < FIX_RECIP_TABLE_SIZE)
-				recip_dy = fix_recip[dy];
-			else
-				recip_dy = F1_0/dy;
+			dy = f2i(t.verts[vlb].y2d) - f2i(t.verts[vlt].y2d);
+			recip_dy = fix_recip(dy);
 
 			dx_dy_left = compute_dx_dy(t,vlt,vlb, recip_dy);
 
@@ -567,16 +491,13 @@ static void ntexture_map_lighted(grs_bitmap *srcb, g3ds_tmap *t)
 
 			while (y == f2i(v3d[vrb].y2d)) {
 				vrt = vrb;
-				vrb = succmod(vrb,t->nv);
+				vrb = succmod(vrb,t.nv);
 			}
 
 			next_break_right = f2i(v3d[vrb].y2d);
 
-			dy = f2i(t->verts[vrb].y2d) - f2i(t->verts[vrt].y2d);
-			if (dy < FIX_RECIP_TABLE_SIZE)
-				recip_dy = fix_recip[dy];
-			else
-				recip_dy = F1_0/dy;
+			dy = f2i(t.verts[vrb].y2d) - f2i(t.verts[vrt].y2d);
+			recip_dy = fix_recip(dy);
 
 			dx_dy_right = compute_dx_dy(t,vrt,vrb, recip_dy);
 
@@ -621,14 +542,14 @@ static void ntexture_map_lighted(grs_bitmap *srcb, g3ds_tmap *t)
 	// We can get lleft or lright out of bounds here because we compute dl_dy using fixed point values,
 	//	but we plot an integer number of scanlines, therefore doing an integer number of additions of the delta.
 
-	ntmap_scanline_lighted(srcb,y,xleft,xright,uleft,uright,vleft,vright,zleft,zright,lleft,lright);
+	ntmap_scanline_lighted(srcb,boty,xleft,xright,uleft,uright,vleft,vright,zleft,zright,lleft,lright);
 }
 
 
 // -------------------------------------------------------------------------------------
 //	Texture map current scanline using linear interpolation.
 // -------------------------------------------------------------------------------------
-static void ntmap_scanline_lighted_linear(grs_bitmap *srcb, int y, fix xleft, fix xright, fix uleft, fix uright, fix vleft, fix vright, fix lleft, fix lright)
+static void ntmap_scanline_lighted_linear(const grs_bitmap &srcb, int y, fix xleft, fix xright, fix uleft, fix uright, fix vleft, fix vright, fix lleft, fix lright)
 {
 	fix	dx,recip_dx,du_dx,dv_dx,dl_dx;
 
@@ -637,10 +558,7 @@ static void ntmap_scanline_lighted_linear(grs_bitmap *srcb, int y, fix xleft, fi
 		return;
 
 		// setup to call assembler scanline renderer
-		if (dx < FIX_RECIP_TABLE_SIZE)
-			recip_dx = fix_recip[dx];
-		else
-			recip_dx = F1_0/dx;
+	recip_dx = fix_recip(dx);
 
 		du_dx = fixmul(uright - uleft,recip_dx);
 		dv_dx = fixmul(vright - vleft,recip_dx);
@@ -652,7 +570,7 @@ static void ntmap_scanline_lighted_linear(grs_bitmap *srcb, int y, fix xleft, fi
 		fx_y = y;
 		fx_xright = f2i(xright);
 		fx_xleft = f2i(xleft);
-		pixptr = srcb->bm_data;
+		pixptr = srcb.bm_data;
 
 		switch (Lighting_enabled) {
 			case 0:
@@ -714,10 +632,10 @@ static void ntmap_scanline_lighted_linear(grs_bitmap *srcb, int y, fix xleft, fi
 // -------------------------------------------------------------------------------------
 //	Render a texture map with lighting using perspective interpolation in inner and outer loops.
 // -------------------------------------------------------------------------------------
-void ntexture_map_lighted_linear(grs_bitmap *srcb, g3ds_tmap *t)
+static void ntexture_map_lighted_linear(const grs_bitmap &srcb, const g3ds_tmap &t)
 {
 	int	vlt,vrt,vlb,vrb;	// vertex left top, vertex right top, vertex left bottom, vertex right bottom
-	int	topy,boty,y, dy;
+	int	topy,boty,dy;
 	fix	dx_dy_left,dx_dy_right;
 	fix	du_dy_left,du_dy_right;
 	fix	dv_dy_left,dv_dy_right;
@@ -727,18 +645,16 @@ void ntexture_map_lighted_linear(grs_bitmap *srcb, g3ds_tmap *t)
 	int	next_break_left, next_break_right;
 	fix	recip_dyl, recip_dyr;
 
-	g3ds_vertex *v3d;
-
         //remove stupid warnings in compile
         dl_dy_left = F1_0;
         dl_dy_right = F1_0;
         lleft = F1_0;
         lright = F1_0;
 
-	v3d = t->verts;
+	auto &v3d = t.verts;
 
 	// Determine top and bottom y coords.
-	compute_y_bounds(t,&vlt,&vlb,&vrt,&vrb,&max_y_vertex);
+	compute_y_bounds(t,vlt,vlb,vrt,vrb,max_y_vertex);
 
 	// Set top and bottom (of entire texture map) y coordinates.
 	topy = f2i(v3d[vlt].y2d);
@@ -749,17 +665,11 @@ void ntexture_map_lighted_linear(grs_bitmap *srcb, g3ds_tmap *t)
 	if (boty > Window_clip_bot)
 		boty = Window_clip_bot;
 
-	dy = f2i(t->verts[vlb].y2d) - f2i(t->verts[vlt].y2d);
-	if (dy < FIX_RECIP_TABLE_SIZE)
-		recip_dyl = fix_recip[dy];
-	else
-		recip_dyl = F1_0/dy;
+	dy = f2i(t.verts[vlb].y2d) - f2i(t.verts[vlt].y2d);
+	recip_dyl = fix_recip(dy);
 
-	dy = f2i(t->verts[vrb].y2d) - f2i(t->verts[vrt].y2d);
-	if (dy < FIX_RECIP_TABLE_SIZE)
-		recip_dyr = fix_recip[dy];
-	else
-		recip_dyr = F1_0/dy;
+	dy = f2i(t.verts[vrb].y2d) - f2i(t.verts[vrt].y2d);
+	recip_dyr = fix_recip(dy);
 
 	// Set amount to change x coordinate for each advance to next scanline.
 	dx_dy_left = compute_dx_dy(t,vlt,vlb, recip_dyl);
@@ -792,7 +702,7 @@ void ntexture_map_lighted_linear(grs_bitmap *srcb, g3ds_tmap *t)
 	next_break_left = f2i(v3d[vlb].y2d);
 	next_break_right = f2i(v3d[vrb].y2d);
 
-	for (y = topy; y < boty; y++) {
+	for (int y = topy; y < boty; y++) {
 
 		// See if we have reached the end of the current left edge, and if so, set
 		// new values for dx_dy and x,u,v
@@ -804,15 +714,12 @@ void ntexture_map_lighted_linear(grs_bitmap *srcb, g3ds_tmap *t)
 			// because in the for loop, we don't scan all spanlines.
 			while (y == f2i(v3d[vlb].y2d)) {
 				vlt = vlb;
-				vlb = prevmod(vlb,t->nv);
+				vlb = prevmod(vlb,t.nv);
 			}
 			next_break_left = f2i(v3d[vlb].y2d);
 
-			dy = f2i(t->verts[vlb].y2d) - f2i(t->verts[vlt].y2d);
-			if (dy < FIX_RECIP_TABLE_SIZE)
-				recip_dy = fix_recip[dy];
-			else
-				recip_dy = F1_0/dy;
+			dy = f2i(t.verts[vlb].y2d) - f2i(t.verts[vlt].y2d);
+			recip_dy = fix_recip(dy);
 
 			dx_dy_left = compute_dx_dy(t,vlt,vlb, recip_dy);
 
@@ -837,14 +744,11 @@ void ntexture_map_lighted_linear(grs_bitmap *srcb, g3ds_tmap *t)
 
 			while (y == f2i(v3d[vrb].y2d)) {
 				vrt = vrb;
-				vrb = succmod(vrb,t->nv);
+				vrb = succmod(vrb,t.nv);
 			}
 
-			dy = f2i(t->verts[vrb].y2d) - f2i(t->verts[vrt].y2d);
-			if (dy < FIX_RECIP_TABLE_SIZE)
-				recip_dy = fix_recip[dy];
-			else
-				recip_dy = F1_0/dy;
+			dy = f2i(t.verts[vrb].y2d) - f2i(t.verts[vrt].y2d);
+			recip_dy = fix_recip(dy);
 
 			next_break_right = f2i(v3d[vrb].y2d);
 			dx_dy_right = compute_dx_dy(t,vrt,vrb, recip_dy);
@@ -883,7 +787,7 @@ void ntexture_map_lighted_linear(grs_bitmap *srcb, g3ds_tmap *t)
 	// We can get lleft or lright out of bounds here because we compute dl_dy using fixed point values,
 	//	but we plot an integer number of scanlines, therefore doing an integer number of additions of the delta.
 
-	ntmap_scanline_lighted_linear(srcb,y,xleft,xright,uleft,uright,vleft,vright,lleft,lright);
+	ntmap_scanline_lighted_linear(srcb,boty,xleft,xright,uleft,uright,vleft,vright,lleft,lright);
 }
 
 // fix	DivNum = F1_0*12;
@@ -891,31 +795,22 @@ void ntexture_map_lighted_linear(grs_bitmap *srcb, g3ds_tmap *t)
 // -------------------------------------------------------------------------------------
 // Interface from Matt's data structures to Mike's texture mapper.
 // -------------------------------------------------------------------------------------
-void draw_tmap(grs_bitmap *bp,int nverts,g3s_point **vertbuf)
+void draw_tmap(const grs_bitmap &rbp,uint_fast32_t nverts,const g3s_point *const *vertbuf)
 {
-	int	i;
-
 	//	These variables are used in system which renders texture maps which lie on one scanline as a line.
 	// fix	div_numerator;
 	int	lighting_on_save = Lighting_on;
 
 	Assert(nverts <= MAX_TMAP_VERTS);
 
-
-#ifdef USE_MULT_CODE
-	if ( !divide_table_filled ) fill_divide_table();
-#endif
-
-	// -- now called from g3_start_frame -- init_interface_vars_to_assembler();
-
+	const grs_bitmap *bp = &rbp;
 	//	If no transparency and seg depth is large, render as flat shaded.
 	if ((Current_seg_depth > Max_linear_depth) && ((bp->bm_flags & 3) == 0)) {
-		draw_tmap_flat(bp, nverts, vertbuf);
+		draw_tmap_flat(rbp, nverts, vertbuf);
 		return;
 	}
 
-	if ( bp->bm_flags & BM_FLAG_RLE )
-		bp = rle_expand_texture( bp );		// Expand if rle'd
+	bp = rle_expand_texture(*bp);		// Expand if rle'd
 
 	Transparency_on = bp->bm_flags & BM_FLAG_TRANSPARENT;
 	if (bp->bm_flags & BM_FLAG_NO_LIGHTING)
@@ -923,24 +818,21 @@ void draw_tmap(grs_bitmap *bp,int nverts,g3s_point **vertbuf)
 
 
 	// Setup texture map in Tmap1
+	g3ds_tmap Tmap1;
 	Tmap1.nv = nverts;						// Initialize number of vertices
 
 // 	div_numerator = DivNum;	//f1_0*3;
 
-	for (i=0; i<nverts; i++) {
+	for (int i=0; i<nverts; i++) {
 		g3ds_vertex	*tvp = &Tmap1.verts[i];
-		g3s_point	*vp = vertbuf[i];
+		auto vp = vertbuf[i];
 
 		tvp->x2d = vp->p3_sx;
 		tvp->y2d = vp->p3_sy;
 
 		//	Check for overflow on fixdiv.  Will overflow on vp->z <= something small.  Allow only as low as 256.
-		if (vp->p3_z < 256) {
-			vp->p3_z = 256;
-			// Int3();		// we would overflow if we divided!
-		}
-
-		tvp->z = fixdiv(F1_0*12, vp->p3_z);
+		auto clipped_p3_z = std::max(256, vp->p3_z);
+		tvp->z = fixdiv(F1_0*12, clipped_p3_z);
 		tvp->u = vp->p3_u << 6; //* bp->bm_w;
 		tvp->v = vp->p3_v << 6; //* bp->bm_h;
 
@@ -957,23 +849,19 @@ void draw_tmap(grs_bitmap *bp,int nverts,g3s_point **vertbuf)
 	if (Lighting_on) {
 		switch (Interpolation_method) {	// 0 = choose, 1 = linear, 2 = /8 perspective, 3 = full perspective
 			case 0:								// choose best interpolation
-				per2_flag = 1;
 				if (Current_seg_depth > Max_perspective_depth)
-					ntexture_map_lighted_linear(bp, &Tmap1);
+					ntexture_map_lighted_linear(*bp, Tmap1);
 				else
-					ntexture_map_lighted(bp, &Tmap1);
+					ntexture_map_lighted(*bp, Tmap1);
 				break;
 			case 1:								// linear interpolation
-				per2_flag = 1;
-				ntexture_map_lighted_linear(bp, &Tmap1);
+				ntexture_map_lighted_linear(*bp, Tmap1);
 				break;
 			case 2:								// perspective every 8th pixel interpolation
-				per2_flag = 1;
-				ntexture_map_lighted(bp, &Tmap1);
+				ntexture_map_lighted(*bp, Tmap1);
 				break;
 			case 3:								// perspective every pixel interpolation
-				per2_flag = 0;					// this hack means do divide every pixel
-				ntexture_map_lighted(bp, &Tmap1);
+				ntexture_map_lighted(*bp, Tmap1);
 				break;
 			default:
 				Assert(0);				// Illegal value for Interpolation_method, must be 0,1,2,3
@@ -981,23 +869,19 @@ void draw_tmap(grs_bitmap *bp,int nverts,g3s_point **vertbuf)
 	} else {
 		switch (Interpolation_method) {	// 0 = choose, 1 = linear, 2 = /8 perspective, 3 = full perspective
 			case 0:								// choose best interpolation
-				per2_flag = 1;
 				if (Current_seg_depth > Max_perspective_depth)
-					ntexture_map_lighted_linear(bp, &Tmap1);
+					ntexture_map_lighted_linear(*bp, Tmap1);
 				else
-					ntexture_map_lighted(bp, &Tmap1);
+					ntexture_map_lighted(*bp, Tmap1);
 				break;
 			case 1:								// linear interpolation
-				per2_flag = 1;
-				ntexture_map_lighted_linear(bp, &Tmap1);
+				ntexture_map_lighted_linear(*bp, Tmap1);
 				break;
 			case 2:								// perspective every 8th pixel interpolation
-				per2_flag = 1;
-				ntexture_map_lighted(bp, &Tmap1);
+				ntexture_map_lighted(*bp, Tmap1);
 				break;
 			case 3:								// perspective every pixel interpolation
-				per2_flag = 0;					// this hack means do divide every pixel
-				ntexture_map_lighted(bp, &Tmap1);
+				ntexture_map_lighted(*bp, Tmap1);
 				break;
 			default:
 				Assert(0);				// Illegal value for Interpolation_method, must be 0,1,2,3
@@ -1007,3 +891,4 @@ void draw_tmap(grs_bitmap *bp,int nverts,g3s_point **vertbuf)
 	Lighting_on = lighting_on_save;
 
 }
+#endif

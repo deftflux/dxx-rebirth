@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,19 +23,16 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-#ifndef _ESWITCH_H
-#define _ESWITCH_H
+#pragma once
 
-#include "segment.h"
 #include "switch.h"
+#include "fwdvalptridx.h"
 
 #ifdef __cplusplus
 
 extern int bind_wall_to_trigger();
 
-extern int trigger_remove();
-
-extern int remove_trigger(segment *seg, short side);
+int remove_trigger(vsegptr_t seg, short side);
 
 extern int remove_trigger_num(int trigger_num);
 
@@ -38,6 +41,3 @@ extern void close_trigger_window();
 extern void do_trigger_window();
 
 #endif
-
-#endif
-

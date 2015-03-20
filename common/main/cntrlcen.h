@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -21,19 +27,22 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define _CNTRLCEN_H
 
 #include "vecmat.h"
-#include "object.h"
-#include "wall.h"
 #include "switch.h"
 
 #ifdef __cplusplus
+#include "fwdobject.h"
+#include "pack.h"
+#include "segnum.h"
+
+#include "fwd-partial_range.h"
 
 #define MAX_CONTROLCEN_LINKS    10
 
-struct control_center_triggers
+struct control_center_triggers : public prohibit_void_ptr<control_center_triggers>
 {
 	short   num_links;
-	short   seg[MAX_CONTROLCEN_LINKS];
-	short   side[MAX_CONTROLCEN_LINKS];
+	array<segnum_t, MAX_CONTROLCEN_LINKS>   seg;
+	array<short, MAX_CONTROLCEN_LINKS>   side;
 };
 
 extern control_center_triggers ControlCenterTriggers;
@@ -45,10 +54,13 @@ struct reactor {
 #endif
 	int n_guns;
 	/* Location of the gun on the reactor model */
-	vms_vector gun_points[MAX_CONTROLCEN_GUNS];
+	array<vms_vector, MAX_CONTROLCEN_GUNS> gun_points;
 	/* Orientation of the gun on the reactor model */
-	vms_vector gun_dirs[MAX_CONTROLCEN_GUNS];
+	array<vms_vector, MAX_CONTROLCEN_GUNS> gun_dirs;
 };
+
+// fills in arrays gun_points & gun_dirs, returns the number of guns read
+int read_model_guns(const char *filename,array<vms_vector, MAX_CONTROLCEN_GUNS> &gun_points, array<vms_vector, MAX_CONTROLCEN_GUNS> &gun_dirs);
 
 #if defined(DXX_BUILD_DESCENT_I)
 #define MAX_REACTORS	1
@@ -56,17 +68,17 @@ struct reactor {
 #define MAX_REACTORS 7
 #define DEFAULT_CONTROL_CENTER_EXPLOSION_TIME 30    // Note: Usually uses Alan_pavlish_reactor_times, but can be overridden in editor.
 
-extern int Num_reactors;
+extern unsigned Num_reactors;
 extern int Base_control_center_explosion_time;      // how long to blow up on insane
 extern int Reactor_strength;
 
 /*
  * reads n reactor structs from a PHYSFS_file
  */
-extern int reactor_read_n(reactor *r, int n, PHYSFS_file *fp);
+void reactor_read_n(PHYSFS_file *fp, partial_range_t<reactor *> r);
 #endif
 
-extern reactor Reactors[MAX_REACTORS];
+extern array<reactor, MAX_REACTORS> Reactors;
 
 static inline int get_num_reactor_models()
 {
@@ -104,15 +116,15 @@ extern int Control_center_been_hit;
 extern int Control_center_player_been_seen;
 extern int Control_center_next_fire_time;
 extern int Control_center_present;
-extern int Dead_controlcen_object_num;
+extern objnum_t Dead_controlcen_object_num;
 
 // do whatever this thing does in a frame
-void do_controlcen_frame(objptridx_t obj);
+void do_controlcen_frame(vobjptridx_t obj);
 
 // Initialize control center for a level.
 // Call when a new level is started.
 extern void init_controlcen_for_level(void);
-extern void calc_controlcen_gun_point(reactor *reactor, object *obj,int gun_num);
+void calc_controlcen_gun_point(reactor *reactor, vobjptr_t obj,int gun_num);
 
 void do_controlcen_destroyed_stuff(objptridx_t objp);
 extern void do_controlcen_dead_frame(void);

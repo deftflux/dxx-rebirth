@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,21 +23,19 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define _HASH_H
 
 #ifdef __cplusplus
+#include <map>
 
 struct hashtable
 {
-	int 				bitsize;
-	int				and_mask;
-	int				size;
-	int				nitems;
-	const char				**key;
-	int				*value;
+	struct compare_t
+	{
+		bool operator()(const char *l, const char *r) const;
+	};
+	std::map<const char *, int, compare_t> m;
 };
 
-int hashtable_init( hashtable *ht, int size );
-void hashtable_free( hashtable *ht );
-int hashtable_search( hashtable *ht, char *key );
-void hashtable_insert( hashtable *ht, char *key, int value );
+int hashtable_search( hashtable *ht, const char *key );
+void hashtable_insert( hashtable *ht, const char *key, int value );
 
 #endif
 

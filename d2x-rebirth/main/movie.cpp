@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -32,6 +38,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "window.h"
 #include "console.h"
 #include "config.h"
+#include "physfsx.h"
 #include "key.h"
 #include "mouse.h"
 #include "digi.h"
@@ -41,7 +48,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "strutil.h"
 #include "dxxerror.h"
 #include "u_mem.h"
-#include "byteswap.h"
+#include "byteutil.h"
 #include "gr.h"
 #include "gamefont.h"
 #include "menu.h"
@@ -54,11 +61,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #endif
 #include "args.h"
 
-#define VID_PLAY 0
-#define VID_PAUSE 1
-
-int Vid_State;
-
+#include "compiler-range_for.h"
 
 // Subtitle data
 struct subtitle {
@@ -73,6 +76,8 @@ static int init_subtitles(const char *filename);
 static subtitle Subtitles[MAX_SUBTITLES];
 static int Num_subtitles;
 static char *subtitle_raw_data;
+
+namespace {
 
 class RunSubtitles
 {
@@ -89,15 +94,18 @@ public:
 	}
 };
 
+}
+
 // Movielib data
 
-static const char movielib_files[][FILENAME_LEN] = {"intro","other","robots"};
+static const array<array<char, 8>, 3> movielib_files{{{"intro"}, {"other"}, {"robots"}}};
+struct loaded_movie_t
+{
+	array<char, FILENAME_LEN + 2> filename;
+};
+static loaded_movie_t extra_robot_movie_mission;
 
-#define N_MOVIE_LIBS (sizeof(movielib_files) / sizeof(*movielib_files))
-#define N_BUILTIN_MOVIE_LIBS (N_MOVIE_LIBS - 1)
-#define EXTRA_ROBOT_LIB N_BUILTIN_MOVIE_LIBS
-
-static SDL_RWops *RoboFile;
+static RWops_ptr RoboFile;
 
 // Function Prototypes
 static int RunMovie(char *filename, int highres_flag, int allow_abort,int dx,int dy);
@@ -105,7 +113,7 @@ static int RunMovie(char *filename, int highres_flag, int allow_abort,int dx,int
 static void draw_subtitles(int frame_num);
 
 // ----------------------------------------------------------------------
-static void* MPlayAlloc(unsigned size)
+static void* MPlayAlloc(size_t size)
 {
     return d_malloc(size);
 }
@@ -153,9 +161,7 @@ int PlayMovie(const char *subtitles, const char *filename, int must_have)
 	songs_stop_all();
 
 	// MD2211: if using SDL_Mixer, we never reinit the sound system
-#ifdef USE_SDLMIXER
 	if (GameArg.SndDisableSdlMixer)
-#endif
 		digi_close();
 
 	// Start sound
@@ -165,9 +171,7 @@ int PlayMovie(const char *subtitles, const char *filename, int must_have)
 
 	// MD2211: if using SDL_Mixer, we never reinit the sound system
 	if (!GameArg.SndNoSound
-#ifdef USE_SDLMIXER
 		&& GameArg.SndDisableSdlMixer
-#endif
 	)
 		digi_init();
 
@@ -222,16 +226,16 @@ static void MovieShowFrame(ubyte *buf, int dstx, int dsty, int bufw, int bufh, i
 	ogl_ubitblt_i(
 		bufw*scale, bufh*scale,
 		dstx, dsty,
-		bufw, bufh, 0, 0, &source_bm,&grd_curcanv->cv_bitmap,GameCfg.MovieTexFilt);
+		bufw, bufh, 0, 0, source_bm, grd_curcanv->cv_bitmap, GameCfg.MovieTexFilt);
 
 	glEnable (GL_BLEND);
 #else
-	gr_bm_ubitbltm(bufw,bufh,dstx,dsty,0,0,&source_bm,&grd_curcanv->cv_bitmap);
+	gr_bm_ubitbltm(bufw,bufh,dstx,dsty,0,0,source_bm,grd_curcanv->cv_bitmap);
 #endif
 }
 
 //our routine to set the pallete, called from the movie code
-static void MovieSetPalette(unsigned char *p, unsigned start, unsigned count)
+static void MovieSetPalette(const unsigned char *p, unsigned start, unsigned count)
 {
 	if (count == 0)
 		return;
@@ -250,26 +254,29 @@ static void MovieSetPalette(unsigned char *p, unsigned start, unsigned count)
 }
 
 
-struct movie
+struct movie : ignore_window_pointer_t
 {
 	int result, aborted;
 	int frame_num;
 	int paused;
+	MVESTREAM_ptr_t pMovie;
 };
 
-static int show_pause_message(window *wind, d_event *event, unused_window_userdata_t *)
+static window_event_result show_pause_message(window *wind,const d_event &event, const unused_window_userdata_t *)
 {
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_MOUSE_BUTTON_DOWN:
 			if (event_mouse_get_button(event) != 0)
-				return 0;
+				return window_event_result::ignored;
 			// else fall through
 
 		case EVENT_KEY_COMMAND:
 			if (!call_default_handler(event))
-				window_close(wind);
-			return 1;
+			{
+				return window_event_result::close;
+			}
+			return window_event_result::handled;
 
 		case EVENT_WINDOW_DRAW:
 		{
@@ -293,15 +300,14 @@ static int show_pause_message(window *wind, d_event *event, unused_window_userda
 		default:
 			break;
 	}
-
-	return 0;
+	return window_event_result::ignored;
 }
 
-static int MovieHandler(window *wind, d_event *event, movie *m)
+static window_event_result MovieHandler(window *wind,const d_event &event, movie *m)
 {
 	int key;
 
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_WINDOW_ACTIVATED:
 			m->paused = 0;
@@ -318,8 +324,7 @@ static int MovieHandler(window *wind, d_event *event, movie *m)
 			// If ESCAPE pressed, then quit movie.
 			if (key == KEY_ESC) {
 				m->result = m->aborted = 1;
-				window_close(wind);
-				return 1;
+				return window_event_result::close;
 			}
 
 			// If PAUSE pressed, then pause movie
@@ -327,18 +332,17 @@ static int MovieHandler(window *wind, d_event *event, movie *m)
 			{
 				if (window_create(&grd_curscreen->sc_canvas, 0, 0, SWIDTH, SHEIGHT, show_pause_message, unused_window_userdata))
 					MVE_rmHoldMovie();
-				return 1;
+				return window_event_result::handled;
 			}
 			break;
 
 		case EVENT_WINDOW_DRAW:
 			if (!m->paused)
 			{
-				m->result = MVE_rmStepMovie();
+				m->result = MVE_rmStepMovie(m->pMovie.get());
 				if (m->result)
 				{
-					window_close(wind);
-					return 1;
+					return window_event_result::close;
 				}
 			}
 
@@ -358,8 +362,7 @@ static int MovieHandler(window *wind, d_event *event, movie *m)
 		default:
 			break;
 	}
-
-	return 0;
+	return window_event_result::ignored;
 }
 
 //returns status.  see movie.h
@@ -367,7 +370,6 @@ int RunMovie(char *filename, int hires_flag, int must_have,int dx,int dy)
 {
 	window *wind;
 	movie m;
-	SDL_RWops *filehndl;
 	int track = 0;
 	int aborted = 0;
 	int reshow = 0;
@@ -392,8 +394,7 @@ int RunMovie(char *filename, int hires_flag, int must_have,int dx,int dy)
 
 	// Open Movie file.  If it doesn't exist, no movie, just return.
 
-	filehndl = PHYSFSRWOPS_openRead(filename);
-
+	auto filehndl = PHYSFSRWOPS_openRead(filename);
 	if (!filehndl)
 	{
 		if (must_have)
@@ -417,9 +418,8 @@ int RunMovie(char *filename, int hires_flag, int must_have,int dx,int dy)
 	MVE_sfCallbacks(MovieShowFrame);
 	MVE_palCallbacks(MovieSetPalette);
 
-	if (MVE_rmPrepMovie((void *)filehndl, dx, dy, track)) {
+	if (MVE_rmPrepMovie(m.pMovie, filehndl.get(), dx, dy, track)) {
 		Int3();
-		SDL_FreeRW(filehndl);
 		window_close(wind);
 		if (reshow)
 			show_menus();
@@ -434,9 +434,9 @@ int RunMovie(char *filename, int hires_flag, int must_have,int dx,int dy)
 
 	Assert(m.aborted || m.result == MVE_ERR_EOF);	 ///movie should be over
 
-    MVE_rmEndMovie();
+	m.pMovie.reset();
 
-	SDL_FreeRW(filehndl);                           // Close Movie File
+	filehndl.reset();                           // Close Movie File
 	if (reshow)
 		show_menus();
 	aborted = m.aborted;
@@ -454,23 +454,23 @@ int RunMovie(char *filename, int hires_flag, int must_have,int dx,int dy)
 
 
 //returns 1 if frame updated ok
-int RotateRobot()
+int RotateRobot(MVESTREAM_ptr_t &pMovie)
 {
 	int err;
 
-	err = MVE_rmStepMovie();
+	err = MVE_rmStepMovie(pMovie.get());
 
 	gr_palette_load(gr_palette);
 
 	if (err == MVE_ERR_EOF)     //end of movie, so reset
 	{
-		SDL_RWseek(RoboFile, 0, SEEK_SET);
-		if (MVE_rmPrepMovie(RoboFile, SWIDTH/2.3, SHEIGHT/2.3, 0))
+		SDL_RWseek(RoboFile.get(), 0, SEEK_SET);
+		if (MVE_rmPrepMovie(pMovie, RoboFile.get(), SWIDTH/2.3, SHEIGHT/2.3, 0))
 		{
 			Int3();
 			return 0;
 		}
-		err = MVE_rmStepMovie();
+		err = MVE_rmStepMovie(pMovie.get());
 	}
 	if (err) {
 		Int3();
@@ -481,14 +481,14 @@ int RotateRobot()
 }
 
 
-void DeInitRobotMovie(void)
+void DeInitRobotMovie(MVESTREAM_ptr_t &pMovie)
 {
-	MVE_rmEndMovie();
-	SDL_FreeRW(RoboFile);                           // Close Movie File
+	pMovie.reset();
+	RoboFile.reset();                           // Close Movie File
 }
 
 
-int InitRobotMovie(const char *filename)
+int InitRobotMovie(const char *filename, MVESTREAM_ptr_t &pMovie)
 {
 	if (GameArg.SysNoMovies)
 		return 0;
@@ -508,10 +508,7 @@ int InitRobotMovie(const char *filename)
 		con_printf(CON_URGENT, "Can't open movie <%s>: %s", filename, PHYSFS_getLastError());
 		return MOVIE_NOT_PLAYED;
 	}
-
-	Vid_State = VID_PLAY;
-
-	if (MVE_rmPrepMovie((void *)RoboFile, SWIDTH/2.3, SHEIGHT/2.3, 0)) {
+	if (MVE_rmPrepMovie(pMovie, RoboFile.get(), SWIDTH/2.3, SHEIGHT/2.3, 0)) {
 		Int3();
 		return 0;
 	}
@@ -548,7 +545,6 @@ static int init_subtitles(const char *filename)
 {
 	if (!filename)
 		return 0;
-	PHYSFS_file *ifile;
 	int size,read_count;
 	char *p;
 	int have_binary = 0;
@@ -558,7 +554,7 @@ static int init_subtitles(const char *filename)
 	if (!GameCfg.MovieSubtitles)
 		return 0;
 
-	ifile = PHYSFSX_openReadBuffered(filename);		//try text version
+	auto ifile = PHYSFSX_openReadBuffered(filename);		//try text version
 
 	if (!ifile) {								//no text version, try binary version
 		char filename2[FILENAME_LEN];
@@ -574,9 +570,7 @@ static int init_subtitles(const char *filename)
 	MALLOC (subtitle_raw_data, char, size+1);
 
 	read_count = PHYSFS_read(ifile, subtitle_raw_data, 1, size);
-
-	PHYSFS_close(ifile);
-
+	ifile.reset();
 	subtitle_raw_data[size] = 0;
 
 	if (read_count != size) {
@@ -624,7 +618,7 @@ static void draw_subtitles(int frame_num)
 {
 	static int active_subtitles[MAX_ACTIVE_SUBTITLES];
 	static int num_active_subtitles,next_subtitle;
-	int t,y;
+	int y;
 	int must_erase=0;
 
 	if (frame_num == 0) {
@@ -635,7 +629,7 @@ static void draw_subtitles(int frame_num)
 	}
 
 	//get rid of any subtitles that have expired
-	for (t=0;t<num_active_subtitles;)
+	for (int t=0;t<num_active_subtitles;)
 		if (frame_num > Subtitles[active_subtitles[t]].last_frame) {
 			int t2;
 			for (t2=t;t2<num_active_subtitles-1;t2++)
@@ -664,63 +658,64 @@ static void draw_subtitles(int frame_num)
 	}
 
 	//now draw the current subtitles
-	for (t=0;t<num_active_subtitles;t++)
+	for (int t=0;t<num_active_subtitles;t++)
 		if (active_subtitles[t] != -1) {
 			gr_string(0x8000,y,Subtitles[active_subtitles[t]].msg);
 			y += LINE_SPACING;
 		}
 }
 
-static void init_movie(const char *movielib, int required)
+static int init_movie(const char *movielib, char resolution, int required, loaded_movie_t &movie)
 {
-	char filename[FILENAME_LEN+2];
-
-	snprintf(filename, FILENAME_LEN+2, "%s-%c.mvl", movielib, !GameArg.GfxSkipHiresMovie?'h':'l');
-
-	if (!PHYSFSX_contfile_init(filename, 0))
+	snprintf(&movie.filename[0], movie.filename.size(), "%s-%c.mvl", movielib, resolution);
+	auto r = PHYSFSX_contfile_init(&movie.filename[0], 0);
+	if (!r)
 	{
-		if (required)
-			con_printf(CON_URGENT, "Can't open movielib <%s>: %s", filename, PHYSFS_getLastError());
+		if (required || GameArg.DbgVerbose)
+			con_printf(CON_URGENT, "Can't open movielib <%s>: %s", &movie.filename[0], PHYSFS_getLastError());
+		movie.filename[0] = 0;
 	}
+	return r;
+}
+
+static void init_movie(const char *movielib, int required, loaded_movie_t &movie)
+{
+	if (!GameArg.GfxSkipHiresMovie)
+	{
+		if (init_movie(movielib, 'h', required, movie))
+			return;
+	}
+	init_movie(movielib, 'l', required, movie);
 }
 
 //find and initialize the movie libraries
 void init_movies()
 {
-	int i;
-
 	if (GameArg.SysNoMovies)
 		return;
 
-	for (i=0;i<N_BUILTIN_MOVIE_LIBS;i++) {
-		init_movie(movielib_files[i], 1);
+	range_for (auto &i, movielib_files)
+	{
+		loaded_movie_t m;
+		init_movie(&i[0], 1, m);
 	}
 }
 
-
-static void close_extra_robot_movie(void)
+void close_extra_robot_movie()
 {
-	char filename[FILENAME_LEN+2];
-
-	if (strcmp(movielib_files[EXTRA_ROBOT_LIB],"")) {
-		snprintf(filename,FILENAME_LEN+2, "%s-%c.mvl", movielib_files[EXTRA_ROBOT_LIB], !GameArg.GfxSkipHiresMovie?'h':'l');
-
-		if (!PHYSFSX_contfile_close(filename))
-		{
-			con_printf(CON_URGENT, "Can't close movielib <%s>: %s", filename, PHYSFS_getLastError());
-			snprintf(filename, FILENAME_LEN+2, "%s-%c.mvl", movielib_files[EXTRA_ROBOT_LIB], !GameArg.GfxSkipHiresMovie?'l':'h');
-
-			if (!PHYSFSX_contfile_close(filename))
-				con_printf(CON_URGENT, "Can't close movielib <%s>: %s", filename, PHYSFS_getLastError());
-		}
+	const auto movielib = &extra_robot_movie_mission.filename[0];
+	if (!*movielib)
+		return;
+	if (!PHYSFSX_contfile_close(movielib))
+	{
+		con_printf(CON_URGENT, "Can't close movielib <%s>: %s", movielib, PHYSFS_getLastError());
 	}
+	*movielib = 0;
 }
 
-void init_extra_robot_movie(char *movielib)
+void init_extra_robot_movie(const char *movielib)
 {
 	if (GameArg.SysNoMovies)
 		return;
-
-	close_extra_robot_movie();
-	init_movie(movielib, 0);
+	init_movie(movielib, 0, extra_robot_movie_mission);
 }

@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -22,25 +28,25 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "mouse.h"
 #include "ui.h"
 
+#include "dxxsconf.h"
+#include "compiler-make_unique.h"
 
 #define MENU_BORDER 2
 #define MENU_VERT_SPACING 2
 
 struct menu
 {
-	UI_GADGET_BUTTON ** button_g;
-	const char ** button;
+	std::unique_ptr<std::unique_ptr<UI_GADGET_BUTTON>[]> button_g;
+	std::unique_ptr<const char *[]> button;
 	int *choice;
 	int num_buttons;
 };
 
-static int menu_handler(UI_DIALOG *, d_event *event, menu *m)
+static int menu_handler(UI_DIALOG *,const d_event &event, menu *m)
 {
-	int i;
-	
-	for (i=0; i<m->num_buttons; i++ )
+	for (int i=0; i<m->num_buttons; i++ )
 	{
-		if (GADGET_PRESSED(m->button_g[i]))
+		if (GADGET_PRESSED(m->button_g[i].get()))
 		{
 			*(m->choice) = i+1;
 			return 1;
@@ -59,21 +65,19 @@ static int menu_handler(UI_DIALOG *, d_event *event, menu *m)
 int MenuX( int x, int y, int NumButtons, const char *const text[] )
 {
 	UI_DIALOG * dlg;
-	menu *m;
 	int button_width, button_height, width, height;
-	int i;
 	int w, h;
 	int choice;
 
-	MALLOC(m, menu, 1);
+	auto m = make_unique<menu>();
 	m->num_buttons = NumButtons;
-	MALLOC(m->button_g, UI_GADGET_BUTTON *, NumButtons);
-	MALLOC(m->button, const char *, NumButtons);
+	m->button_g = make_unique<std::unique_ptr<UI_GADGET_BUTTON>[]>(NumButtons);
+	m->button = make_unique<const char *[]>(NumButtons);
 	m->choice = &choice;
 
 	button_width = button_height = 0;
 
-	for (i=0; i<NumButtons; i++ )
+	for (int i=0; i<NumButtons; i++ )
 	{
 		m->button[i] = text[i];
 
@@ -115,12 +119,12 @@ int MenuX( int x, int y, int NumButtons, const char *const text[] )
 		y = h - height;
 	}
 
-	dlg = ui_create_dialog( x, y, width, height, static_cast<dialog_flags>(DF_FILLED | DF_SAVE_BG | DF_MODAL), menu_handler, m );
+	dlg = ui_create_dialog(x, y, width, height, static_cast<dialog_flags>(DF_FILLED | DF_SAVE_BG | DF_MODAL), menu_handler, m.get());
 
 	x = MENU_BORDER+3;
 	y = MENU_BORDER+3;
 
-	for (i=0; i<NumButtons; i++ )
+	for (int i=0; i<NumButtons; i++ )
 	{
 		m->button_g[i] = ui_add_gadget_button( dlg, x, y, button_width, button_height, m->button[i], NULL );
 		y += button_height+MENU_VERT_SPACING;
@@ -132,10 +136,5 @@ int MenuX( int x, int y, int NumButtons, const char *const text[] )
 		event_process();
 
 	ui_close_dialog(dlg);
-	d_free(m->button);
-	d_free(m->button_g);
-	d_free(m);
-
 	return choice;
 }
-

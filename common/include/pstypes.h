@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * Common types and defines
  *
@@ -83,9 +89,10 @@ defined(__LITTLE_ENDIAN__)	// from physfs_internal.h
 #endif
 
 #ifdef __GNUC__
-# define __pack__ __attribute__((packed))
 #ifdef WIN32
-# pragma pack(1)
+# define __pack__ __attribute__((gcc_struct, packed))
+#else
+# define __pack__ __attribute__((packed))
 #endif
 #elif defined(_MSC_VER)
 # pragma pack(push, packing)
@@ -96,10 +103,6 @@ defined(__LITTLE_ENDIAN__)	// from physfs_internal.h
 # define __pack__
 #else
 # error "This program will not work without packed structures"
-#endif
-
-#ifdef _MSC_VER
-# define inline __inline
 #endif
 
 #endif //_TYPES_H

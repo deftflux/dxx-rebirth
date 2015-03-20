@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * Some simple physfs extensions
  *
@@ -14,34 +20,71 @@
 #include <HIServices/Processes.h>
 #endif
 
-#include "physfsx.h"
 #include "args.h"
 #include "newdemo.h"
 #include "console.h"
 #include "strutil.h"
 #include "ignorecase.h"
 
-static const file_extension_t archive_exts[] = { "dxa", "" };
+#include "poison.h"
 
-int PHYSFSX_checkMatchingExtension(const file_extension_t *exts, const char *filename)
+const array<file_extension_t, 1> archive_exts{"dxa"};
+
+char *PHYSFSX_fgets_t::get(char *const buf, std::size_t n, PHYSFS_file *const fp)
+{
+	PHYSFS_sint64 t = PHYSFS_tell(fp);
+	PHYSFS_sint64 r = PHYSFS_read(fp, buf, sizeof(*buf), n - 1);
+	if (r <= 0)
+		return DXX_POISON_MEMORY(buf, buf + n, 0xcc), nullptr;
+	char *p = buf;
+	const auto cleanup = [&]{
+		return *p = 0, DXX_POISON_MEMORY(p + 1, buf + n, 0xcc), p;
+	};
+	for (char *e = buf + r;;)
+	{
+		if (p == e)
+		{
+			return cleanup();
+		}
+		char c = *p;
+		if (c == 0)
+			break;
+		if (c == '\n')
+		{
+			break;
+		}
+		else if (c == '\r')
+		{
+			*p = 0;
+			if (++p != e && *p != '\n')
+				--p;
+			break;
+		}
+		++p;
+	}
+	PHYSFS_seek(fp, t + (p - buf) + 1);
+	return cleanup();
+}
+
+int PHYSFSX_checkMatchingExtension(const char *filename, const file_extension_t *const exts, const uint_fast32_t count)
 {
 	const char *ext = strrchr(filename, '.');
 	if (!ext)
 		return 0;
 	++ext;
-	for (const file_extension_t *k = exts;; ++k)	// see if the file is of a type we want
+	const auto e = exts + count;
+	for (auto k = exts; k != e; ++k)	// see if the file is of a type we want
 	{
-		if (!(*k)[0])
-			return 0;
 		if (!d_stricmp(ext, *k))
 			return 1;
 	}
+	return 0;
 }
 
 // Initialise PhysicsFS, set up basic search paths and add arguments from .ini file.
 // The .ini file can be in either the user directory or the same directory as the program.
 // The user directory is searched first.
-void PHYSFSX_init(int argc, char *argv[])
+bool PHYSFSX_init(int argc, char *argv[])
 {
 #if defined(__unix__) || defined(__APPLE__) || defined(__MACH__)
 	char fullPath[PATH_MAX + 5];
@@ -136,7 +179,8 @@ void PHYSFSX_init(int argc, char *argv[])
 #endif
 	con_printf(CON_DEBUG, "PHYSFS: temporarily append base directory \"%s\" to search path", base_dir);
 	PHYSFS_addToSearchPath(base_dir, 1);
-	InitArgs( argc,argv );
+	if (!InitArgs( argc,argv ))
+		return false;
 	PHYSFS_removeFromSearchPath(base_dir);
 	
 	if (!PHYSFS_getWriteDir())
@@ -194,6 +238,7 @@ void PHYSFSX_init(int argc, char *argv[])
 		PHYSFS_addToSearchPath(base_dir, 1);
 	}
 #endif
+	return true;
 }
 
 // Add a searchpath, but that searchpath is relative to an existing searchpath
@@ -227,21 +272,14 @@ int PHYSFSX_removeRelFromSearchPath(const char *relname)
 
 int PHYSFSX_fsize(const char *hogname)
 {
-	PHYSFS_file *fp;
 	char hogname2[PATH_MAX];
-	int size;
 
 	snprintf(hogname2, sizeof(hogname2), "%s", hogname);
 	PHYSFSEXT_locateCorrectCase(hogname2);
 
-	fp = PHYSFS_openRead(hogname2);
-	if (fp == NULL)
-		return -1;
-
-	size = PHYSFS_fileLength(fp);
-	PHYSFS_close(fp);
-
-	return size;
+	if (RAIIPHYSFS_File fp{PHYSFS_openRead(hogname2)})
+		return PHYSFS_fileLength(fp);
+	return -1;
 }
 
 void PHYSFSX_listSearchPathContent()
@@ -363,54 +401,48 @@ int PHYSFSX_rename(const char *oldpath, const char *newpath)
 	return (rename(old, n) == 0);
 }
 
-// Find files at path that have an extension listed in exts
-// The extension list exts must be NULL-terminated, with each ext beginning with a '.'
-char **PHYSFSX_findFiles(const char *path, const file_extension_t *exts)
+template <typename F>
+static inline PHYSFS_list_t PHYSFSX_findPredicateFiles(const char *path, F f)
 {
-	char **list = PHYSFS_enumerateFiles(path);
-	char **i, **j = list;
-	
-	if (list == NULL)
-		return NULL;	// out of memory: not so good
-	
-	for (i = list; *i; i++)
+	PHYSFS_list_t list{PHYSFS_enumerateFiles(path)};
+	if (!list)
+		return nullptr;	// out of memory: not so good
+	char **j = list.get();
+	for (auto i = j; *i; ++i)
 	{
-		if (PHYSFSX_checkMatchingExtension(exts, *i))
+		if (f(*i))
 			*j++ = *i;
 		else
 			free(*i);
 	}
-	
 	*j = NULL;
-	char **r = (char **)realloc(list, (j - list + 1)*sizeof(char *));	// save a bit of memory (or a lot?)
+	char **r = reinterpret_cast<char **>(realloc(list.get(), (j - list.get() + 1)*sizeof(char *)));	// save a bit of memory (or a lot?)
 	if (r)
-		return r;
+	{
+		list.release();
+		list.reset(r);
+	}
 	return list;
+}
+
+// Find files at path that have an extension listed in exts
+// The extension list exts must be NULL-terminated, with each ext beginning with a '.'
+PHYSFS_list_t PHYSFSX_findFiles(const char *path, const file_extension_t *exts, uint_fast32_t count)
+{
+	const auto predicate = [&](const char *i) {
+		return PHYSFSX_checkMatchingExtension(i, exts, count);
+	};
+	return PHYSFSX_findPredicateFiles(path, predicate);
 }
 
 // Same function as above but takes a real directory as second argument, only adding files originating from this directory.
 // This can be used to further seperate files in search path but it must be made sure realpath is properly formatted.
-char **PHYSFSX_findabsoluteFiles(const char *path, const char *realpath, const file_extension_t *exts)
+PHYSFS_list_t PHYSFSX_findabsoluteFiles(const char *path, const char *realpath, const file_extension_t *exts, uint_fast32_t count)
 {
-	char **list = PHYSFS_enumerateFiles(path);
-	char **i, **j = list;
-	
-	if (list == NULL)
-		return NULL;	// out of memory: not so good
-	
-	for (i = list; *i; i++)
-	{
-		if (PHYSFSX_checkMatchingExtension(exts, *i) && (!strcmp(PHYSFS_getRealDir(*i),realpath)))
-			*j++ = *i;
-		else
-			free(*i);
-	}
-	
-	*j = NULL;
-	char **r = (char **)realloc(list, (j - list + 1)*sizeof(char *));	// save a bit of memory (or a lot?)
-	if (r)
-		return r;
-	return list;
+	const auto predicate = [&](const char *i) {
+		return PHYSFSX_checkMatchingExtension(i, exts, count) && (!strcmp(PHYSFS_getRealDir(i), realpath));
+	};
+	return PHYSFSX_findPredicateFiles(path, predicate);
 }
 
 #if 0
@@ -445,9 +477,8 @@ int PHYSFSX_exists(const char *filename, int ignorecase)
 }
 
 //Open a file for reading, set up a buffer
-PHYSFS_file *PHYSFSX_openReadBuffered(const char *filename)
+RAIIPHYSFS_File PHYSFSX_openReadBuffered(const char *filename)
 {
-	PHYSFS_file *fp;
 	PHYSFS_uint64 bufSize;
 	char filename2[PATH_MAX];
 	
@@ -460,30 +491,26 @@ PHYSFS_file *PHYSFSX_openReadBuffered(const char *filename)
 	snprintf(filename2, sizeof(filename2), "%s", filename);
 	PHYSFSEXT_locateCorrectCase(filename2);
 	
-	fp = PHYSFS_openRead(filename2);
+	RAIIPHYSFS_File fp{PHYSFS_openRead(filename2)};
 	if (!fp)
-		return NULL;
+		return nullptr;
 	
 	bufSize = PHYSFS_fileLength(fp);
 	while (!PHYSFS_setBuffer(fp, bufSize) && bufSize)
 		bufSize /= 2;	// even if the error isn't memory full, for a 20MB file it'll only do this 8 times
-	
 	return fp;
 }
 
 //Open a file for writing, set up a buffer
-PHYSFS_file *PHYSFSX_openWriteBuffered(const char *filename)
+RAIIPHYSFS_File PHYSFSX_openWriteBuffered(const char *filename)
 {
-	PHYSFS_file *fp;
 	PHYSFS_uint64 bufSize = 1024*1024;	// hmm, seems like an OK size.
 	
-	fp = PHYSFS_openWrite(filename);
+	RAIIPHYSFS_File fp{PHYSFS_openWrite(filename)};
 	if (!fp)
-		return NULL;
-	
+		return nullptr;
 	while (!PHYSFS_setBuffer(fp, bufSize) && bufSize)
 		bufSize /= 2;
-	
 	return fp;
 }
 
@@ -494,14 +521,13 @@ PHYSFS_file *PHYSFSX_openWriteBuffered(const char *filename)
  */
 void PHYSFSX_addArchiveContent()
 {
-	char **list = NULL;
-	int i = 0, content_updated = 0;
+	int content_updated = 0;
 
 	con_printf(CON_DEBUG, "PHYSFS: Adding archives to the game.");
 	// find files in Searchpath ...
-	list = PHYSFSX_findFiles("", archive_exts);
+	auto list = PHYSFSX_findFiles("", archive_exts);
 	// if found, add them...
-	for (i = 0; list[i] != NULL; i++)
+	for (int i = 0; list[i] != NULL; i++)
 	{
 		char realfile[PATH_MAX];
 		PHYSFSX_getRealPath(list[i],realfile);
@@ -511,14 +537,12 @@ void PHYSFSX_addArchiveContent()
 			content_updated = 1;
 		}
 	}
-	PHYSFS_freeList(list);
-	list = NULL;
-
 #if PHYSFS_VER_MAJOR >= 2
+	list.reset();
 	// find files in DEMO_DIR ...
 	list = PHYSFSX_findFiles(DEMO_DIR, archive_exts);
 	// if found, add them...
-	for (i = 0; list[i] != NULL; i++)
+	for (int i = 0; list[i] != NULL; i++)
 	{
 		char demofile[PATH_MAX], realfile[PATH_MAX];
 		snprintf(demofile, sizeof(demofile), "%s%s", DEMO_DIR, list[i]);
@@ -529,10 +553,8 @@ void PHYSFSX_addArchiveContent()
 			content_updated = 1;
 		}
 	}
-
-	PHYSFS_freeList(list);
-	list = NULL;
 #endif
+	list.reset();
 
 	if (content_updated)
 	{
@@ -544,31 +566,24 @@ void PHYSFSX_addArchiveContent()
 // Removes content added above when quitting game
 void PHYSFSX_removeArchiveContent()
 {
-	char **list = NULL;
-	int i = 0;
-
 	// find files in Searchpath ...
-	list = PHYSFSX_findFiles("", archive_exts);
+	auto list = PHYSFSX_findFiles("", archive_exts);
 	// if found, remove them...
-	for (i = 0; list[i] != NULL; i++)
+	for (int i = 0; list[i] != NULL; i++)
 	{
 		char realfile[PATH_MAX];
 		PHYSFSX_getRealPath(list[i],realfile);
 		PHYSFS_removeFromSearchPath(realfile);
 	}
-	PHYSFS_freeList(list);
-	list = NULL;
-
+	list.reset();
 	// find files in DEMO_DIR ...
 	list = PHYSFSX_findFiles(DEMO_DIR, archive_exts);
 	// if found, remove them...
-	for (i = 0; list[i] != NULL; i++)
+	for (int i = 0; list[i] != NULL; i++)
 	{
 		char demofile[PATH_MAX], realfile[PATH_MAX];
 		snprintf(demofile, sizeof(demofile), "%s%s", DEMO_DIR, list[i]);
 		PHYSFSX_getRealPath(demofile,realfile);
 		PHYSFS_removeFromSearchPath(realfile);
 	}
-	PHYSFS_freeList(list);
-	list = NULL;
 }

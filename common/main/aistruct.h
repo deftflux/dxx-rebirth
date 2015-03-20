@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -23,9 +29,13 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #ifndef _AISTRUCT_H
 #define _AISTRUCT_H
 
+#include <physfs.h>
 #include "polyobj.h"
 
 #ifdef __cplusplus
+#include "pack.h"
+#include "objnum.h"
+#include "segnum.h"
 
 #define GREEN_GUY   1
 
@@ -159,7 +169,7 @@ enum player_awareness_type_t
 // This is the stuff that is permanent for an AI object.
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 // Rather temporal AI stuff.
-struct ai_local
+struct ai_local : public prohibit_void_ptr<ai_local>
 {
 // These used to be bytes, changed to ints so I could set watchpoints on them.
 #if defined(DXX_BUILD_DESCENT_I)
@@ -169,7 +179,7 @@ struct ai_local
 	sbyte      mode;                            // current mode within behavior
 	sbyte      previous_visibility;             // Visibility of player last time we checked.
 	sbyte      rapidfire_count;                 // number of shots fired rapidly
-	short      goal_segment;                    // goal segment for current path
+	segnum_t      goal_segment;                    // goal segment for current path
 	fix        last_see_time, last_attack_time; // For sound effects, time at which player last seen, attacked
 #elif defined(DXX_BUILD_DESCENT_II)
 	int        player_awareness_type;         // type of awareness of player
@@ -178,7 +188,7 @@ struct ai_local
 	int        mode;                          // current mode within behavior
 	int        previous_visibility;           // Visibility of player last time we checked.
 	int        rapidfire_count;               // number of shots fired rapidly
-	int        goal_segment;                  // goal segment for current path
+	segnum_t        goal_segment;                  // goal segment for current path
 #endif
 	fix        next_action_time;              // time in seconds until something happens, mode dependent
 	fix        next_fire;                     // time in seconds until can fire again
@@ -196,23 +206,23 @@ struct ai_local
 	sbyte      achieved_state[MAX_SUBMODELS]; // Last achieved state
 };
 
-struct ai_static
+struct ai_static : public prohibit_void_ptr<ai_static>
 {
 	ubyte   behavior;               //
 	sbyte   flags[MAX_AI_FLAGS];    // various flags, meaning defined by constants
-	short   hide_segment;           // Segment to go to for hiding.
+	segnum_t   hide_segment;           // Segment to go to for hiding.
 	short   hide_index;             // Index in Path_seg_points
 	short   path_length;            // Length of hide path.
 #if defined(DXX_BUILD_DESCENT_I)
 	short   cur_path_index;         // Current index in path.
-	short   follow_path_start_seg;  // Start segment for robot which follows path.
-	short   follow_path_end_seg;    // End segment for robot which follows path.
+	segnum_t   follow_path_start_seg;  // Start segment for robot which follows path.
+	segnum_t   follow_path_end_seg;    // End segment for robot which follows path.
 	int     danger_laser_signature;
 #elif defined(DXX_BUILD_DESCENT_II)
 	sbyte   cur_path_index;         // Current index in path.
 	sbyte   dying_sound_playing;    // !0 if this robot is playing its dying sound.
 #endif
-	short   danger_laser_num;
+	objnum_t   danger_laser_num;
 #if defined(DXX_BUILD_DESCENT_II)
 	int     danger_laser_signature;
 	fix64   dying_start_time;       // Time at which this robot started dying.
@@ -281,11 +291,11 @@ struct ai_local_rw
 	sbyte      achieved_state[MAX_SUBMODELS]; // Last achieved state
 };
 
-struct ai_cloak_info
+struct ai_cloak_info : public prohibit_void_ptr<ai_cloak_info>
 {
 	fix64       last_time;
 #if defined(DXX_BUILD_DESCENT_II)
-	int         last_segment;
+	segnum_t         last_segment;
 #endif
 	vms_vector  last_position;
 };
@@ -301,17 +311,17 @@ struct ai_cloak_info_rw
 };
 #endif
 
-struct point_seg {
-	int         segnum;
+struct point_seg : prohibit_void_ptr<point_seg> {
+	segnum_t         segnum;
 	vms_vector  point;
 };
 
 struct seg_seg
 {
-	short       start, end;
+	segnum_t       start, end;
 };
 
-#define MAX_POINT_SEGS  2500
+static const unsigned MAX_POINT_SEGS = 2500;
 
 // These are the information for a robot describing the location of
 // the player last time he wasn't cloaked, and the time at which he

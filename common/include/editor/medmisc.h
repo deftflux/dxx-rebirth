@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -22,8 +28,8 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #ifdef __cplusplus
 
-struct segment;
 struct vms_matrix;
+struct vsegptr_t;
 
 void GetMouseRotation( int idx, int idy, vms_matrix * RotMat );
 extern int Gameview_lockstep;                         //In medmisc.c
@@ -37,8 +43,7 @@ int IncreaseDrawDepth(void);
 int DecreaseDrawDepth(void);
 int ToggleCoordAxes();
 extern int    Big_depth;
-void set_chase_matrix(segment *sp);
-void set_view_target_from_segment(segment *sp);
+void set_view_target_from_segment(vsegptr_t sp);
 
 #endif
 

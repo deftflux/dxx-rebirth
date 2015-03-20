@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -35,34 +41,34 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define CURVE_RIGHT 1
 #define CURVE_UP 2
 
-segment *OriginalSeg;
-segment *OriginalMarkedSeg;
-int OriginalSide;
-int OriginalMarkedSide;
-segment *CurveSegs[MAX_SEGMENTS];
-int CurveNumSegs;
-const fix Mh[4][4] = { { 2*F1_0, -2*F1_0,  1*F1_0,  1*F1_0 },
-                       {-3*F1_0,  3*F1_0, -2*F1_0, -1*F1_0 },
-                       { 0*F1_0,  0*F1_0,  1*F1_0,  0*F1_0 },
-                       { 1*F1_0,  0*F1_0,  0*F1_0,  0*F1_0 } };
+#include "compiler-range_for.h"
+#include "partial_range.h"
+
+static segment *OriginalSeg;
+static segment *OriginalMarkedSeg;
+static int OriginalSide;
+static int OriginalMarkedSide;
+static array<segment *, MAX_SEGMENTS> CurveSegs;
+static unsigned CurveNumSegs;
 
 static void generate_banked_curve(fix maxscale, vms_equation coeffs);
 
-void create_curve(vms_vector *p1, vms_vector *p4, vms_vector *r1, vms_vector *r4, vms_equation *coeffs) {
+static void create_curve(vms_vector &p1, vms_vector &p4, vms_vector &r1, vms_vector &r4, vms_equation &coeffs)
+{
 // Q(t) = (2t^3 - 3t^2 + 1) p1 + (-2t^3 + 3t^2) p4 + (t~3 - 2t^2 + t) r1 + (t^3 - t^2 ) r4
 
-    coeffs->n.x3 = fixmul(2*F1_0,p1->x) - fixmul(2*F1_0,p4->x) + r1->x + r4->x;
-    coeffs->n.x2 = fixmul(-3*F1_0,p1->x) + fixmul(3*F1_0,p4->x) - fixmul(2*F1_0,r1->x) - fixmul(1*F1_0,r4->x);
-    coeffs->n.x1 = r1->x;
-    coeffs->n.x0 = p1->x;
-    coeffs->n.y3 = fixmul(2*F1_0,p1->y) - fixmul(2*F1_0,p4->y) + r1->y + r4->y;
-    coeffs->n.y2 = fixmul(-3*F1_0,p1->y) + fixmul(3*F1_0,p4->y) - fixmul(2*F1_0,r1->y) - fixmul(1*F1_0,r4->y);
-    coeffs->n.y1 = r1->y;
-    coeffs->n.y0 = p1->y;
-    coeffs->n.z3 = fixmul(2*F1_0,p1->z) - fixmul(2*F1_0,p4->z) + r1->z + r4->z;
-    coeffs->n.z2 = fixmul(-3*F1_0,p1->z) + fixmul(3*F1_0,p4->z) - fixmul(2*F1_0,r1->z) - fixmul(1*F1_0,r4->z);
-    coeffs->n.z1 = r1->z;
-    coeffs->n.z0 = p1->z;
+    coeffs.n.x3 = fixmul(2*F1_0,p1.x) - fixmul(2*F1_0,p4.x) + r1.x + r4.x;
+    coeffs.n.x2 = fixmul(-3*F1_0,p1.x) + fixmul(3*F1_0,p4.x) - fixmul(2*F1_0,r1.x) - fixmul(1*F1_0,r4.x);
+    coeffs.n.x1 = r1.x;
+    coeffs.n.x0 = p1.x;
+    coeffs.n.y3 = fixmul(2*F1_0,p1.y) - fixmul(2*F1_0,p4.y) + r1.y + r4.y;
+    coeffs.n.y2 = fixmul(-3*F1_0,p1.y) + fixmul(3*F1_0,p4.y) - fixmul(2*F1_0,r1.y) - fixmul(1*F1_0,r4.y);
+    coeffs.n.y1 = r1.y;
+    coeffs.n.y0 = p1.y;
+    coeffs.n.z3 = fixmul(2*F1_0,p1.z) - fixmul(2*F1_0,p4.z) + r1.z + r4.z;
+    coeffs.n.z2 = fixmul(-3*F1_0,p1.z) + fixmul(3*F1_0,p4.z) - fixmul(2*F1_0,r1.z) - fixmul(1*F1_0,r4.z);
+    coeffs.n.z1 = r1.z;
+    coeffs.n.z0 = p1.z;
 
 }
 
@@ -82,7 +88,8 @@ vms_vector evaluate_curve(vms_equation *coeffs, int degree, fix t) {
 }
 
 
-fix curve_dist(vms_equation *coeffs, int degree, fix t0, vms_vector *p0, fix dist) {
+fix curve_dist(vms_equation *coeffs, int degree, fix t0, const vms_vector &p0, fix dist)
+{
 	 vms_vector coord;
     fix t, diff;
 
@@ -90,25 +97,11 @@ fix curve_dist(vms_equation *coeffs, int degree, fix t0, vms_vector *p0, fix dis
 
     for (t=t0;t<1*F1_0;t+=0.001*F1_0) {
         coord = evaluate_curve(coeffs, 3, t);
-        diff = dist - vm_vec_dist(&coord, p0);
+        diff = dist - vm_vec_dist(coord, p0);
         if (diff<ACCURACY)   //&&(diff>-ACCURACY))
             return t;
     }
     return -1*F1_0;
-
-}
-
-void curve_dir(vms_equation *coeffs, int degree, fix t0, vms_vector *dir) {
-    fix t2;
-
-    if (degree!=3) con_printf(CON_CRITICAL," for Hermite Curves degree must be 3");
-
-    t2 = fixmul(t0,t0);
-
-    dir->x = fixmul(3*F1_0,fixmul(coeffs->n.x3,t2)) + fixmul(2*F1_0,fixmul(coeffs->n.x2,t0)) + coeffs->n.x1;
-    dir->y = fixmul(3*F1_0,fixmul(coeffs->n.y3,t2)) + fixmul(2*F1_0,fixmul(coeffs->n.y2,t0)) + coeffs->n.y1;
-    dir->z = fixmul(3*F1_0,fixmul(coeffs->n.z3,t2)) + fixmul(2*F1_0,fixmul(coeffs->n.z2,t0)) + coeffs->n.z1;
-    vm_vec_normalize( dir );
 
 }
 
@@ -151,71 +144,71 @@ int generate_curve( fix r1scale, fix r4scale ) {
     fix t, maxscale;
     fixang rangle, uangle;
 
-    compute_center_point_on_side( &p1, Cursegp, Curside );
+    compute_center_point_on_side(p1, Cursegp, Curside);
 
     switch( Curside ) {
         case WLEFT:
-            extract_right_vector_from_segment(Cursegp, &r1);
-            vm_vec_scale( &r1, -F1_0 );
+            extract_right_vector_from_segment(Cursegp, r1);
+            vm_vec_scale(r1, -F1_0 );
             break;
         case WTOP:
-            extract_up_vector_from_segment(Cursegp, &r1);
+            extract_up_vector_from_segment(Cursegp, r1);
             break;
         case WRIGHT:
-            extract_right_vector_from_segment(Cursegp, &r1);
+            extract_right_vector_from_segment(Cursegp, r1);
             break;
         case WBOTTOM:
-            extract_up_vector_from_segment(Cursegp, &r1);
-            vm_vec_scale( &r1, -F1_0 );
+            extract_up_vector_from_segment(Cursegp, r1);
+            vm_vec_scale(r1, -F1_0 );
             break;
         case WBACK:
-            extract_forward_vector_from_segment(Cursegp, &r1);
+            extract_forward_vector_from_segment(Cursegp, r1);
             break;
         case WFRONT:
-            extract_forward_vector_from_segment(Cursegp, &r1);
-            vm_vec_scale( &r1, -F1_0 );
+            extract_forward_vector_from_segment(Cursegp, r1);
+            vm_vec_scale(r1, -F1_0 );
             break;
         }            
 
-    compute_center_point_on_side( &p4, Markedsegp, Markedside );
+    compute_center_point_on_side(p4, Markedsegp, Markedside);
 
     switch( Markedside ) {
         case WLEFT:
-            extract_right_vector_from_segment(Markedsegp, &r4);
-            extract_up_vector_from_segment(Markedsegp, &r4t);
+            extract_right_vector_from_segment(Markedsegp, r4);
+            extract_up_vector_from_segment(Markedsegp, r4t);
             break;
         case WTOP:
-            extract_up_vector_from_segment(Markedsegp, &r4);
-            vm_vec_scale( &r4, -F1_0 );
-            extract_forward_vector_from_segment(Markedsegp, &r4t);
-            vm_vec_scale( &r4t, -F1_0 );
+            extract_up_vector_from_segment(Markedsegp, r4);
+            vm_vec_scale(r4, -F1_0 );
+            extract_forward_vector_from_segment(Markedsegp, r4t);
+            vm_vec_scale(r4t, -F1_0 );
             break;
         case WRIGHT:
-            extract_right_vector_from_segment(Markedsegp, &r4);
-            vm_vec_scale( &r4, -F1_0 );
-            extract_up_vector_from_segment(Markedsegp, &r4t);
+            extract_right_vector_from_segment(Markedsegp, r4);
+            vm_vec_scale(r4, -F1_0 );
+            extract_up_vector_from_segment(Markedsegp, r4t);
             break;
         case WBOTTOM:
-            extract_up_vector_from_segment(Markedsegp, &r4);
-            extract_forward_vector_from_segment(Markedsegp, &r4t);
+            extract_up_vector_from_segment(Markedsegp, r4);
+            extract_forward_vector_from_segment(Markedsegp, r4t);
             break;
         case WBACK:
-            extract_forward_vector_from_segment(Markedsegp, &r4);
-            vm_vec_scale( &r4, -F1_0 );
-            extract_up_vector_from_segment(Markedsegp, &r4t);
+            extract_forward_vector_from_segment(Markedsegp, r4);
+            vm_vec_scale(r4, -F1_0 );
+            extract_up_vector_from_segment(Markedsegp, r4t);
             break;
         case WFRONT:
-            extract_forward_vector_from_segment(Markedsegp, &r4);
-            extract_up_vector_from_segment(Markedsegp, &r4t);
+            extract_forward_vector_from_segment(Markedsegp, r4);
+            extract_up_vector_from_segment(Markedsegp, r4t);
             break;
         }
 
     r1save = r1;
     tvec = r1;
-    vm_vec_scale(&r1,r1scale);
-    vm_vec_scale(&r4,r4scale);
+    vm_vec_scale(r1,r1scale);
+    vm_vec_scale(r4,r4scale);
 
-    create_curve( &p1, &p4, &r1, &r4, &coeffs );
+    create_curve( p1, p4, r1, r4, coeffs );
     OriginalSeg = Cursegp;
     OriginalMarkedSeg = Markedsegp;
     OriginalSide = Curside;
@@ -227,27 +220,25 @@ int generate_curve( fix r1scale, fix r4scale ) {
     firstsegflag = 1;
     enddist = F1_0; nextdist = 0;
     while ( enddist > fixmul( nextdist, 1.5*F1_0 )) {
-            vms_matrix  rotmat,rotmat2;
-			vms_vector	tdest;
-
+            vms_matrix  rotmat;
             if (firstsegflag==1)
                 firstsegflag=0;
             else
-                extract_forward_vector_from_segment(Cursegp, &tvec);
-            nextdist = vm_vec_mag(&tvec);                                   // nextdist := distance to next point
-            t = curve_dist(&coeffs, 3, t, &prev_point, nextdist);               // t = argument at which function is forward vector magnitude units away from prev_point (in 3-space, not along curve)
+                extract_forward_vector_from_segment(Cursegp, tvec);
+            nextdist = vm_vec_mag(tvec);                                   // nextdist := distance to next point
+            t = curve_dist(&coeffs, 3, t, prev_point, nextdist);               // t = argument at which function is forward vector magnitude units away from prev_point (in 3-space, not along curve)
             coord = evaluate_curve(&coeffs, 3, t);                                          // coord := point about forward vector magnitude units away from prev_point
-            enddist = vm_vec_dist(&coord, &p4);                  // enddist := distance from current to end point, vec_dir used as a temporary variable
+            enddist = vm_vec_dist(coord, p4);                  // enddist := distance from current to end point, vec_dir used as a temporary variable
             //vm_vec_normalize(vm_vec_sub(&vec_dir, &coord, &prev_point));
-            vm_vec_normalized_dir(&vec_dir, &coord, &prev_point);
+            vm_vec_normalized_dir(vec_dir, coord, prev_point);
         if (!med_attach_segment( Cursegp, &New_segment, Curside, AttachSide )) {
             med_extract_matrix_from_segment( Cursegp,&rotmat );                   // rotmat := matrix describing orientation of Cursegp
-			vm_vec_rotate(&tdest,&vec_dir,&rotmat);	// tdest := vec_dir in reference frame of Cursegp
+			const auto tdest = vm_vec_rotate(vec_dir,rotmat);	// tdest := vec_dir in reference frame of Cursegp
 			vec_dir = tdest;
 
-            vm_vector_2_matrix(&rotmat2,&vec_dir,NULL,NULL);
+            const auto rotmat2 = vm_vector_2_matrix(vec_dir,nullptr,nullptr);
 
-            med_rotate_segment( Cursegp, &rotmat2 );
+            med_rotate_segment( Cursegp, rotmat2 );
 			prev_point = coord;
             Curside = Side_opposite[AttachSide];
 
@@ -256,14 +247,14 @@ int generate_curve( fix r1scale, fix r4scale ) {
         } else return 0;
 	}
 
-    extract_up_vector_from_segment( Cursegp,&tvec );
-    uangle = vm_vec_delta_ang( &tvec, &r4t, &r4 );
+    extract_up_vector_from_segment( Cursegp,tvec );
+    uangle = vm_vec_delta_ang( tvec, r4t, r4 );
     if (uangle >= F1_0 * 1/8) uangle -= F1_0 * 1/4;
     if (uangle >= F1_0 * 1/8) uangle -= F1_0 * 1/4;
     if (uangle <= -F1_0 * 1/8) uangle += F1_0 * 1/4;
     if (uangle <= -F1_0 * 1/8) uangle += F1_0 * 1/4;
-    extract_right_vector_from_segment( Cursegp,&tvec );
-    rangle = vm_vec_delta_ang( &tvec, &r4t, &r4 );
+    extract_right_vector_from_segment( Cursegp,tvec );
+    rangle = vm_vec_delta_ang( tvec, r4t, r4 );
     if (rangle >= F1_0/8) rangle -= F1_0/4;
     if (rangle >= F1_0/8) rangle -= F1_0/4;
     if (rangle <= -F1_0/8) rangle += F1_0/4;
@@ -291,6 +282,13 @@ int generate_curve( fix r1scale, fix r4scale ) {
         else return 0;
 }
 
+static inline vms_matrix vm_vec_ang_2_matrix (const vms_vector &v, fixang a) __attribute_warn_unused_result;
+static inline vms_matrix vm_vec_ang_2_matrix (const vms_vector &v, fixang a)
+{
+	vms_matrix m;
+	return vm_vec_ang_2_matrix(m, v, a), m;
+}
+
 void generate_banked_curve(fix maxscale, vms_equation coeffs) {
     vms_vector vec_dir, tvec, b4r4t;
     vms_vector coord,prev_point;
@@ -301,15 +299,15 @@ void generate_banked_curve(fix maxscale, vms_equation coeffs) {
 
     if (CurveNumSegs) {
 
-    extract_up_vector_from_segment( Cursegp,&b4r4t );
-    uangle = vm_vec_delta_ang( &b4r4t, &r4t, &r4 );
+    extract_up_vector_from_segment( Cursegp,b4r4t );
+    uangle = vm_vec_delta_ang( b4r4t, r4t, r4 );
     if (uangle >= F1_0 * 1/8) uangle -= F1_0 * 1/4;
     if (uangle >= F1_0 * 1/8) uangle -= F1_0 * 1/4;
     if (uangle <= -F1_0 * 1/8) uangle += F1_0 * 1/4;
     if (uangle <= -F1_0 * 1/8) uangle += F1_0 * 1/4;
 
-    extract_right_vector_from_segment( Cursegp,&b4r4t );
-    rangle = vm_vec_delta_ang( &b4r4t, &r4t, &r4 );
+    extract_right_vector_from_segment( Cursegp,b4r4t );
+    rangle = vm_vec_delta_ang( b4r4t, r4t, r4 );
     if (rangle >= F1_0/8) rangle -= F1_0/4;
     if (rangle >= F1_0/8) rangle -= F1_0/4;
     if (rangle <= -F1_0/8) rangle += F1_0/4;
@@ -332,26 +330,24 @@ void generate_banked_curve(fix maxscale, vms_equation coeffs) {
     firstsegflag = 1;
     enddist = F1_0; nextdist = 0;
     while ( enddist > fixmul( nextdist, 1.5*F1_0 )) {
-            vms_matrix  rotmat,rotmat2;
-            vms_vector  tdest;
-
+            vms_matrix  rotmat;
             if (firstsegflag==1)
                 firstsegflag=0;
             else
-                extract_forward_vector_from_segment(Cursegp, &tvec);
-            nextdist = vm_vec_mag(&tvec);                                   // nextdist := distance to next point
-            t = curve_dist(&coeffs, 3, t, &prev_point, nextdist);               // t = argument at which function is forward vector magnitude units away from prev_point (in 3-space, not along curve)
+                extract_forward_vector_from_segment(Cursegp, tvec);
+            nextdist = vm_vec_mag(tvec);                                   // nextdist := distance to next point
+            t = curve_dist(&coeffs, 3, t, prev_point, nextdist);               // t = argument at which function is forward vector magnitude units away from prev_point (in 3-space, not along curve)
             coord = evaluate_curve(&coeffs, 3, t);                                          // coord := point about forward vector magnitude units away from prev_point
-            enddist = vm_vec_dist(&coord, &p4);                  // enddist := distance from current to end point, vec_dir used as a temporary variable
+            enddist = vm_vec_dist(coord, p4);                  // enddist := distance from current to end point, vec_dir used as a temporary variable
             //vm_vec_normalize(vm_vec_sub(&vec_dir, &coord, &prev_point));
-            vm_vec_normalized_dir(&vec_dir, &coord, &prev_point);
+            vm_vec_normalized_dir(vec_dir, coord, prev_point);
         if (!med_attach_segment( Cursegp, &New_segment, Curside, AttachSide )) {
             med_extract_matrix_from_segment( Cursegp,&rotmat );                   // rotmat := matrix describing orientation of Cursegp
-			vm_vec_rotate(&tdest,&vec_dir,&rotmat);	// tdest := vec_dir in reference frame of Cursegp
+			const auto tdest = vm_vec_rotate(vec_dir,rotmat);	// tdest := vec_dir in reference frame of Cursegp
 			vec_dir = tdest;
-            vm_vec_ang_2_matrix(&rotmat2,&vec_dir,scaled_ang);
+            const auto rotmat2 = vm_vec_ang_2_matrix(vec_dir,scaled_ang);
 
-			med_rotate_segment( Cursegp, &rotmat2 );
+			med_rotate_segment( Cursegp, rotmat2 );
 			prev_point = coord;
             Curside = Side_opposite[AttachSide];
 
@@ -364,11 +360,10 @@ void generate_banked_curve(fix maxscale, vms_equation coeffs) {
 
 
 void delete_curve() {
-    int i;
-
-	for (i=0; i<CurveNumSegs; i++) {
-        if (CurveSegs[i]->segnum != segment_none)
-            med_delete_segment(CurveSegs[i]);
+	range_for (auto &i, partial_range(CurveSegs, CurveNumSegs))
+	{
+        if (i->segnum != segment_none)
+            med_delete_segment(i);
     }
     Markedsegp = OriginalMarkedSeg;
     Markedside = OriginalMarkedSide;

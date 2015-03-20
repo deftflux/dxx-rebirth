@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  * This is an alternate backend for the music system.
  * It uses SDL_mixer to provide a more reliable playback,
  * and allow processing of multiple audio formats.
@@ -6,12 +12,9 @@
  *  -- MD2211 (2006-04-24)
  */
 
+#include <memory>
 #include <SDL.h>
-#if !(defined(__APPLE__) && defined(__MACH__))
 #include <SDL_mixer.h>
-#else
-#include <SDL_mixer/SDL_mixer.h>
-#endif
 #include <string.h>
 #include <stdlib.h>
 
@@ -22,9 +25,47 @@
 #include "u_mem.h"
 #include "console.h"
 
-Mix_Music *current_music = NULL;
-static unsigned char *current_music_hndlbuf = NULL;
+namespace {
 
+class current_music_t
+{
+	struct RWops_delete
+	{
+		void operator()(SDL_RWops *o)
+		{
+			SDL_RWclose(o);
+		}
+	};
+	struct Music_delete
+	{
+		void operator()(Mix_Music *m) { Mix_FreeMusic(m); }
+	};
+	typedef SDL_RWops *rpointer;
+	typedef Mix_Music *mpointer;
+	std::unique_ptr<SDL_RWops, RWops_delete> m_ops;
+	std::unique_ptr<Mix_Music, Music_delete> m_music;
+public:
+	void reset(mpointer m = mpointer(), rpointer r = rpointer()) noexcept(noexcept(m_music.reset(m)) && noexcept(m_ops.reset(r)))
+	{
+		/* Clear music first in case it needs the old ops
+		 * Clear old ops
+		 * If no new music, clear new ops immediately.  This only
+		 * happens if the new music fails to load.
+		 */
+		m_music.reset(m);
+		m_ops.reset(r);
+		if (!m)
+			m_ops.reset();
+	}
+	bool operator!() const { return !m_music; }
+	explicit operator bool() const { return static_cast<bool>(m_music); }
+	mpointer get() { return m_music.get(); }
+};
+
+}
+
+static current_music_t current_music;
+static std::vector<uint8_t> current_music_hndlbuf;
 
 /*
  *  Plays a music file from an absolute path or a relative path
@@ -33,7 +74,6 @@ static unsigned char *current_music_hndlbuf = NULL;
 int mix_play_file(const char *filename, int loop, void (*hook_finished_track)())
 {
 	SDL_RWops *rw = NULL;
-	PHYSFS_file *filehandle = NULL;
 	char full_path[PATH_MAX];
 	const char *fptr;
 	unsigned int bufsize = 0;
@@ -48,14 +88,14 @@ int mix_play_file(const char *filename, int loop, void (*hook_finished_track)())
 	// It's a .hmp!
 	if (!d_stricmp(fptr, ".hmp"))
 	{
-		hmp2mid(filename, &current_music_hndlbuf, &bufsize);
-		rw = SDL_RWFromConstMem(current_music_hndlbuf,bufsize*sizeof(char));
-		current_music = Mix_LoadMUS_RW(rw);
+		hmp2mid(filename, current_music_hndlbuf);
+		rw = SDL_RWFromConstMem(&current_music_hndlbuf[0], current_music_hndlbuf.size()*sizeof(char));
+		current_music.reset(Mix_LoadMUS_RW(rw), rw);
 	}
 
 	// try loading music via given filename
 	if (!current_music)
-		current_music = Mix_LoadMUS(filename);
+		current_music.reset(Mix_LoadMUS(filename));
 
 	// allow the shell convention tilde character to mean the user's home folder
 	// chiefly used for default jukebox level song music referenced in 'descent.m3u' for Mac OS X
@@ -64,7 +104,7 @@ int mix_play_file(const char *filename, int loop, void (*hook_finished_track)())
 		snprintf(full_path, PATH_MAX, "%s%s", PHYSFS_getUserDir(),
 				 &filename[1 + (!strncmp(&filename[1], PHYSFS_getDirSeparator(), strlen(PHYSFS_getDirSeparator())) ? 
 				 strlen(PHYSFS_getDirSeparator()) : 0)]);
-		current_music = Mix_LoadMUS(full_path);
+		current_music.reset(Mix_LoadMUS(full_path));
 		if (current_music)
 			filename = full_path;	// used later for possible error reporting
 	}
@@ -74,7 +114,7 @@ int mix_play_file(const char *filename, int loop, void (*hook_finished_track)())
 	if (!current_music)
 	{
 		PHYSFSX_getRealPath(filename, full_path);
-		current_music = Mix_LoadMUS(full_path);
+		current_music.reset(Mix_LoadMUS(full_path));
 		if (current_music)
 			filename = full_path;	// used later for possible error reporting
 	}
@@ -82,25 +122,19 @@ int mix_play_file(const char *filename, int loop, void (*hook_finished_track)())
 	// still nothin'? Let's open via PhysFS in case it's located inside an archive
 	if (!current_music)
 	{
-		filehandle = PHYSFS_openRead(filename);
-		if (filehandle != NULL)
+		if (RAIIPHYSFS_File filehandle{PHYSFS_openRead(filename)})
 		{
 			unsigned len = PHYSFS_fileLength(filehandle);
-			unsigned char *p = (unsigned char *)d_realloc(current_music_hndlbuf, sizeof(char)*len);
-			if (p)
-			{
-			current_music_hndlbuf = p;
-			bufsize = PHYSFS_read(filehandle, current_music_hndlbuf, sizeof(char), len);
-			rw = SDL_RWFromConstMem(current_music_hndlbuf,bufsize*sizeof(char));
-			current_music = Mix_LoadMUS_RW(rw);
-			}
-			PHYSFS_close(filehandle);
+			current_music_hndlbuf.resize(len);
+			bufsize = PHYSFS_read(filehandle, &current_music_hndlbuf[0], sizeof(char), len);
+			rw = SDL_RWFromConstMem(&current_music_hndlbuf[0], bufsize*sizeof(char));
+			current_music.reset(Mix_LoadMUS_RW(rw), rw);
 		}
 	}
 
 	if (current_music)
 	{
-		Mix_PlayMusic(current_music, (loop ? -1 : 1));
+		Mix_PlayMusic(current_music.get(), (loop ? -1 : 1));
 		Mix_HookMusicFinished(hook_finished_track ? hook_finished_track : mix_free_music);
 		return 1;
 	}
@@ -117,16 +151,8 @@ int mix_play_file(const char *filename, int loop, void (*hook_finished_track)())
 void mix_free_music()
 {
 	Mix_HaltMusic();
-	if (current_music)
-	{
-		Mix_FreeMusic(current_music);
-		current_music = NULL;
-	}
-	if (current_music_hndlbuf)
-	{
-		d_free(current_music_hndlbuf);
-		current_music_hndlbuf = NULL;
-	}
+	current_music.reset();
+	current_music_hndlbuf.clear();
 }
 
 void mix_set_music_volume(int vol)
@@ -138,11 +164,7 @@ void mix_set_music_volume(int vol)
 void mix_stop_music()
 {
 	Mix_HaltMusic();
-	if (current_music_hndlbuf)
-	{
-		d_free(current_music_hndlbuf);
-		current_music_hndlbuf = NULL;
-	}
+	current_music_hndlbuf.clear();
 }
 
 void mix_pause_music()

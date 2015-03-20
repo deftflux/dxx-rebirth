@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -19,6 +25,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
+#include <bitset>
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
@@ -26,6 +33,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #include "pstypes.h"
 #include "console.h"
+#include "physfsx.h"
 #include "key.h"
 #include "gr.h"
 #include "palette.h"
@@ -55,6 +63,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "gamesave.h"
 #include "piggy.h"
 
+#include "compiler-range_for.h"
+#include "highest_valid.h"
+#include "partial_range.h"
+#include "segiter.h"
+
 #ifdef EDITOR
 static void dump_used_textures_level(PHYSFS_file *my_file, int level_num);
 static void say_totals(PHYSFS_file *my_file, const char *level_name);
@@ -65,7 +78,7 @@ static const char	*object_types(int objnum)
 	int	type = Objects[objnum].type;
 
 	Assert((type == OBJ_NONE) || ((type >= 0) && (type < MAX_OBJECT_TYPES)));
-	return Object_type_names[type];
+	return &Object_type_names[type][0];
 }
 
 // ----------------------------------------------------------------------------
@@ -186,10 +199,10 @@ static void write_exit_text(PHYSFS_file *my_file)
 
 	//	---------- Find exit doors ----------
 	count = 0;
-	for (i=0; i<=Highest_segment_index; i++)
+	range_for (const auto i, highest_valid(Segments))
 		for (j=0; j<MAX_SIDES_PER_SEGMENT; j++)
 			if (Segments[i].children[j] == -2) {
-				PHYSFSX_printf(my_file, "Segment %3i, side %i is an exit door.\n", i, j);
+				PHYSFSX_printf(my_file, "Segment %3hu, side %i is an exit door.\n", static_cast<uint16_t>(i), j);
 				count++;
 			}
 
@@ -210,8 +223,8 @@ static void write_key_text(PHYSFS_file *my_file)
 	int	i;
 	int	red_count, blue_count, gold_count;
 	int	red_count2, blue_count2, gold_count2;
-	int	blue_segnum=segment_none, blue_sidenum=-1, red_segnum=segment_none, red_sidenum=-1, gold_segnum=segment_none, gold_sidenum=-1;
-	int	connect_side;
+	int	blue_sidenum=-1, red_sidenum=-1, gold_sidenum=-1;
+	segnum_t	blue_segnum=segment_none, red_segnum=segment_none, gold_segnum=segment_none;
 
 	PHYSFSX_printf(my_file, "-----------------------------------------------------------------------------\n");
 	PHYSFSX_printf(my_file, "Key stuff:\n");
@@ -228,7 +241,7 @@ static void write_key_text(PHYSFS_file *my_file)
 				blue_sidenum = Walls[i].sidenum;
 				blue_count++;
 			} else {
-				connect_side = find_connect_side(&Segments[Walls[i].segnum], &Segments[blue_segnum]);
+				auto connect_side = find_connect_side(&Segments[Walls[i].segnum], &Segments[blue_segnum]);
 				if (connect_side != blue_sidenum) {
 					warning_printf(my_file, "Warning: This blue door at seg %i, is different than the one at seg %i, side %i", Walls[i].segnum, blue_segnum, blue_sidenum);
 					blue_count++;
@@ -242,7 +255,7 @@ static void write_key_text(PHYSFS_file *my_file)
 				red_sidenum = Walls[i].sidenum;
 				red_count++;
 			} else {
-				connect_side = find_connect_side(&Segments[Walls[i].segnum], &Segments[red_segnum]);
+				auto connect_side = find_connect_side(&Segments[Walls[i].segnum], &Segments[red_segnum]);
 				if (connect_side != red_sidenum) {
 					warning_printf(my_file, "Warning: This red door at seg %i, is different than the one at seg %i, side %i", Walls[i].segnum, red_segnum, red_sidenum);
 					red_count++;
@@ -256,7 +269,7 @@ static void write_key_text(PHYSFS_file *my_file)
 				gold_sidenum = Walls[i].sidenum;
 				gold_count++;
 			} else {
-				connect_side = find_connect_side(&Segments[Walls[i].segnum], &Segments[gold_segnum]);
+				auto connect_side = find_connect_side(&Segments[Walls[i].segnum], &Segments[gold_segnum]);
 				if (connect_side != gold_sidenum) {
 					warning_printf(my_file, "Warning: This gold door at seg %i, is different than the one at seg %i, side %i", Walls[i].segnum, gold_segnum, gold_sidenum);
 					gold_count++;
@@ -278,20 +291,21 @@ static void write_key_text(PHYSFS_file *my_file)
 	blue_count2 = 0;
 	gold_count2 = 0;
 
-	for (i=0; i<=Highest_object_index; i++) {
+	range_for (const auto i, highest_valid(Objects))
+	{
 		if (Objects[i].type == OBJ_POWERUP)
 			if (get_powerup_id(&Objects[i]) == POW_KEY_BLUE) {
-				PHYSFSX_printf(my_file, "The BLUE key is object %i in segment %i\n", i, Objects[i].segnum);
+				PHYSFSX_printf(my_file, "The BLUE key is object %hu in segment %i\n", static_cast<uint16_t>(i), Objects[i].segnum);
 				blue_count2++;
 			}
 		if (Objects[i].type == OBJ_POWERUP)
 			if (get_powerup_id(&Objects[i]) == POW_KEY_RED) {
-				PHYSFSX_printf(my_file, "The RED key is object %i in segment %i\n", i, Objects[i].segnum);
+				PHYSFSX_printf(my_file, "The RED key is object %hu in segment %i\n", static_cast<uint16_t>(i), Objects[i].segnum);
 				red_count2++;
 			}
 		if (Objects[i].type == OBJ_POWERUP)
 			if (get_powerup_id(&Objects[i]) == POW_KEY_GOLD) {
-				PHYSFSX_printf(my_file, "The GOLD key is object %i in segment %i\n", i, Objects[i].segnum);
+				PHYSFSX_printf(my_file, "The GOLD key is object %hu in segment %i\n", static_cast<uint16_t>(i), Objects[i].segnum);
 				gold_count2++;
 			}
 
@@ -299,15 +313,15 @@ static void write_key_text(PHYSFS_file *my_file)
 			if (Objects[i].contains_type == OBJ_POWERUP) {
 				switch (Objects[i].contains_id) {
 					case POW_KEY_BLUE:
-						PHYSFSX_printf(my_file, "The BLUE key is contained in object %i (a %s %s) in segment %i\n", i, Object_type_names[Objects[i].type], Robot_names[get_robot_id(&Objects[i])], Objects[i].segnum);
+						PHYSFSX_printf(my_file, "The BLUE key is contained in object %hu (a %s %s) in segment %i\n", static_cast<uint16_t>(i), object_types(i), Robot_names[get_robot_id(&Objects[i])], Objects[i].segnum);
 						blue_count2 += Objects[i].contains_count;
 						break;
 					case POW_KEY_GOLD:
-						PHYSFSX_printf(my_file, "The GOLD key is contained in object %i (a %s %s) in segment %i\n", i, Object_type_names[Objects[i].type], Robot_names[get_robot_id(&Objects[i])], Objects[i].segnum);
+						PHYSFSX_printf(my_file, "The GOLD key is contained in object %hu (a %s %s) in segment %i\n", static_cast<uint16_t>(i), object_types(i), Robot_names[get_robot_id(&Objects[i])], Objects[i].segnum);
 						gold_count2 += Objects[i].contains_count;
 						break;
 					case POW_KEY_RED:
-						PHYSFSX_printf(my_file, "The RED key is contained in object %i (a %s %s) in segment %i\n", i, Object_type_names[Objects[i].type], Robot_names[get_robot_id(&Objects[i])], Objects[i].segnum);
+						PHYSFSX_printf(my_file, "The RED key is contained in object %hu (a %s %s) in segment %i\n", static_cast<uint16_t>(i), object_types(i), Robot_names[get_robot_id(&Objects[i])], Objects[i].segnum);
 						red_count2 += Objects[i].contains_count;
 						break;
 					default:
@@ -342,22 +356,21 @@ static void write_key_text(PHYSFS_file *my_file)
 // ----------------------------------------------------------------------------
 static void write_control_center_text(PHYSFS_file *my_file)
 {
-	int	i, count, objnum, count2;
+	int	count, count2;
 
 	PHYSFSX_printf(my_file, "-----------------------------------------------------------------------------\n");
 	PHYSFSX_printf(my_file, "Control Center stuff:\n");
 
 	count = 0;
-	for (i=0; i<=Highest_segment_index; i++)
+	range_for (const auto i, highest_valid(Segments))
 		if (Segments[i].special == SEGMENT_IS_CONTROLCEN) {
 			count++;
-			PHYSFSX_printf(my_file, "Segment %3i is a control center.\n", i);
-			objnum = Segments[i].objects;
+			PHYSFSX_printf(my_file, "Segment %3hu is a control center.\n", static_cast<uint16_t>(i));
 			count2 = 0;
-			while (objnum != object_none) {
-				if (Objects[objnum].type == OBJ_CNTRLCEN)
+			range_for (const auto objp, objects_in(Segments[i]))
+			{
+				if (objp->type == OBJ_CNTRLCEN)
 					count2++;
-				objnum = Objects[objnum].next;
 			}
 			if (count2 == 0)
 				PHYSFSX_printf(my_file, "No control center object in control center segment.\n");
@@ -389,14 +402,13 @@ static void write_fuelcen_text(PHYSFS_file *my_file)
 // ----------------------------------------------------------------------------
 static void write_segment_text(PHYSFS_file *my_file)
 {
-	int	i, objnum;
-
 	PHYSFSX_printf(my_file, "-----------------------------------------------------------------------------\n");
 	PHYSFSX_printf(my_file, "Segment stuff:\n");
 
-	for (i=0; i<=Highest_segment_index; i++) {
+	range_for (const auto i, highest_valid(Segments))
+	{
 
-		PHYSFSX_printf(my_file, "Segment %4i: ", i);
+		PHYSFSX_printf(my_file, "Segment %4hu: ", static_cast<uint16_t>(i));
 		if (Segments[i].special != 0)
 			PHYSFSX_printf(my_file, "special = %3i (%s), value = %3i ", Segments[i].special, Special_names[Segments[i].special], Segments[i].value);
 
@@ -406,23 +418,22 @@ static void write_segment_text(PHYSFS_file *my_file)
 		PHYSFSX_printf(my_file, "\n");
 	}
 
-	for (i=0; i<=Highest_segment_index; i++) {
+	range_for (const auto i, highest_valid(Segments))
+	{
 		int	depth;
 
-		objnum = Segments[i].objects;
-		PHYSFSX_printf(my_file, "Segment %4i: ", i);
+		PHYSFSX_printf(my_file, "Segment %4hu: ", static_cast<uint16_t>(i));
 		depth=0;
-		if (objnum != object_none) {
 			PHYSFSX_printf(my_file, "Objects: ");
-			while (objnum != object_none) {
+			range_for (const auto objp, objects_in(Segments[i]))
+			{
+				short objnum = objp;
 				PHYSFSX_printf(my_file, "[%8s %8s %3i] ", object_types(objnum), object_ids(objnum), objnum);
-				objnum = Objects[objnum].next;
 				if (depth++ > 30) {
 					PHYSFSX_printf(my_file, "\nAborted after %i links\n", depth);
 					break;
 				}
 			}
-		}
 		PHYSFSX_printf(my_file, "\n");
 	}
 }
@@ -432,12 +443,12 @@ static void write_segment_text(PHYSFS_file *my_file)
 // which is not true.  The setting of segnum is bogus.
 static void write_matcen_text(PHYSFS_file *my_file)
 {
-	int	i, j, k;
+	int	i, j;
 
 	PHYSFSX_printf(my_file, "-----------------------------------------------------------------------------\n");
 	PHYSFSX_printf(my_file, "Materialization centers:\n");
 	for (i=0; i<Num_robot_centers; i++) {
-		int	trigger_count=0, segnum, fuelcen_num;
+		int	trigger_count=0, fuelcen_num;
 
 		PHYSFSX_printf(my_file, "FuelCenter[%02i].Segment = %04i  ", i, Station[i].segnum);
 		PHYSFSX_printf(my_file, "Segment[%04i].matcen_num = %02i  ", Station[i].segnum, Segments[Station[i].segnum].matcen_num);
@@ -446,13 +457,15 @@ static void write_matcen_text(PHYSFS_file *my_file)
 		if (Station[fuelcen_num].Type != SEGMENT_IS_ROBOTMAKER)
 			err_printf(my_file, "Error: Matcen %i corresponds to Station %i, which has type %i (%s).", i, fuelcen_num, Station[fuelcen_num].Type, Special_names[Station[fuelcen_num].Type]);
 
-		segnum = Station[fuelcen_num].segnum;
+		auto segnum = Station[fuelcen_num].segnum;
 
 		//	Find trigger for this materialization center.
 		for (j=0; j<Num_triggers; j++) {
-			if (trigger_is_matcen(&Triggers[j])) {
-				for (k=0; k<Triggers[j].num_links; k++)
-					if (Triggers[j].seg[k] == segnum) {
+			if (trigger_is_matcen(Triggers[j]))
+			{
+				range_for (auto &k, partial_range(Triggers[j].seg, Triggers[j].num_links))
+					if (k == segnum)
+					{
 						PHYSFSX_printf(my_file, "Trigger = %2i  ", j );
 						trigger_count++;
 					}
@@ -475,7 +488,7 @@ static void write_wall_text(PHYSFS_file *my_file)
 	PHYSFSX_printf(my_file, "-----------------------------------------------------------------------------\n");
 	PHYSFSX_printf(my_file, "Walls:\n");
 	for (i=0; i<Num_walls; i++) {
-		int	segnum, sidenum;
+		int	sidenum;
 
 		PHYSFSX_printf(my_file, "Wall %03i: seg=%3i, side=%2i, linked_wall=%3i, type=%s, flags=%4x, hps=%3i, trigger=%2i, clip_num=%2i, keys=%2i, state=%i\n", i,
 			Walls[i].segnum, Walls[i].sidenum, Walls[i].linked_wall, Wall_names[Walls[i].type], Walls[i].flags, Walls[i].hps >> 16, Walls[i].trigger, Walls[i].clip_num, Walls[i].keys, Walls[i].state);
@@ -485,24 +498,25 @@ static void write_wall_text(PHYSFS_file *my_file)
 			PHYSFSX_printf(my_file, "Wall %03d points to invalid trigger %d\n",i,Walls[i].trigger);
 #endif
 
-		segnum = Walls[i].segnum;
+		auto segnum = Walls[i].segnum;
 		sidenum = Walls[i].sidenum;
 
 		if (Segments[segnum].sides[sidenum].wall_num != i)
-			err_printf(my_file, "Error: Wall %i points at segment %i, side %i, but that segment doesn't point back (it's wall_num = %i)", i, segnum, sidenum, Segments[segnum].sides[sidenum].wall_num);
+			err_printf(my_file, "Error: Wall %i points at segment %i, side %i, but that segment doesn't point back (it's wall_num = %hi)", i, segnum, sidenum, static_cast<int16_t>(Segments[segnum].sides[sidenum].wall_num));
 	}
 
 	for (unsigned i=0; i<sizeof(wall_flags)/sizeof(wall_flags[0]); i++)
 		wall_flags[i] = 0;
 
-	for (i=0; i<=Highest_segment_index; i++) {
+	range_for (const auto i, highest_valid(Segments))
+	{
 		segment	*segp = &Segments[i];
 		for (j=0; j<MAX_SIDES_PER_SEGMENT; j++) {
 			side	*sidep = &segp->sides[j];
-			if (sidep->wall_num != -1)
+			if (sidep->wall_num != wall_none)
 			{
 				if (wall_flags[sidep->wall_num])
-					err_printf(my_file, "Error: Wall %i appears in two or more segments, including segment %i, side %i.", sidep->wall_num, i, j);
+					err_printf(my_file, "Error: Wall %hu appears in two or more segments, including segment %hu, side %i.", static_cast<int16_t>(sidep->wall_num), static_cast<int16_t>(i), j);
 				else
 					wall_flags[sidep->wall_num] = 1;
 			}
@@ -514,14 +528,15 @@ static void write_wall_text(PHYSFS_file *my_file)
 // ----------------------------------------------------------------------------
 static void write_player_text(PHYSFS_file *my_file)
 {
-	int	i, num_players=0;
+	int	num_players=0;
 
 	PHYSFSX_printf(my_file, "-----------------------------------------------------------------------------\n");
 	PHYSFSX_printf(my_file, "Players:\n");
-	for (i=0; i<=Highest_object_index; i++) {
+	range_for (const auto i, highest_valid(Objects))
+	{
 		if (Objects[i].type == OBJ_PLAYER) {
 			num_players++;
-			PHYSFSX_printf(my_file, "Player %2i is object #%3i in segment #%3i.\n", get_player_id(&Objects[i]), i, Objects[i].segnum);
+			PHYSFSX_printf(my_file, "Player %2i is object #%3hu in segment #%3i.\n", get_player_id(&Objects[i]), static_cast<uint16_t>(i), Objects[i].segnum);
 		}
 	}
 
@@ -542,8 +557,8 @@ static void write_trigger_text(PHYSFS_file *my_file)
 	PHYSFSX_printf(my_file, "Triggers:\n");
 	for (i=0; i<Num_triggers; i++) {
 #if defined(DXX_BUILD_DESCENT_I)
-		PHYSFSX_printf(my_file, "Trigger %03i: type=%3i flags=%04x, value=%08x, time=%8x, linknum=%i, num_links=%i ", i, 
-                        Triggers[i].type, Triggers[i].flags, (unsigned int) (Triggers[i].value), (unsigned int) (Triggers[i].time), Triggers[i].link_num, Triggers[i].num_links);
+		PHYSFSX_printf(my_file, "Trigger %03i: flags=%04x, value=%08x, time=%8x, linknum=%i, num_links=%i ", i, 
+                        Triggers[i].flags, (unsigned int) (Triggers[i].value), (unsigned int) (Triggers[i].time), Triggers[i].link_num, Triggers[i].num_links);
 #elif defined(DXX_BUILD_DESCENT_II)
 		PHYSFSX_printf(my_file, "Trigger %03i: type=%02x flags=%04x, value=%08x, time=%8x, num_links=%i ", i,
 			Triggers[i].type, Triggers[i].flags, Triggers[i].value, Triggers[i].time, Triggers[i].num_links);
@@ -560,7 +575,7 @@ static void write_trigger_text(PHYSFS_file *my_file)
 		if (w == Num_walls)
 			err_printf(my_file, "Error: Trigger %i is not connected to any wall, so it can never be triggered.", i);
 		else
-			PHYSFSX_printf(my_file, "Attached to seg:side = %i:%i, wall %i\n", Walls[w].segnum, Walls[w].sidenum, Segments[Walls[w].segnum].sides[Walls[w].sidenum].wall_num);
+			PHYSFSX_printf(my_file, "Attached to seg:side = %i:%i, wall %hi\n", Walls[w].segnum, Walls[w].sidenum, static_cast<int16_t>(Segments[Walls[w].segnum].sides[Walls[w].sidenum].wall_num));
 
 	}
 
@@ -571,8 +586,6 @@ void write_game_text_file(const char *filename)
 {
 	char	my_filename[128];
 	int	namelen;
-	PHYSFS_file	* my_file;
-
 	Errors_in_mine = 0;
 
 	namelen = strlen(filename);
@@ -584,8 +597,7 @@ void write_game_text_file(const char *filename)
 	strcpy(my_filename, filename);
 	strcpy( &my_filename[namelen-4], ".txm");
 
-	my_file = PHYSFSX_openWriteBuffered( my_filename );
-
+	auto my_file = PHYSFSX_openWriteBuffered(my_filename);
 	if (!my_file)	{
 		gr_palette_load(gr_palette);
 		nm_messagebox( NULL, 1, "Ok", "ERROR: Unable to open %s\nErrno = %i", my_filename, errno);
@@ -623,13 +635,6 @@ void write_game_text_file(const char *filename)
 
 	//	---------- Show keyed walls ----------
 	write_key_text(my_file);
-
-	{
-		int r;
-		r = PHYSFS_close(my_file);
-		if (!r)
-			Int3();
-	}
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
@@ -681,7 +686,7 @@ int	Ignore_tmap_num2_error;
 // ----------------------------------------------------------------------------
 static void determine_used_textures_level(int load_level_flag, int shareware_flag, int level_num, int *tmap_buf, int *wall_buf, sbyte *level_tmap_buf, int max_tmap)
 {
-	int	segnum, sidenum;
+	int	sidenum;
 	int	i, j;
 
 #if defined(DXX_BUILD_DESCENT_I)
@@ -695,7 +700,7 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
 			load_level(Registered_level_names[level_num]);
 	}
 
-	for (segnum=0; segnum<=Highest_segment_index; segnum++)
+	range_for (const auto segnum, highest_valid(Segments))
          {
 		segment	*segp = &Segments[segnum];
 
@@ -703,7 +708,7 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
                  {
 			side	*sidep = &segp->sides[sidenum];
 
-			if (sidep->wall_num != -1) {
+			if (sidep->wall_num != wall_none) {
 				int clip_num = Walls[sidep->wall_num].clip_num;
 				if (clip_num != -1) {
 
@@ -748,7 +753,7 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
                  }
          }
 #elif defined(DXX_BUILD_DESCENT_II)
-	int objnum=max_tmap;
+	(void)max_tmap;
 	Assert(shareware_flag != -17);
 
 	for (i=0; i<MAX_BITMAP_FILES; i++)
@@ -760,7 +765,8 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
 
 
 	//	Process robots.
-	for (objnum=0; objnum<=Highest_object_index; objnum++) {
+	range_for (const auto objnum, highest_valid(Objects))
+	{
 		object *objp = &Objects[objnum];
 
 		if (objp->render_type == RT_POLYOBJ) {
@@ -785,13 +791,14 @@ static void determine_used_textures_level(int load_level_flag, int shareware_fla
 	Ignore_tmap_num2_error = 0;
 
 	//	Process walls and segment sides.
-	for (segnum=0; segnum<=Highest_segment_index; segnum++) {
+	range_for (const auto segnum, highest_valid(Segments))
+	{
 		segment	*segp = &Segments[segnum];
 
 		for (sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++) {
 			side	*sidep = &segp->sides[sidenum];
 
-			if (sidep->wall_num != -1) {
+			if (sidep->wall_num != wall_none) {
 				int clip_num = Walls[sidep->wall_num].clip_num;
 				if (clip_num != -1) {
 
@@ -861,7 +868,7 @@ static void say_used_tmaps(PHYSFS_file *my_file, int *tb)
 
 	for (i=0; i<Num_tmaps; i++)
 		if (tb[i]) {
-			PHYSFSX_printf(my_file, "[%3i %8s (%4i)] ", i, TmapInfo[i].filename, tb[i]);
+			PHYSFSX_printf(my_file, "[%3i %8s (%4i)] ", i, static_cast<const char *>(TmapInfo[i].filename), tb[i]);
 			if (count++ >= 4) {
 				PHYSFSX_printf(my_file, "\n");
 				count = 0;
@@ -893,7 +900,7 @@ static void say_used_once_tmaps(PHYSFS_file *my_file, int *tb, sbyte *tb_lnum)
 				level_name = Shareware_level_names[level_num];
 			}
 
-			PHYSFSX_printf(my_file, "Texture %3i %8s used only once on level %s\n", i, TmapInfo[i].filename, level_name);
+			PHYSFSX_printf(my_file, "Texture %3i %8s used only once on level %s\n", i, static_cast<const char *>(TmapInfo[i].filename), level_name);
 		}
 }
 #endif
@@ -905,18 +912,19 @@ static void say_unused_tmaps(PHYSFS_file *my_file, int *tb)
 	int	count = 0;
 
 #if defined(DXX_BUILD_DESCENT_I)
-	for (i=0; i<Num_tmaps; i++)
+	const unsigned bound = Num_tmaps;
 #elif defined(DXX_BUILD_DESCENT_II)
-	for (i=0; i<MAX_BITMAP_FILES; i++)
+	const unsigned bound = MAX_BITMAP_FILES;
 #endif
+	for (i=0; i < bound; i++)
 		if (!tb[i]) {
-			if (GameBitmaps[Textures[i].index].bm_data == bogus_data)
+			if (GameBitmaps[Textures[i].index].bm_data == bogus_data.data())
 				PHYSFSX_printf(my_file, "U");
 			else
 				PHYSFSX_printf(my_file, " ");
 
 #if defined(DXX_BUILD_DESCENT_I)
-			PHYSFSX_printf(my_file, "[%3i %8s] ", i, TmapInfo[i].filename);
+			PHYSFSX_printf(my_file, "[%3i %8s] ", i, static_cast<const char *>(TmapInfo[i].filename));
 #elif defined(DXX_BUILD_DESCENT_II)
 			PHYSFSX_printf(my_file, "[%3i %8s] ", i, AllBitmaps[i].name);
 #endif
@@ -940,25 +948,20 @@ static void say_unused_walls(PHYSFS_file *my_file, int *tb)
 
 static void say_totals(PHYSFS_file *my_file, const char *level_name)
 {
-	int	i;		//, objnum;
 	int	total_robots = 0;
 	int	objects_processed = 0;
 
-	int	used_objects[MAX_OBJECTS];
-
 	PHYSFSX_printf(my_file, "\nLevel %s\n", level_name);
-
-	for (i=0; i<MAX_OBJECTS; i++)
-		used_objects[i] = 0;
-
+	std::bitset<MAX_OBJECTS> used_objects;
 	while (objects_processed < Highest_object_index+1) {
-		int	j, objtype, objid, objcount, cur_obj_val, min_obj_val, min_objnum;
+		int	objtype, objid, objcount, cur_obj_val, min_obj_val;
 
 		//	Find new min objnum.
 		min_obj_val = 0x7fff0000;
-		min_objnum = object_none;
+		objnum_t min_objnum = object_none;
 
-		for (j=0; j<=Highest_object_index; j++) {
+		range_for (const auto j, highest_valid(Objects))
+		{
 			if (!used_objects[j] && Objects[j].type!=OBJ_NONE) {
 				cur_obj_val = Objects[j].type * 1000 + Objects[j].id;
 				if (cur_obj_val < min_obj_val) {
@@ -975,7 +978,8 @@ static void say_totals(PHYSFS_file *my_file, const char *level_name)
 		objtype = Objects[min_objnum].type;
 		objid = Objects[min_objnum].id;
 
-		for (i=0; i<=Highest_object_index; i++) {
+		range_for (const auto i, highest_valid(Objects))
+		{
 			if (!used_objects[i]) {
 
 				if (((Objects[i].type == objtype) && (Objects[i].id == objid)) ||
@@ -984,7 +988,7 @@ static void say_totals(PHYSFS_file *my_file, const char *level_name)
 						((Objects[i].type == objtype) && (objtype == OBJ_HOSTAGE))) {
 					if (Objects[i].type == OBJ_ROBOT)
 						total_robots++;
-					used_objects[i] = 1;
+					used_objects[i] = true;
 					objcount++;
 					objects_processed++;
 				}
@@ -1009,10 +1013,7 @@ int	Last_dump_level = NUM_ADAM_LEVELS-1;
 static void say_totals_all(void)
 {
 	int	i;
-	PHYSFS_file	*my_file;
-
-	my_file = PHYSFSX_openWriteBuffered( "levels.all" );
-
+	auto my_file = PHYSFSX_openWriteBuffered("levels.all");
 	if (!my_file)	{
 		gr_palette_load(gr_palette);
 		nm_messagebox( NULL, 1, "Ok", "ERROR: Unable to open levels.all\nErrno=%i", errno );
@@ -1036,8 +1037,6 @@ static void say_totals_all(void)
 		say_totals(my_file, Adam_level_names[i]);
 	}
 #endif
-
-	PHYSFS_close(my_file);
 }
 
 static void dump_used_textures_level(PHYSFS_file *my_file, int level_num)
@@ -1063,7 +1062,6 @@ static void dump_used_textures_level(PHYSFS_file *my_file, int level_num)
 // ----------------------------------------------------------------------------
 void dump_used_textures_all(void)
 {
-	PHYSFS_file	*my_file;
 	int	i;
 #if defined(DXX_BUILD_DESCENT_I)
 	int	temp_tmap_buf[MAX_TEXTURES];
@@ -1080,7 +1078,7 @@ void dump_used_textures_all(void)
 
 say_totals_all();
 
-	my_file = PHYSFSX_openWriteBuffered( "textures.dmp" );
+	auto my_file = PHYSFSX_openWriteBuffered("textures.dmp");
 
 	if (!my_file)	{
 		gr_palette_load(gr_palette);
@@ -1139,8 +1137,6 @@ say_totals_all();
 
 	PHYSFSX_printf(my_file, "\nUnused textures in all (including registered) mines:\n");
 	say_unused_tmaps(my_file, perm_tmap_buf);
-
-	PHYSFS_close(my_file);
 }
 
 #endif

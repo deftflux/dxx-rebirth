@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -24,49 +30,56 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "pstypes.h"
 
 #ifdef __cplusplus
+#include "player.h"	// playernum_t
 
-struct object;
 struct vms_vector;
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 #if defined(DXX_BUILD_DESCENT_I)
-#define MAX_ROBOTS_CONTROLLED 3
+static const std::size_t MAX_ROBOTS_CONTROLLED = 3;
 #elif defined(DXX_BUILD_DESCENT_II)
-#define MAX_ROBOTS_CONTROLLED 5
+static const std::size_t MAX_ROBOTS_CONTROLLED = 5;
 #endif
 
-extern int robot_controlled[MAX_ROBOTS_CONTROLLED];
+extern objnum_t robot_controlled[MAX_ROBOTS_CONTROLLED];
 extern int robot_agitation[MAX_ROBOTS_CONTROLLED];
 extern int robot_fired[MAX_ROBOTS_CONTROLLED];
 #endif
 
-int multi_can_move_robot(int objnum, int agitation);
-void multi_send_robot_position(int objnum, int fired);
-void multi_send_robot_fire(int objnum, int gun_num, vms_vector *fire);
-void multi_send_claim_robot(int objnum);
-void multi_send_robot_explode(int objnum, int killer, char unused);
-void multi_send_create_robot(int robotcen, int objnum, int type);
-void multi_send_boss_actions(int bossobjnum, int action, int secondary, int objnum);
+int multi_can_move_robot(vobjptridx_t objnum, int agitation);
+void multi_send_robot_position(vobjptridx_t objnum, int fired);
+void multi_send_robot_fire(vobjptridx_t objnum, int gun_num, const vms_vector &fire);
+void multi_send_claim_robot(vobjptridx_t objnum);
+void multi_send_robot_explode(objptridx_t objnum, objnum_t killer);
+void multi_send_create_robot(int robotcen, objnum_t objnum, int type);
+void multi_send_boss_teleport(vobjptridx_t bossobjnum, segnum_t where);
+void multi_send_boss_cloak(objnum_t bossobjnum);
+void multi_send_boss_start_gate(objnum_t bossobjnum);
+void multi_send_boss_stop_gate(objnum_t bossobjnum);
+void multi_send_boss_create_robot(objnum_t bossobjnum, int robot_type, vobjptridx_t objnum);
 int multi_send_robot_frame(int sent);
 
 void multi_do_robot_explode(const ubyte *buf);
-void multi_do_robot_position(const ubyte *buf);
-void multi_do_claim_robot(const ubyte *buf);
-void multi_do_release_robot(const ubyte *buf);
+void multi_do_robot_position(playernum_t pnum, const ubyte *buf);
+void multi_do_claim_robot(playernum_t pnum, const ubyte *buf);
+void multi_do_release_robot(playernum_t pnum, const ubyte *buf);
 void multi_do_robot_fire(const ubyte *buf);
-void multi_do_create_robot(const ubyte *buf);
-void multi_do_boss_actions(const ubyte *buf);
-void multi_do_create_robot_powerups(const ubyte *buf);
+void multi_do_create_robot(playernum_t pnum, const ubyte *buf);
+void multi_do_create_robot_powerups(playernum_t pnum, const ubyte *buf);
+void multi_do_boss_teleport(playernum_t pnum, const ubyte *buf);
+void multi_do_boss_cloak(const ubyte *buf);
+void multi_do_boss_start_gate(const ubyte *buf);
+void multi_do_boss_stop_gate(const ubyte *buf);
+void multi_do_boss_create_robot(playernum_t pnum, const ubyte *buf);
 
-int multi_explode_robot_sub(objptridx_t botnum, char unused);
+int multi_explode_robot_sub(vobjptridx_t botnum);
 
-void multi_drop_robot_powerups(int objnum);
-void multi_dump_robots(void);
+void multi_drop_robot_powerups(vobjptridx_t objnum);
 
 void multi_strip_robots(int playernum);
 void multi_check_robot_timeout(void);
 
-void multi_robot_request_change(objptridx_t robot, int playernum);
+void multi_robot_request_change(vobjptridx_t robot, int playernum);
 
 #endif
 

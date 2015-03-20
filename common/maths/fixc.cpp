@@ -1,15 +1,9 @@
 /*
-THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
-SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
-END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
-ROYALTY-FREE, PERPETUAL LICENSE TO SUCH END-USERS FOR USE BY SUCH END-USERS
-IN USING, DISPLAYING,  AND CREATING DERIVATIVE WORKS THEREOF, SO LONG AS
-SUCH USE, DISPLAY OR CREATION IS FOR NON-COMMERCIAL, ROYALTY OR REVENUE
-FREE PURPOSES.  IN NO EVENT SHALL THE END-USER USE THE COMPUTER CODE
-CONTAINED HEREIN FOR REVENUE-BEARING PURPOSES.  THE END-USER UNDERSTANDS
-AND AGREES TO THE TERMS HEREIN AND ACCEPTS THE SAME BY USE OF THIS FILE.
-COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
-*/
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 
 /*
  *
@@ -17,81 +11,36 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
+#include <cstdint>
 #include <stdlib.h>
 #include <math.h>
 
 #include "dxxerror.h"
 #include "maths.h"
 
-//negate a quad
-void fixquadnegate(quadint *q)
-{
-	q->low  = 0 - q->low;
-	q->high = 0 - q->high - (q->low != 0);
-}
-
-//multiply two ints & add 64-bit result to 64-bit sum
-void fixmulaccum(quadint *q,fix a,fix b)
-{
-	u_int32_t aa,bb;
-	u_int32_t ah,al,bh,bl;
-	u_int32_t t,c=0,old;
-	int neg;
-
-	neg = ((a^b) < 0);
-
-	aa = labs(a); bb = labs(b);
-
-	ah = aa>>16;  al = aa&0xffff;
-	bh = bb>>16;  bl = bb&0xffff;
-
-	t = ah*bl + bh*al;
-
-	if (neg)
-		fixquadnegate(q);
-
-	old = q->low;
-	q->low += al*bl;
-	if (q->low < old) q->high++;
-	
-	old = q->low;
-	q->low += (t<<16);
-	if (q->low < old) q->high++;
-	
-	q->high += ah*bh + (t>>16) + c;
-	
-	if (neg)
-		fixquadnegate(q);
-
-}
-
-//extract a fix from a quad product
-fix fixquadadjust(quadint *q)
-{
-	return (q->high<<16) + (q->low>>16);
-}
-
-
 #define EPSILON (F1_0/100)
-
-fix fixmul(fix a, fix b)
-{
-	return (fix)((((fix64) a) * b) / 65536);
-}
 
 fix64 fixmul64(fix a, fix b)
 {
-	return (fix64)((((fix64) a) * b) / 65536);
+	const fix64 a64 = a;
+	const fix64 b64 = b;
+	return (a64 * b64) / 65536;
 }
 
 fix fixdiv(fix a, fix b)
 {
-	return b ? (fix)((((fix64)a) *65536)/b) : 1;
+	if (!b)
+		return 1;
+	const fix64 a64 = a;
+	return static_cast<fix>((a64 * 65536) / b);
 }
 
 fix fixmuldiv(fix a, fix b, fix c)
 {
-	return c ? (fix)((((fix64)a)*b)/c) : 1;
+	if (!c)
+		return 1;
+	const fix64 a64 = a;
+	return static_cast<fix>((a64 * b) / c);
 }
 
 //given cos & sin of an angle, return that angle.
@@ -102,51 +51,45 @@ fix fixmuldiv(fix a, fix b, fix c)
 
 fixang fix_atan2(fix cos,fix sin)
 {
-	double d, dsin, dcos;
 	fixang t;
 
 	//Assert(!(cos==0 && sin==0));
 
 	//find smaller of two
 
-	dsin = (double)sin;
-	dcos = (double)cos;
+	const auto dsin = static_cast<double>(sin);
+	const auto dcos = static_cast<double>(cos);
+	double d;
 	d = sqrt((dsin * dsin) + (dcos * dcos));
 
 	if (d==0.0)
 		return 0;
 
 	if (labs(sin) < labs(cos)) {				//sin is smaller, use arcsin
-		t = fix_asin((fix)((dsin / d) * 65536.0));
+		t = fix_asin(static_cast<fix>((dsin / d) * 65536.0));
 		if (cos<0)
 			t = 0x8000 - t;
 		return t;
 	}
 	else {
-		t = fix_acos((fix)((dcos / d) * 65536.0));
+		t = fix_acos(static_cast<fix>((dcos / d) * 65536.0));
 		if (sin<0)
 			t = -t;
 		return t;
 	}
 }
 
-int32_t fixdivquadlong(u_int32_t nl,u_int32_t nh,u_int32_t d)
+static unsigned int fixdivquadlongu(quadint n, uint64_t d)
 {
-	int64_t n = (int64_t)nl | (((int64_t)nh) << 32 );
-	return (signed int) (n / ((int64_t)d));
+	return n.q / d;
 }
 
-static unsigned int fixdivquadlongu(uint nl, uint nh, uint d)
+u_int32_t quad_sqrt(const quadint iq)
 {
-	u_int64_t n = (u_int64_t)nl | (((u_int64_t)nh) << 32 );
-	return (unsigned int) (n / ((u_int64_t)d));
-}
-
-u_int32_t quad_sqrt(u_int32_t low,int32_t high)
-{
+	const u_int32_t low = iq.low;
+	const int32_t high = iq.high;
 	int i, cnt;
 	u_int32_t r,old_r,t;
-	quadint tq;
 
 	if (high<0)
 		return 0;
@@ -154,12 +97,16 @@ u_int32_t quad_sqrt(u_int32_t low,int32_t high)
 	if (high==0 && (int32_t)low>=0)
 		return long_sqrt((int32_t)low);
 
-	if (high & 0xff000000) {
-		cnt=12+16; i = high >> 24;
-	} else if (high & 0xff0000) {
-		cnt=8+16; i = high >> 16;
-	} else if (high & 0xff00) {
-		cnt=4+16; i = high >> 8;
+	if ((i = high >> 24)) {
+		cnt=12+16;
+	}
+	else if ((i = high >> 16))
+	{
+		cnt=8+16;
+	}
+	else if ((i = high >> 8))
+	{
+		cnt=4+16;
 	} else {
 		cnt=0+16; i = high;
 	}
@@ -168,14 +115,14 @@ u_int32_t quad_sqrt(u_int32_t low,int32_t high)
 
 	//quad loop usually executed 4 times
 
-	r = fixdivquadlongu(low,high,r)/2 + r/2;
-	r = fixdivquadlongu(low,high,r)/2 + r/2;
-	r = fixdivquadlongu(low,high,r)/2 + r/2;
+	r = fixdivquadlongu(iq,r)/2 + r/2;
+	r = fixdivquadlongu(iq,r)/2 + r/2;
+	r = fixdivquadlongu(iq,r)/2 + r/2;
 
 	do {
 
 		old_r = r;
-		t = fixdivquadlongu(low,high,r);
+		t = fixdivquadlongu(iq,r);
 
 		if (t==r)	//got it!
 			return r;
@@ -184,12 +131,13 @@ u_int32_t quad_sqrt(u_int32_t low,int32_t high)
 
 	} while (!(r==t || r==old_r));
 
-	t = fixdivquadlongu(low,high,r);
+	t = fixdivquadlongu(iq,r);
+	quadint tq;
 	//edited 05/17/99 Matt Mueller - tq.high is undefined here.. so set them to = 0
-	tq.low=tq.high=0;
+	tq.q = 0;
 	//end edit -MM
 	fixmulaccum(&tq,r,t);
-	if (tq.low!=low || tq.high!=high)
+	if (tq.q != iq.q)
 		r++;
 
 	return r;
@@ -248,7 +196,7 @@ ushort long_sqrt(int32_t a)
 //computes the square root of a fix, returning a fix
 fix fix_sqrt(fix a)
 {
-	return ((fix) long_sqrt(a)) << 8;
+	return static_cast<fix>(long_sqrt(a)) << 8;
 }
 
 
@@ -278,14 +226,11 @@ void fix_sincos(fix a,fix *s,fix *c)
 //compute sine and cosine of an angle, filling in the variables
 //either of the pointers can be NULL
 //no interpolation
-void fix_fastsincos(fix a,fix *s,fix *c)
+fix fix_fastsin(fix a)
 {
 	int i;
-
 	i = (a>>8)&0xff;
-
-	if (s) *s = sincos_table[i] << 2;
-	if (c) *c = sincos_table[i+64] << 2;
+	return sincos_table[i] << 2;
 }
 
 //compute inverse sine

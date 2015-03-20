@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -38,17 +44,18 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #define	MAX_COMPUTED_COLORS	32
 
-int	Num_computed_colors=0;
+static unsigned Num_computed_colors;
 
 struct color_record {
-	ubyte	r,g,b,color_num;
+	ubyte	r,g,b;
+	color_t color_num;
 };
 
 color_record Computed_colors[MAX_COMPUTED_COLORS];
 
 palette_array_t gr_palette;
 palette_array_t gr_current_pal;
-ubyte gr_fade_table[256*34];
+gft_array1 gr_fade_table;
 
 ubyte gr_palette_gamma = 0;
 int gr_palette_gamma_param = 0;
@@ -116,10 +123,9 @@ void gr_copy_palette(palette_array_t &gr_palette, const palette_array_t &pal)
 
 void gr_use_palette_table(const char * filename )
 {
-	PHYSFS_file *fp;
-	int i,fsize;
+	int fsize;
 
-	fp = PHYSFSX_openReadBuffered( filename );
+	auto fp = PHYSFSX_openReadBuffered(filename);
 #if defined(DXX_BUILD_DESCENT_I)
 #define FAILURE_FORMAT	"Can't open palette file <%s>"
 #elif defined(DXX_BUILD_DESCENT_II)
@@ -128,10 +134,10 @@ void gr_use_palette_table(const char * filename )
 	// even if only the d2 mac shareware datafiles are present.
 	// However, if the pig file is present but the palette file isn't,
 	// the textures in the level will look wierd...
-	if ( fp==NULL)
+	if (!fp)
 		fp = PHYSFSX_openReadBuffered( DEFAULT_LEVEL_PALETTE );
 #endif
-	if ( fp==NULL)
+	if (!fp)
 		Error(FAILURE_FORMAT,
 		      filename);
 
@@ -140,12 +146,11 @@ void gr_use_palette_table(const char * filename )
 	(void)fsize;
 	PHYSFS_read( fp, &gr_palette[0], sizeof(gr_palette[0]), gr_palette.size() );
 	PHYSFS_read( fp, gr_fade_table, 256*34, 1 );
-	PHYSFS_close(fp);
+	fp.reset();
 
 	// This is the TRANSPARENCY COLOR
-	for (i=0; i<GR_FADE_LEVELS; i++ )	{
-		gr_fade_table[i*256+255] = 255;
-	}
+	range_for (auto &i, gr_fade_table)
+		i[255] = 255;
 #if defined(DXX_BUILD_DESCENT_II)
 	Num_computed_colors = 0;	//	Flush palette cache.
 // swap colors 0 and 255 of the palette along with fade table entries
@@ -171,7 +176,7 @@ void gr_use_palette_table(const char * filename )
 //	Add a computed color (by gr_find_closest_color) to list of computed colors in Computed_colors.
 //	If list wasn't full already, increment Num_computed_colors.
 //	If was full, replace a random one.
-static void add_computed_color(int r, int g, int b, int color_num)
+static void add_computed_color(int r, int g, int b, color_t color_num)
 {
 	int	add_index;
 
@@ -195,24 +200,21 @@ void init_computed_colors(void)
 		Computed_colors[i].r = 255;		//	Make impossible to match.
 }
 
-int gr_find_closest_color( int r, int g, int b )
+color_t gr_find_closest_color( int r, int g, int b )
 {
-	int i, j;
-	int best_value, best_index, value;
+	int j;
+	int best_value, value;
 
 	if (Num_computed_colors == 0)
 		init_computed_colors();
 
 	//	If we've already computed this color, return it!
-	for (i=0; i<Num_computed_colors; i++)
+	for (unsigned i=0; i<Num_computed_colors; i++)
 		if (r == Computed_colors[i].r)
 			if (g == Computed_colors[i].g)
 				if (b == Computed_colors[i].b) {
 					if (i > 4) {
-						color_record	trec;
-						trec = Computed_colors[i-1];
-						Computed_colors[i-1] = Computed_colors[i];
-						Computed_colors[i] = trec;
+						std::swap(Computed_colors[i-1], Computed_colors[i]);
 						return Computed_colors[i-1].color_num;
 					}
 					return Computed_colors[i].color_num;
@@ -223,14 +225,14 @@ int gr_find_closest_color( int r, int g, int b )
 //	b &= 63;
 
 	best_value = SQUARE(r-gr_palette[0].r)+SQUARE(g-gr_palette[0].g)+SQUARE(b-gr_palette[0].b);
-	best_index = 0;
+	color_t best_index = 0;
 	if (best_value==0) {
 		add_computed_color(r, g, b, best_index);
  		return best_index;
 	}
 	j=0;
 	// only go to 255, 'cause we dont want to check the transparent color.
-	for (i=1; i < 254; i++ )	{
+	for (color_t i=1; i < 254; i++ )	{
 		++j;
 		value = SQUARE(r-gr_palette[j].r)+SQUARE(g-gr_palette[j].g)+SQUARE(b-gr_palette[j].b);
 		if ( value < best_value )	{
@@ -252,23 +254,23 @@ int gr_find_closest_color_15bpp( int rgb )
 }
 
 
-int gr_find_closest_color_current( int r, int g, int b )
+color_t gr_find_closest_color_current( int r, int g, int b )
 {
-	int i, j;
-	int best_value, best_index, value;
+	int j;
+	int best_value, value;
 
 //	r &= 63;
 //	g &= 63;
 //	b &= 63;
 
 	best_value = SQUARE(r-gr_current_pal[0].r)+SQUARE(g-gr_current_pal[0].g)+SQUARE(b-gr_current_pal[0].b);
-	best_index = 0;
+	color_t best_index = 0;
 	if (best_value==0)
  		return best_index;
 
 	j=0;
 	// only go to 255, 'cause we dont want to check the transparent color.
-	for (i=1; i < 254; i++ )	{
+	for (color_t i=1; i < 254; i++ )	{
 		++j;
 		value = SQUARE(r-gr_current_pal[j].r)+SQUARE(g-gr_current_pal[j].g)+SQUARE(b-gr_current_pal[j].b);
 		if ( value < best_value )	{

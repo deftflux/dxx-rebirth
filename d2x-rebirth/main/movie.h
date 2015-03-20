@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -21,6 +27,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define _MOVIE_H
 
 #ifdef __cplusplus
+#include "d2x-rebirth/libmve/mvelib.h"
 
 #define MOVIE_ABORT_ON  1
 #define MOVIE_ABORT_OFF 0
@@ -39,14 +46,15 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 extern int PlayMovie(const char *subtitles, const char *filename, int allow_abort);
 extern int PlayMovies(int num_files, const char *filename[], int graphmode, int allow_abort);
-extern int InitRobotMovie(const char *filename);
-extern int RotateRobot();
-extern void DeInitRobotMovie(void);
+int InitRobotMovie(const char *filename, MVESTREAM_ptr_t &pMovie);
+int RotateRobot(MVESTREAM_ptr_t &pMovie);
+void DeInitRobotMovie(MVESTREAM_ptr_t &pMovie);
 
 // find and initialize the movie libraries
 void init_movies();
 
-void init_extra_robot_movie(char *filename);
+void init_extra_robot_movie(const char *filename);
+void close_extra_robot_movie();
 
 extern int MovieHires;      // specifies whether movies use low or high res
 

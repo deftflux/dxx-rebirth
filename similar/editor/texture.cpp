@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -31,24 +37,23 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "dxxerror.h"
 #include "kdefs.h"
 
-static void compute_uv_side_center(uvl *uvcenter, segment *segp, int sidenum);
-static void rotate_uv_points_on_side(segment *segp, int sidenum, fix *rotmat, uvl *uvcenter);
+#include "compiler-range_for.h"
+
+static uvl compute_uv_side_center(const vcsegptr_t segp, sidenum_fast_t sidenum);
+static void rotate_uv_points_on_side(const vsegptr_t segp, sidenum_fast_t sidenum, const array<fix, 4> &rotmat, const uvl &uvcenter);
 
 //	-----------------------------------------------------------
 int	TexFlipX()
 {
-	uvl	uvcenter;
-	fix	rotmat[4];
-
-	compute_uv_side_center(&uvcenter, Cursegp, Curside);
-
+	const auto uvcenter = compute_uv_side_center(Cursegp, Curside);
+	array<fix, 4> rotmat;
 	//	Create a rotation matrix
 	rotmat[0] = -0xffff;
 	rotmat[1] = 0;
 	rotmat[2] = 0;
 	rotmat[3] = 0xffff;
 
-	rotate_uv_points_on_side(Cursegp, Curside, rotmat, &uvcenter);
+	rotate_uv_points_on_side(Cursegp, Curside, rotmat, uvcenter);
 
  	Update_flags |= UF_WORLD_CHANGED;
 
@@ -58,18 +63,15 @@ int	TexFlipX()
 //	-----------------------------------------------------------
 int	TexFlipY()
 {
-	uvl	uvcenter;
-	fix	rotmat[4];
-
-	compute_uv_side_center(&uvcenter, Cursegp, Curside);
-
+	const auto uvcenter = compute_uv_side_center(Cursegp, Curside);
+	array<fix, 4> rotmat;
 	//	Create a rotation matrix
 	rotmat[0] = 0xffff;
 	rotmat[1] = 0;
 	rotmat[2] = 0;
 	rotmat[3] = -0xffff;
 
-	rotate_uv_points_on_side(Cursegp, Curside, rotmat, &uvcenter);
+	rotate_uv_points_on_side(Cursegp, Curside, rotmat, uvcenter);
 
  	Update_flags |= UF_WORLD_CHANGED;
 
@@ -82,13 +84,10 @@ static int DoTexSlideLeft(int value)
 	side	*sidep;
 	uvl	duvl03;
 	fix	dist;
-	const sbyte	*vp;
-	int	v;
-
-	vp = Side_to_verts[Curside];
+	auto &vp = Side_to_verts[Curside];
 	sidep = &Cursegp->sides[Curside];
 
-	dist = vm_vec_dist(&Vertices[Cursegp->verts[vp[3]]], &Vertices[Cursegp->verts[vp[0]]]);
+	dist = vm_vec_dist(Vertices[Cursegp->verts[vp[3]]], Vertices[Cursegp->verts[vp[0]]]);
 	dist *= value;
 	if (dist < F1_0/(64*value))
 		dist = F1_0/(64*value);
@@ -96,9 +95,10 @@ static int DoTexSlideLeft(int value)
 	duvl03.u = fixdiv(sidep->uvls[3].u - sidep->uvls[0].u,dist);
 	duvl03.v = fixdiv(sidep->uvls[3].v - sidep->uvls[0].v,dist);
 
-	for (v=0; v<4; v++) {
-		sidep->uvls[v].u -= duvl03.u;
-		sidep->uvls[v].v -= duvl03.v;
+	range_for (auto &v, sidep->uvls)
+	{
+		v.u -= duvl03.u;
+		v.v -= duvl03.v;
 	}
 
 	Update_flags |= UF_WORLD_CHANGED;
@@ -122,13 +122,10 @@ static int DoTexSlideUp(int value)
 	side	*sidep;
 	uvl	duvl03;
 	fix	dist;
-	const sbyte	*vp;
-	int	v;
-
-	vp = Side_to_verts[Curside];
+	auto &vp = Side_to_verts[Curside];
 	sidep = &Cursegp->sides[Curside];
 
-	dist = vm_vec_dist(&Vertices[Cursegp->verts[vp[1]]], &Vertices[Cursegp->verts[vp[0]]]);
+	dist = vm_vec_dist(Vertices[Cursegp->verts[vp[1]]], Vertices[Cursegp->verts[vp[0]]]);
 	dist *= value;
 
 	if (dist < F1_0/(64*value))
@@ -137,9 +134,10 @@ static int DoTexSlideUp(int value)
 	duvl03.u = fixdiv(sidep->uvls[1].u - sidep->uvls[0].u,dist);
 	duvl03.v = fixdiv(sidep->uvls[1].v - sidep->uvls[0].v,dist);
 
-	for (v=0; v<4; v++) {
-		sidep->uvls[v].u -= duvl03.u;
-		sidep->uvls[v].v -= duvl03.v;
+	range_for (auto &v, sidep->uvls)
+	{
+		v.u -= duvl03.u;
+		v.v -= duvl03.v;
 	}
 
 	Update_flags |= UF_WORLD_CHANGED;
@@ -164,13 +162,10 @@ static int DoTexSlideDown(int value)
 	side	*sidep;
 	uvl	duvl03;
 	fix	dist;
-	const sbyte	*vp;
-	int	v;
-
-	vp = Side_to_verts[Curside];
+	auto &vp = Side_to_verts[Curside];
 	sidep = &Cursegp->sides[Curside];
 
-	dist = vm_vec_dist(&Vertices[Cursegp->verts[vp[1]]], &Vertices[Cursegp->verts[vp[0]]]);
+	dist = vm_vec_dist(Vertices[Cursegp->verts[vp[1]]], Vertices[Cursegp->verts[vp[0]]]);
 	dist *= value;
 	if (dist < F1_0/(64*value))
 		dist = F1_0/(64*value);
@@ -178,9 +173,10 @@ static int DoTexSlideDown(int value)
 	duvl03.u = fixdiv(sidep->uvls[1].u - sidep->uvls[0].u,dist);
 	duvl03.v = fixdiv(sidep->uvls[1].v - sidep->uvls[0].v,dist);
 
-	for (v=0; v<4; v++) {
-		sidep->uvls[v].u += duvl03.u;
-		sidep->uvls[v].v += duvl03.v;
+	range_for (auto &v, sidep->uvls)
+	{
+		v.u += duvl03.u;
+		v.v += duvl03.v;
 	}
 
 	Update_flags |= UF_WORLD_CHANGED;
@@ -200,75 +196,69 @@ int TexSlideDownBig()
 
 //	-----------------------------------------------------------
 //	Compute the center of the side in u,v coordinates.
-void compute_uv_side_center(uvl *uvcenter, segment *segp, int sidenum)
+static uvl compute_uv_side_center(const vcsegptr_t segp, sidenum_fast_t sidenum)
 {
-	int	v;
-	side	*sidep = &segp->sides[sidenum];
-
-	uvcenter->u = 0;
-	uvcenter->v = 0;
-
-	for (v=0; v<4; v++) {
-		uvcenter->u += sidep->uvls[v].u;
-		uvcenter->v += sidep->uvls[v].v;
+	uvl uvcenter{};
+	auto sidep = &segp->sides[sidenum];
+	range_for (auto &v, sidep->uvls)
+	{
+		uvcenter.u += v.u;
+		uvcenter.v += v.v;
 	}
-
-	uvcenter->u /= 4;
-	uvcenter->v /= 4;
+	uvcenter.u /= 4;
+	uvcenter.v /= 4;
+	return uvcenter;
 }
-
 
 //	-----------------------------------------------------------
 //	rotate point *uv by matrix rotmat, return *uvrot
-static void rotate_uv_point(uvl *uvrot, fix *rotmat, uvl *uv, uvl *uvcenter)
+static uvl rotate_uv_point(const array<fix, 4> &rotmat, const uvl &uv, const uvl &uvcenter)
 {
-	uvrot->u = fixmul(uv->u - uvcenter->u,rotmat[0]) + fixmul(uv->v - uvcenter->v,rotmat[1]) + uvcenter->u;
-	uvrot->v = fixmul(uv->u - uvcenter->u,rotmat[2]) + fixmul(uv->v - uvcenter->v,rotmat[3]) + uvcenter->v;
+	const auto centered_u = uv.u - uvcenter.u;
+	const auto centered_v = uv.v - uvcenter.v;
+	return {
+		fixmul(centered_u, rotmat[0]) + fixmul(centered_v, rotmat[1]) + uvcenter.u,
+		fixmul(centered_u, rotmat[2]) + fixmul(centered_v, rotmat[3]) + uvcenter.v,
+	};
 }
 
 //	-----------------------------------------------------------
 //	Compute the center of the side in u,v coordinates.
-void rotate_uv_points_on_side(segment *segp, int sidenum, fix *rotmat, uvl *uvcenter)
+static void rotate_uv_points_on_side(const vsegptr_t segp, sidenum_fast_t sidenum, const array<fix, 4> &rotmat, const uvl &uvcenter)
 {
-	int	v;
 	side	*sidep = &segp->sides[sidenum];
-	uvl	tuv;
-
-	for (v=0; v<4; v++) {
-		rotate_uv_point(&tuv, rotmat, &sidep->uvls[v], uvcenter);
-		sidep->uvls[v] = tuv;
+	range_for (auto &v, sidep->uvls)
+	{
+		v = rotate_uv_point(rotmat, v, uvcenter);
 	}
 }
 
 //	-----------------------------------------------------------
 //	ang is in 0..ffff = 0..359.999 degrees
 //	rotmat is filled in with 4 fixes
-static void create_2d_rotation_matrix(fix *rotmat, fix ang)
+static array<fix, 4> create_2d_rotation_matrix(fix ang)
 {
 	fix	sinang, cosang;
 
 	fix_sincos(ang, &sinang, &cosang);
 
-	rotmat[0] = cosang;
-	rotmat[1] = sinang;
-	rotmat[2] = -sinang;
-	rotmat[3] = cosang;
-	
+	return {{
+		cosang,
+		sinang,
+		-sinang,
+		cosang
+	}};
 }
 
 
 //	-----------------------------------------------------------
 static int DoTexRotateLeft(int value)
 {
-	uvl	uvcenter;
-	fix	rotmat[4];
-
-	compute_uv_side_center(&uvcenter, Cursegp, Curside);
-
+	const auto uvcenter = compute_uv_side_center(Cursegp, Curside);
 	//	Create a rotation matrix
-	create_2d_rotation_matrix(rotmat, -F1_0/value);
+	const auto rotmat = create_2d_rotation_matrix(-F1_0/value);
 
-	rotate_uv_points_on_side(Cursegp, Curside, rotmat, &uvcenter);
+	rotate_uv_points_on_side(Cursegp, Curside, rotmat, uvcenter);
 
  	Update_flags |= UF_WORLD_CHANGED;
 
@@ -292,13 +282,10 @@ static int DoTexSlideRight(int value)
 	side	*sidep;
 	uvl	duvl03;
 	fix	dist;
-	const sbyte	*vp;
-	int	v;
-
-	vp = Side_to_verts[Curside];
+	auto &vp = Side_to_verts[Curside];
 	sidep = &Cursegp->sides[Curside];
 
-	dist = vm_vec_dist(&Vertices[Cursegp->verts[vp[3]]], &Vertices[Cursegp->verts[vp[0]]]);
+	dist = vm_vec_dist(Vertices[Cursegp->verts[vp[3]]], Vertices[Cursegp->verts[vp[0]]]);
 	dist *= value;
 	if (dist < F1_0/(64*value))
 		dist = F1_0/(64*value);
@@ -306,9 +293,10 @@ static int DoTexSlideRight(int value)
 	duvl03.u = fixdiv(sidep->uvls[3].u - sidep->uvls[0].u,dist);
 	duvl03.v = fixdiv(sidep->uvls[3].v - sidep->uvls[0].v,dist);
 
-	for (v=0; v<4; v++) {
-		sidep->uvls[v].u += duvl03.u;
-		sidep->uvls[v].v += duvl03.v;
+	range_for (auto &v, sidep->uvls)
+	{
+		v.u += duvl03.u;
+		v.v += duvl03.v;
 	}
 
 	Update_flags |= UF_WORLD_CHANGED;
@@ -329,15 +317,12 @@ int TexSlideRightBig()
 //	-----------------------------------------------------------
 static int DoTexRotateRight(int value)
 {
-	uvl	uvcenter;
-	fix	rotmat[4];
-
-	compute_uv_side_center(&uvcenter, Cursegp, Curside);
+	const auto uvcenter = compute_uv_side_center(Cursegp, Curside);
 
 	//	Create a rotation matrix
-	create_2d_rotation_matrix(rotmat, F1_0/value);
+	const auto rotmat = create_2d_rotation_matrix(F1_0/value);
 
-	rotate_uv_points_on_side(Cursegp, Curside, rotmat, &uvcenter);
+	rotate_uv_points_on_side(Cursegp, Curside, rotmat, uvcenter);
 
  	Update_flags |= UF_WORLD_CHANGED;
 
@@ -363,15 +348,12 @@ int	TexSelectActiveEdge()
 //	-----------------------------------------------------------
 int	TexRotate90Degrees()
 {
-	uvl	uvcenter;
-	fix	rotmat[4];
-
-	compute_uv_side_center(&uvcenter, Cursegp, Curside);
+	const auto uvcenter = compute_uv_side_center(Cursegp, Curside);
 
 	//	Create a rotation matrix
-	create_2d_rotation_matrix(rotmat, F1_0/4);
+	const auto rotmat = create_2d_rotation_matrix(F1_0/4);
 
-	rotate_uv_points_on_side(Cursegp, Curside, rotmat, &uvcenter);
+	rotate_uv_points_on_side(Cursegp, Curside, rotmat, uvcenter);
 
  	Update_flags |= UF_WORLD_CHANGED;
 

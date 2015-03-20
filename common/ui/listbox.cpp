@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -72,14 +78,14 @@ void ui_draw_listbox( UI_DIALOG *dlg, UI_GADGET_LISTBOX * listbox )
 
 		if (i !=listbox->current_item)
 		{
-			if ((listbox->current_item == -1) && (dlg->keyboard_focus_gadget == (UI_GADGET *)listbox) && (i == listbox->first_item)  )
+			if ((listbox->current_item == -1) && (dlg->keyboard_focus_gadget == listbox) && (i == listbox->first_item)  )
 				gr_set_fontcolor( CRED, -1 );
 			else
 				gr_set_fontcolor( CWHITE, -1 );
 		}
 		else
 		{
-			if (dlg->keyboard_focus_gadget == (UI_GADGET *)listbox)
+			if (dlg->keyboard_focus_gadget == listbox)
 				gr_set_fontcolor( CRED, -1 );
 			else
 				gr_set_fontcolor( CBLACK, -1 );
@@ -114,19 +120,15 @@ static void gr_draw_sunken_border( short x1, short y1, short x2, short y2 )
 }
 
 
-UI_GADGET_LISTBOX * ui_add_gadget_listbox(UI_DIALOG *dlg, short x, short y, short w, short h, short numitems, char **list)
+std::unique_ptr<UI_GADGET_LISTBOX> ui_add_gadget_listbox(UI_DIALOG *dlg, short x, short y, short w, short h, short numitems, char **list)
 {
 	int tw, th, taw, i;
-
-	UI_GADGET_LISTBOX * listbox;
-
 	gr_get_string_size("*", &tw, &th, &taw );
 
 	i = h / th;
 	h = i * th;
 
-	listbox = (UI_GADGET_LISTBOX *)ui_gadget_add( dlg, 2, x, y, x+w-1, y+h-1 );
-
+	std::unique_ptr<UI_GADGET_LISTBOX> listbox{ui_gadget_add<UI_GADGET_LISTBOX>( dlg, x, y, x+w-1, y+h-1 )};
 	listbox->list = list;
 	listbox->width = w;
 	listbox->height = h;
@@ -139,27 +141,22 @@ UI_GADGET_LISTBOX * ui_add_gadget_listbox(UI_DIALOG *dlg, short x, short y, shor
 	listbox->dragging = 0;
 	listbox->selected_item = -1;
 	listbox->moved = 1;
-
 	listbox->scrollbar = ui_add_gadget_scrollbar( dlg, x+w+3, y, 0, h, 0, numitems-i, 0, i );
-	listbox->scrollbar->parent = (UI_GADGET *)listbox;
-
+	listbox->scrollbar->parent = listbox.get();
 	return listbox;
-
 }
 
-int ui_listbox_do( UI_DIALOG *dlg, UI_GADGET_LISTBOX * listbox, d_event *event )
+window_event_result ui_listbox_do( UI_DIALOG *dlg, UI_GADGET_LISTBOX * listbox,const d_event &event )
 {
 	int mitem, oldfakepos, kf;
 	int keypress = 0;
-	int rval = 0;
-	
-	if (event->type == EVENT_WINDOW_DRAW)
+	if (event.type == EVENT_WINDOW_DRAW)
 	{
 		ui_draw_listbox( dlg, listbox );
-		return 0;
+		return window_event_result::ignored;
 	}
 	
-	if (event->type == EVENT_KEY_COMMAND)
+	if (event.type == EVENT_KEY_COMMAND)
 		keypress = event_key_get(event);
 	
 	listbox->selected_item = -1;
@@ -173,19 +170,19 @@ int ui_listbox_do( UI_DIALOG *dlg, UI_GADGET_LISTBOX * listbox, d_event *event )
 		listbox->old_first_item = listbox->first_item;
 		//ui_draw_listbox( dlg, listbox );
 
-		if (dlg->keyboard_focus_gadget == (UI_GADGET *)listbox)
+		if (dlg->keyboard_focus_gadget == listbox)
 		{
-			dlg->keyboard_focus_gadget = ui_gadget_get_next((UI_GADGET *)listbox);
+			dlg->keyboard_focus_gadget = ui_gadget_get_next(listbox);
 		}
 
-		return rval;
+		return window_event_result::ignored;
 	}
 
 	listbox->old_current_item = listbox->current_item;
 	listbox->old_first_item = listbox->first_item;
 
 
-	if (GADGET_PRESSED(listbox->scrollbar))
+	if (GADGET_PRESSED(listbox->scrollbar.get()))
 	{
 		listbox->moved = 1;
 
@@ -202,17 +199,18 @@ int ui_listbox_do( UI_DIALOG *dlg, UI_GADGET_LISTBOX * listbox, d_event *event )
 	if (B1_JUST_RELEASED)
 		listbox->dragging = 0;
 
-	if (B1_JUST_PRESSED && ui_mouse_on_gadget( (UI_GADGET *)listbox ))
+	window_event_result rval = window_event_result::ignored;
+	if (B1_JUST_PRESSED && ui_mouse_on_gadget( listbox ))
 	{
 		listbox->dragging = 1;
-		rval = 1;
+		rval = window_event_result::handled;
 	}
 
-	if ( dlg->keyboard_focus_gadget==(UI_GADGET *)listbox )
+	if ( dlg->keyboard_focus_gadget==listbox )
 	{
 		if (keypress==KEY_ENTER)   {
 			listbox->selected_item = listbox->current_item;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 
 		kf = 0;
@@ -248,7 +246,7 @@ int ui_listbox_do( UI_DIALOG *dlg, UI_GADGET_LISTBOX * listbox, d_event *event )
 		if (kf==1)
 		{
 			listbox->moved = 1;
-			rval = 1;
+			rval = window_event_result::handled;
 
 			if (listbox->current_item<0)
 				listbox->current_item=0;
@@ -289,7 +287,7 @@ int ui_listbox_do( UI_DIALOG *dlg, UI_GADGET_LISTBOX * listbox, d_event *event )
 	}
 
 
-	if (selected_gadget==(UI_GADGET *)listbox)
+	if (selected_gadget==listbox)
 	{
 		if (listbox->dragging)
 		{
@@ -363,26 +361,24 @@ int ui_listbox_do( UI_DIALOG *dlg, UI_GADGET_LISTBOX * listbox, d_event *event )
 		if (B1_DOUBLE_CLICKED )
 		{
 			listbox->selected_item = listbox->current_item;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 
 	}
 	
 	if (listbox->moved || (listbox->selected_item > 0))
 	{
-		ui_gadget_send_event(dlg, (listbox->selected_item > 0) ? EVENT_UI_LISTBOX_SELECTED : EVENT_UI_LISTBOX_MOVED, (UI_GADGET *)listbox);
-		rval = 1;
+		ui_gadget_send_event(dlg, (listbox->selected_item > 0) ? EVENT_UI_LISTBOX_SELECTED : EVENT_UI_LISTBOX_MOVED, listbox);
+		return window_event_result::handled;
 	}
 
 	return rval;
 }
 
-void ui_listbox_change(UI_DIALOG *dlg, UI_GADGET_LISTBOX *listbox, short numitems, char **list)
+void ui_listbox_change(UI_DIALOG *, UI_GADGET_LISTBOX *listbox, short numitems, char **list)
 {
 	int stop, start;
 	UI_GADGET_SCROLLBAR * scrollbar;
-
-	dlg = dlg;
 
 	listbox->list = list;
 	listbox->num_items = numitems;
@@ -396,7 +392,7 @@ void ui_listbox_change(UI_DIALOG *dlg, UI_GADGET_LISTBOX *listbox, short numitem
 	listbox->current_item = listbox->old_current_item = 0;
 	listbox->moved = 0;
 
-	scrollbar = listbox->scrollbar;
+	scrollbar = listbox->scrollbar.get();
 
 	start=0;
 	stop= numitems - listbox->num_items_displayed;

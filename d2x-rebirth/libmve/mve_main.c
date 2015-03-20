@@ -1,3 +1,9 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 
 #include <stdlib.h>
 #include <string.h>
@@ -156,7 +162,7 @@ static int doPlay(const char *filename)
 	memset(g_palette, 0, 768);
 
 	MVE_sndInit(1);
-	MVE_memCallbacks((mve_cb_Alloc)malloc, free);
+	MVE_memCallbacks(malloc, free);
 	MVE_ioCallbacks(fileRead);
 	MVE_sfCallbacks(showFrame);
 	MVE_palCallbacks(setPalette);

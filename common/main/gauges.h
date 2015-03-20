@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,17 +23,16 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-
-#ifndef _GAUGES_H
-#define _GAUGES_H
+#pragma once
 
 #include "maths.h"
-#include "gr.h"
-#include "piggy.h"
 #include "hudmsg.h"
 #include "player.h"
 
+struct bitmap_index;
+
 #ifdef __cplusplus
+#include "fwdvalptridx.h"
 
 //from gauges.c
 
@@ -36,12 +41,12 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define MAX_GAUGE_BMS_MAC 85
 #define MAX_GAUGE_BMS (MacPig ? MAX_GAUGE_BMS_MAC : MAX_GAUGE_BMS_PC)
 
-extern bitmap_index Gauges[MAX_GAUGE_BMS_MAC];   // Array of all gauge bitmaps.
+extern array<bitmap_index, MAX_GAUGE_BMS_MAC> Gauges;   // Array of all gauge bitmaps.
 #elif defined(DXX_BUILD_DESCENT_II)
 #define MAX_GAUGE_BMS 100   // increased from 56 to 80 by a very unhappy MK on 10/24/94.
 
-extern bitmap_index Gauges[MAX_GAUGE_BMS];      // Array of all gauge bitmaps.
-extern bitmap_index Gauges_hires[MAX_GAUGE_BMS];    // hires gauges
+extern array<bitmap_index, MAX_GAUGE_BMS> Gauges;      // Array of all gauge bitmaps.
+extern array<bitmap_index, MAX_GAUGE_BMS> Gauges_hires;    // hires gauges
 #endif
 
 // Flags for gauges/hud stuff
@@ -52,7 +57,6 @@ extern void add_bonus_points_to_score(int points);
 void render_gauges(void);
 void init_gauges(void);
 void close_gauges(void);
-void cockpit_decode_alpha(grs_bitmap *bm);
 void show_reticle(int reticle_type, int secondary_display);
 void show_HUD_names();
 void show_mousefs_indicator(int mx, int my, int mz, int x, int y, int size);
@@ -71,7 +75,20 @@ struct rgb {
 	ubyte r,g,b;
 };
 
-extern const rgb player_rgb[MAX_PLAYERS];
+typedef const array<rgb, MAX_PLAYERS> rgb_array_t;
+extern const rgb_array_t player_rgb_normal;
+
+/* Stub for mods that provide switchable player colors */
+class rgb_array_wrapper
+{
+public:
+	constexpr const rgb &operator[](std::size_t i) const
+	{
+		return player_rgb_normal[i];
+	}
+};
+
+constexpr rgb_array_wrapper player_rgb{};
 
 #if defined(DXX_BUILD_DESCENT_II)
 #define WBU_WEAPON      0       // the weapons display
@@ -83,29 +100,18 @@ extern const rgb player_rgb[MAX_PLAYERS];
 #define WBU_MARKER      6       // a dropped marker
 #define WBU_STATIC      7       // playing static after missile hits
 
-struct object;
-
 // draws a 3d view into one of the cockpit windows.  win is 0 for
 // left, 1 for right.  viewer is object.  NULL object means give up
 // window user is one of the WBU_ constants.  If rear_view_flag is
 // set, show a rear view.  If label is non-NULL, print the label at
 // the top of the window.
-void do_cockpit_window_view(int win, struct object *viewer, int rear_view_flag, int user, const char *label);
+void do_cockpit_window_view(int win, vobjptridx_t viewer, int rear_view_flag, int user, const char *label);
+void do_cockpit_window_view(int win, int rear_view_flag, int user, const char *label);
 #endif
 
 #define GAUGE_HUD_NUMMODES 4
 
-struct span
-{
-	int l,r;
-};
-
-extern const span weapon_window_left[],weapon_window_left_hires[],weapon_window_right[],weapon_window_right_hires[];
 extern int	Color_0_31_0;
-
-
-#define WinBoxLeft (HIRESMODE?weapon_window_left_hires:weapon_window_left)
-#define WinBoxRight (HIRESMODE?weapon_window_right_hires:weapon_window_right)
 
 // defines for the reticle(s)
 #define RET_TYPE_CLASSIC        0
@@ -124,5 +130,3 @@ extern int	Color_0_31_0;
 #define RET_COLOR_DEFAULT_A     0
 
 #endif
-
-#endif /* _GAUGES_H */

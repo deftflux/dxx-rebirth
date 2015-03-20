@@ -1,10 +1,14 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * SDL joystick support
  *
  */
-
-#include <string.h>   // for memset
 
 #include "joy.h"
 #include "dxxerror.h"
@@ -28,15 +32,13 @@ static struct joyinfo {
 	ubyte button_last_state[JOY_MAX_BUTTONS]; // for HAT movement only
 } Joystick;
 
-struct d_event_joystickbutton
+struct d_event_joystickbutton : d_event
 {
-	event_type type;
 	int button;
 };
 
-struct d_event_joystick_moved
+struct d_event_joystick_moved : d_event
 {
-	event_type	type;	// EVENT_JOYSTICK_MOVED
 	int		axis;
 	int 		value;
 };
@@ -66,13 +68,12 @@ void joy_button_handler(SDL_JoyButtonEvent *jbe)
 	event.type = (jbe->type == SDL_JOYBUTTONDOWN) ? EVENT_JOYSTICK_BUTTON_DOWN : EVENT_JOYSTICK_BUTTON_UP;
 	event.button = button;
 	con_printf(CON_DEBUG, "Sending event %s, button %d", (jbe->type == SDL_JOYBUTTONDOWN) ? "EVENT_JOYSTICK_BUTTON_DOWN" : "EVENT_JOYSTICK_JOYSTICK_UP", event.button);
-	event_send((d_event *)&event);
+	event_send(event);
 }
 
 void joy_hat_handler(SDL_JoyHatEvent *jhe)
 {
 	int hat = SDL_Joysticks[jhe->which].hat_map[jhe->hat];
-	int hbi;
 	d_event_joystickbutton event;
 
 	//Save last state of the hat-button
@@ -88,21 +89,21 @@ void joy_hat_handler(SDL_JoyHatEvent *jhe)
 	Joystick.button_state[hat+3] = ((jhe->value & SDL_HAT_LEFT)>0);
 
 	//determine if a hat-button up or down event based on state and last_state
-	for(hbi=0;hbi<4;hbi++)
+	for(int hbi=0;hbi<4;hbi++)
 	{
 		if( !Joystick.button_last_state[hat+hbi] && Joystick.button_state[hat+hbi]) //last_state up, current state down
 		{
 			event.type = EVENT_JOYSTICK_BUTTON_DOWN;
 			event.button = hat+hbi;
 			con_printf(CON_DEBUG, "Sending event EVENT_JOYSTICK_BUTTON_DOWN, button %d", event.button);
-			event_send((d_event *)&event);
+			event_send(event);
 		}
 		else if(Joystick.button_last_state[hat+hbi] && !Joystick.button_state[hat+hbi])  //last_state down, current state up
 		{
 			event.type = EVENT_JOYSTICK_BUTTON_UP;
 			event.button = hat+hbi;
 			con_printf(CON_DEBUG, "Sending event EVENT_JOYSTICK_BUTTON_UP, button %d", event.button);
-			event_send((d_event *)&event);
+			event_send(event);
 		}
 	}
 }
@@ -122,7 +123,7 @@ int joy_axis_handler(SDL_JoyAxisEvent *jae)
 	event.axis = axis;
 	event.value = Joystick.axis_value[axis] = jae->value/256;
 	con_printf(CON_DEBUG, "Sending event EVENT_JOYSTICK_MOVED, axis: %d, value: %d",event.axis, event.value);
-	event_send((d_event *)&event);
+	event_send(event);
 
 	return 1;
 }
@@ -132,21 +133,21 @@ int joy_axis_handler(SDL_JoyAxisEvent *jae)
 
 void joy_init()
 {
-	int i,j,n;
+	int n;
 
 	if (SDL_Init(SDL_INIT_JOYSTICK) < 0) {
 		con_printf(CON_NORMAL, "sdl-joystick: initialisation failed: %s.",SDL_GetError());
 		return;
 	}
 
-	memset(&Joystick,0,sizeof(Joystick));
+	Joystick = {};
 	joyaxis_text.clear();
 	joybutton_text.clear();
 
 	n = SDL_NumJoysticks();
 
 	con_printf(CON_NORMAL, "sdl-joystick: found %d joysticks", n);
-	for (i = 0; i < n; i++) {
+	for (int i = 0; i < n; i++) {
 		con_printf(CON_NORMAL, "sdl-joystick %d: %s", i, SDL_JoystickName(i));
 		SDL_Joysticks[num_joysticks].handle = SDL_JoystickOpen(i);
 		if (SDL_Joysticks[num_joysticks].handle) {
@@ -180,18 +181,18 @@ void joy_init()
 			con_printf(CON_NORMAL, "sdl-joystick: %d hats", SDL_Joysticks[num_joysticks].n_hats);
 
 			joyaxis_text.resize(joyaxis_text.size() + SDL_Joysticks[num_joysticks].n_axes);
-			for (j=0; j < SDL_Joysticks[num_joysticks].n_axes; j++)
+			for (int j=0; j < SDL_Joysticks[num_joysticks].n_axes; j++)
 			{
 				snprintf(&joyaxis_text[Joystick.n_axes][0], sizeof(joyaxis_text[Joystick.n_axes]), "J%d A%d", i + 1, j + 1);
 				SDL_Joysticks[num_joysticks].axis_map[j] = Joystick.n_axes++;
 			}
 			joybutton_text.resize(joybutton_text.size() + SDL_Joysticks[num_joysticks].n_buttons + (4 * SDL_Joysticks[num_joysticks].n_hats));
-			for (j=0; j < SDL_Joysticks[num_joysticks].n_buttons; j++)
+			for (int j=0; j < SDL_Joysticks[num_joysticks].n_buttons; j++)
 			{
 				snprintf(&joybutton_text[Joystick.n_buttons][0], sizeof(joybutton_text[Joystick.n_buttons]), "J%d B%d", i + 1, j + 1);
 				SDL_Joysticks[num_joysticks].button_map[j] = Joystick.n_buttons++;
 			}
-			for (j=0; j < SDL_Joysticks[num_joysticks].n_hats; j++)
+			for (int j=0; j < SDL_Joysticks[num_joysticks].n_hats; j++)
 			{
 				SDL_Joysticks[num_joysticks].hat_map[j] = Joystick.n_buttons;
 				//a hat counts as four buttons
@@ -219,27 +220,26 @@ void joy_close()
 	joybutton_text.clear();
 }
 
-void event_joystick_get_axis(d_event *event, int *axis, int *value)
+void event_joystick_get_axis(const d_event &event, int *axis, int *value)
 {
-	Assert(event->type == EVENT_JOYSTICK_MOVED);
-
-	*axis  = ((d_event_joystick_moved *)event)->axis;
-	*value = ((d_event_joystick_moved *)event)->value;
+	auto &e = static_cast<const d_event_joystick_moved &>(event);
+	Assert(e.type == EVENT_JOYSTICK_MOVED);
+	*axis  = e.axis;
+	*value = e.value;
 }
 
 void joy_flush()
 {
-	int i;
-
 	if (!num_joysticks)
 		return;
 
-	for (i = 0; i < Joystick.n_buttons; i++)
+	for (int i = 0; i < Joystick.n_buttons; i++)
 		Joystick.button_state[i] = SDL_RELEASED;
 }
 
-int event_joystick_get_button(d_event *event)
+int event_joystick_get_button(const d_event &event)
 {
-	Assert((event->type == EVENT_JOYSTICK_BUTTON_DOWN) || (event->type == EVENT_JOYSTICK_BUTTON_UP));
-	return ((d_event_joystickbutton *)event)->button;
+	auto &e = static_cast<const d_event_joystickbutton &>(event);
+	Assert(e.type == EVENT_JOYSTICK_BUTTON_DOWN || e.type == EVENT_JOYSTICK_BUTTON_UP);
+	return e.button;
 }

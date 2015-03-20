@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -31,6 +37,8 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "mouse.h"
 #include "timer.h"
 #include "dxxerror.h"
+
+#include "compiler-make_unique.h"
 
 #define D_X             (dlg->x)
 #define D_Y             (dlg->y)
@@ -98,7 +106,6 @@ int ui_play_events_realtime( int NumberOfEvents, UI_EVENT * buffer )
 
 int ui_play_events_fast( int NumberOfEvents, UI_EVENT * buffer )
 {
-	int i;
 	if ( buffer == NULL ) return 1;
 
 	EventBuffer = buffer;
@@ -110,7 +117,7 @@ int ui_play_events_fast( int NumberOfEvents, UI_EVENT * buffer )
 	keyd_last_released= 0;
 	keyd_last_pressed= 0;
 
-	for (i=0; i<256; i++ )
+	for (int i=0; i<256; i++ )
 	{
 		SavedState[i] = keyd_pressed[i];
 	}
@@ -160,75 +167,63 @@ static void ui_dialog_draw(UI_DIALOG *dlg)
 
 
 // The dialog handler borrows heavily from the newmenu_handler
-static int ui_dialog_handler(window *wind, d_event *event, UI_DIALOG *dlg)
+static window_event_result ui_dialog_handler(window *wind,const d_event &event, UI_DIALOG *dlg)
 {
-	int rval = 0;
-
-	if (event->type == EVENT_WINDOW_CLOSED ||
-		event->type == EVENT_WINDOW_ACTIVATED ||
-		event->type == EVENT_WINDOW_DEACTIVATED)
-		return 0;
+	if (event.type == EVENT_WINDOW_CLOSED ||
+		event.type == EVENT_WINDOW_ACTIVATED ||
+		event.type == EVENT_WINDOW_DEACTIVATED)
+		return window_event_result::ignored;
 	
 	if (dlg->callback)
 		if ((*dlg->callback)(dlg, event, dlg->userdata))
-			return 1;		// event handled
+			return window_event_result::handled;		// event handled
 
 	if (!window_exists(wind))
-		return 1;
+		return window_event_result::handled;
 
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_MOUSE_BUTTON_DOWN:
 		case EVENT_MOUSE_BUTTON_UP:
 		case EVENT_MOUSE_MOVED:
 			/*return*/ ui_dialog_do_gadgets(dlg, event);
 			if (!window_exists(wind))
-				return 1;
-
-			rval = mouse_in_window(dlg->wind);
-			break;
-			
+				return window_event_result::handled;
+			return mouse_in_window(dlg->wind);
 		case EVENT_KEY_COMMAND:
 		case EVENT_KEY_RELEASE:
-			rval = ui_dialog_do_gadgets(dlg, event);
-			break;
-
+			return ui_dialog_do_gadgets(dlg, event);
 		case EVENT_IDLE:
 			timer_delay2(50);
-			rval = ui_dialog_do_gadgets(dlg, event);
-			break;
-			
+			return ui_dialog_do_gadgets(dlg, event);
 		case EVENT_WINDOW_DRAW:
 		{
-			d_event event2 = { EVENT_UI_DIALOG_DRAW };
 			ui_dialog_draw(dlg);
-			rval = ui_dialog_do_gadgets(dlg, event);
-			window_send_event(wind, &event2);
-			break;
+			window_event_result rval = ui_dialog_do_gadgets(dlg, event);
+			if (rval != window_event_result::close)
+			{
+				d_event event2 = { EVENT_UI_DIALOG_DRAW };
+				window_send_event(*wind, event2);
+			}
+			return rval;
 		}
 
 		case EVENT_WINDOW_CLOSE:
 			ui_gadget_delete_all(dlg);
 			selected_gadget = NULL;
-			d_free( dlg );
-			break;
-			
+			delete dlg;
+			return window_event_result::ignored;
 		default:
-			break;
+			return window_event_result::ignored;
 	}
-	
-	return rval;
 }
 
 template <>
-UI_DIALOG * ui_create_dialog( short x, short y, short w, short h, enum dialog_flags flags, ui_subfunction_t<void>::type callback, void *userdata )
+UI_DIALOG * ui_create_dialog( short x, short y, short w, short h, enum dialog_flags flags, ui_subfunction_t<void>::type callback, void *userdata, const void *createdata)
 {
-	UI_DIALOG	*dlg;
 	int sw, sh, req_w, req_h;
 
-	MALLOC(dlg, UI_DIALOG, 1);
-	if (dlg==NULL) Error("Could not create dialog: Out of memory");
-
+	auto dlg = make_unique<UI_DIALOG>();
 	sw = grd_curscreen->sc_w;
 	sh = grd_curscreen->sc_h;
 
@@ -265,19 +260,16 @@ UI_DIALOG * ui_create_dialog( short x, short y, short w, short h, enum dialog_fl
 	dlg->wind = window_create(&grd_curscreen->sc_canvas,
 						 x + ((flags & DF_BORDER) ? BORDER_WIDTH : 0),
 						 y + ((flags & DF_BORDER) ? BORDER_WIDTH : 0),
-						 req_w, req_h, ui_dialog_handler, dlg);
+						 req_w, req_h, ui_dialog_handler, dlg.get(), createdata);
 	
 	if (!dlg->wind)
 	{
-		d_free(dlg);
 		return NULL;
 	}
 
 	if (!(flags & DF_MODAL))
 		window_set_modal(dlg->wind, 0);	// make this window modeless, allowing events to propogate through the window stack
-
-	return dlg;
-
+	return dlg.release();
 }
 
 window *ui_dialog_get_window(UI_DIALOG *dlg)
@@ -287,7 +279,7 @@ window *ui_dialog_get_window(UI_DIALOG *dlg)
 
 void ui_dialog_set_current_canvas(UI_DIALOG *dlg)
 {
-	gr_set_current_canvas(window_get_canvas(dlg->wind));
+	gr_set_current_canvas(window_get_canvas(*dlg->wind));
 }
 
 void ui_close_dialog( UI_DIALOG * dlg )
@@ -298,9 +290,8 @@ void ui_close_dialog( UI_DIALOG * dlg )
 #if 0
 void restore_state()
 {
-	int i;
 	_disable();
-	for (i=0; i<256; i++ )
+	for (int i=0; i<256; i++ )
 	{
 		keyd_pressed[i] = SavedState[i];
 	}

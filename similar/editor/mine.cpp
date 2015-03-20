@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,11 +23,11 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
+#include <cinttypes>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
-#include "physfsx.h"
 #include "key.h"
 #include "gr.h"
 #include "bm.h"			// for MAX_TEXTURES
@@ -29,9 +35,11 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "segment.h"
 #include "editor.h"
 #include "editor/esegment.h"
+#include "wall.h"
 #include "dxxerror.h"
 #include "textures.h"
 #include "object.h"
+#include "physfsx.h"
 #include "gamemine.h"
 #include "gamesave.h"
 #include "gameseg.h"
@@ -41,11 +49,14 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "switch.h"
 #include "fuelcen.h"
 
+#include "compiler-range_for.h"
+#include "partial_range.h"
+
 #define REMOVE_EXT(s)  (*(strchr( (s), '.' ))='\0')
 
 static int save_mine_data(PHYSFS_file * SaveFile);
 
-static char	 current_tmap_list[MAX_TEXTURES][13];
+static array<d_fname, MAX_TEXTURES> current_tmap_list;
 
 int	New_file_format_save = 1;
 
@@ -321,10 +332,9 @@ static short convert_to_d1_tmap_num(short tmap_num)
 
 int med_save_mine(const char * filename)
 {
-	PHYSFS_file *SaveFile;
 	char ErrorMessage[256];
 
-	SaveFile = PHYSFSX_openWriteBuffered( filename );
+	auto SaveFile = PHYSFSX_openWriteBuffered(filename);
 	if (!SaveFile)
 	{
 #if 0 //ndef __linux__
@@ -343,10 +353,7 @@ int med_save_mine(const char * filename)
 	save_mine_data(SaveFile);
 	
 	//==================== CLOSE THE FILE =============================
-	PHYSFS_close(SaveFile);
-
 	return 0;
-
 }
 
 // -----------------------------------------------------------------------------
@@ -356,13 +363,11 @@ static int save_mine_data(PHYSFS_file * SaveFile)
 	int  header_offset, editor_offset, vertex_offset, segment_offset, texture_offset, walls_offset, triggers_offset; //, links_offset;
 	int  newseg_verts_offset;
 	int  newsegment_offset;
-	int  i;
-
 	med_compress_mine();
 	warn_if_concave_segments();
 	
-	for (i=0;i<NumTextures;i++)
-		strncpy(current_tmap_list[i], TmapInfo[i].filename, 13);
+	for (int i=0;i<NumTextures;i++)
+		current_tmap_list[i] = TmapInfo[i].filename;
 
 	//=================== Calculate offsets into file ==================
 
@@ -431,9 +436,9 @@ static int save_mine_data(PHYSFS_file * SaveFile)
 	else									  
 		mine_editor.Markedsegp       =   -1;
 	mine_editor.Markedside          =   Markedside;
-	for (i=0;i<10;i++)
+	for (int i=0;i<10;i++)
 		mine_editor.Groupsegp[i]	  =	Groupsegp[i] - Segments;
-	for (i=0;i<10;i++)
+	for (int i=0;i<10;i++)
 		mine_editor.Groupside[i]     =	Groupside[i];
 
 	if (editor_offset != PHYSFS_tell(SaveFile))
@@ -444,7 +449,8 @@ static int save_mine_data(PHYSFS_file * SaveFile)
 
 	if (texture_offset != PHYSFS_tell(SaveFile))
 		Error( "OFFSETS WRONG IN MINE.C!" );
-	PHYSFS_write( SaveFile, current_tmap_list, 13, NumTextures );
+	range_for (auto &i, partial_range(current_tmap_list, NumTextures))
+		PHYSFS_write(SaveFile, i.data(), i.size(), 1);
 	
 	//===================== SAVE VERTEX INFO ==========================
 
@@ -518,26 +524,22 @@ static void dump_fix_as_ushort( fix value, int nbits, PHYSFS_file *SaveFile )
 	PHYSFS_writeULE16(SaveFile, short_value);
 }
 
-static void write_children(segment *seg, ubyte bit_mask, PHYSFS_file *SaveFile)
+static void write_children(const vcsegptr_t seg, ubyte bit_mask, PHYSFS_file *SaveFile)
 {
-	int bit;
-
-	for (bit = 0; bit < MAX_SIDES_PER_SEGMENT; bit++)
+	for (int bit = 0; bit < MAX_SIDES_PER_SEGMENT; bit++)
 	{
 		if (bit_mask & (1 << bit))
 			PHYSFS_writeSLE16(SaveFile, seg->children[bit]);
 	}
 }
 
-static void write_verts(segment *seg, PHYSFS_file *SaveFile)
+static void write_verts(const vcsegptr_t seg, PHYSFS_file *SaveFile)
 {
-	int i;
-
-	for (i = 0; i < MAX_VERTICES_PER_SEGMENT; i++)
+	for (int i = 0; i < MAX_VERTICES_PER_SEGMENT; i++)
 		PHYSFS_writeSLE16(SaveFile, seg->verts[i]);
 }
 
-static void write_special(segment *seg, ubyte bit_mask, PHYSFS_file *SaveFile)
+static void write_special(const vcsegptr_t seg, ubyte bit_mask, PHYSFS_file *SaveFile)
 {
 	if (bit_mask & (1 << MAX_SIDES_PER_SEGMENT))
 	{
@@ -550,7 +552,6 @@ static void write_special(segment *seg, ubyte bit_mask, PHYSFS_file *SaveFile)
 // saves compiled mine data to an already-open file...
 int save_mine_data_compiled(PHYSFS_file *SaveFile)
 {
-	short		i, segnum, sidenum;
 	ubyte 	version = COMPILED_MINE_VERSION;
 	ubyte		bit_mask = 0;
 
@@ -559,13 +560,13 @@ int save_mine_data_compiled(PHYSFS_file *SaveFile)
 
 	if (Highest_segment_index >= MAX_SEGMENTS) {
 		char	message[128];
-		sprintf(message, "Error: Too many segments (%i > %i) for game (not editor)", Highest_segment_index+1, MAX_SEGMENTS);
+		sprintf(message, "Error: Too many segments (%i > %" PRIuFAST32 ") for game (not editor)", Highest_segment_index+1, static_cast<uint_fast32_t>(MAX_SEGMENTS));
 		ui_messagebox( -2, -2, 1, message, "Ok" );
 	}
 
 	if (Highest_vertex_index >= MAX_VERTICES) {
 		char	message[128];
-		sprintf(message, "Error: Too many vertices (%i > %i) for game (not editor)", Highest_vertex_index+1, MAX_VERTICES);
+		sprintf(message, "Error: Too many vertices (%i > %" PRIuFAST32 ") for game (not editor)", Highest_vertex_index+1, static_cast<uint_fast32_t>(MAX_VERTICES));
 		ui_messagebox( -2, -2, 1, message, "Ok" );
 	}
 
@@ -582,14 +583,14 @@ int save_mine_data_compiled(PHYSFS_file *SaveFile)
 		PHYSFS_writeSLE32(SaveFile, Num_segments);					// 4 bytes = Num_segments
 	}
 
-	for (i = 0; i < Num_vertices; i++)
-		PHYSFSX_writeVector(SaveFile, &(Vertices[i]));
+	for (short i = 0; i < Num_vertices; i++)
+		PHYSFSX_writeVector(SaveFile, Vertices[i]);
 	
-	for (segnum = 0; segnum < Num_segments; segnum++)
+	for (segnum_t segnum = 0; segnum < Num_segments; segnum++)
 	{
 		segment *seg = &Segments[segnum];
 
-		for (sidenum = 0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
+		for (short sidenum = 0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
 		{
  			if (seg->children[sidenum] != segment_none)
 				bit_mask |= (1 << sidenum);
@@ -622,11 +623,11 @@ int save_mine_data_compiled(PHYSFS_file *SaveFile)
 	
 		// Write the walls as a 6 byte array
 		bit_mask = 0;
-		for (sidenum = 0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
+		for (short sidenum = 0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
 		{
 			uint wallnum;
 
-			if (seg->sides[sidenum].wall_num >= 0)
+			if (seg->sides[sidenum].wall_num != wall_none)
 			{
 				bit_mask |= (1 << sidenum);
 				wallnum = seg->sides[sidenum].wall_num;
@@ -639,15 +640,15 @@ int save_mine_data_compiled(PHYSFS_file *SaveFile)
 		else
 			bit_mask = 0x3F;
 
-		for (sidenum = 0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
+		for (short sidenum = 0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
 		{
 			if (bit_mask & (1 << sidenum))
 				PHYSFSX_writeU8(SaveFile, seg->sides[sidenum].wall_num);
 		}
 
-		for (sidenum = 0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
+		for (short sidenum = 0; sidenum < MAX_SIDES_PER_SEGMENT; sidenum++)
 		{
-			if ((seg->children[sidenum] == -1) || (seg->sides[sidenum].wall_num != -1))
+			if ((seg->children[sidenum] == segment_none) || (seg->sides[sidenum].wall_num != wall_none))
 			{
 				ushort	tmap_num, tmap_num2;
 
@@ -670,7 +671,7 @@ int save_mine_data_compiled(PHYSFS_file *SaveFile)
 				if (tmap_num2 != 0 || !New_file_format_save)
 					PHYSFS_writeSLE16(SaveFile, tmap_num2);
 
-				for (i = 0; i < 4; i++)
+				for (short i = 0; i < 4; i++)
 				{
 					dump_fix_as_short(seg->sides[sidenum].uvls[i].u, 5, SaveFile);
 					dump_fix_as_short(seg->sides[sidenum].uvls[i].v, 5, SaveFile);
@@ -683,8 +684,8 @@ int save_mine_data_compiled(PHYSFS_file *SaveFile)
 
 #if defined(DXX_BUILD_DESCENT_II)
 	if (Gamesave_current_version > 5)
-		for (i = 0; i < Num_segments; i++)
-			segment2_write(&Segment2s[i], SaveFile);
+		for (short i = 0; i < Num_segments; i++)
+			segment2_write(&Segments[i], SaveFile);
 #endif
 
 	return 0;

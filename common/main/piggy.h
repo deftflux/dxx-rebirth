@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -20,11 +26,12 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #ifndef _PIGGY_H
 #define _PIGGY_H
 
-#include "physfsx.h"
+#include <physfs.h>
 #include "sounds.h"
 #include "hash.h"
 #include "inferno.h"
 #include "gr.h"
+#include "fwd-partial_range.h"
 
 #ifdef __cplusplus
 
@@ -50,8 +57,8 @@ struct alias
 	char file_name[FILENAME_LEN];
 };
 
-extern alias alias_list[MAX_ALIASES];
-extern int Num_aliases;
+extern array<alias, MAX_ALIASES> alias_list;
+extern unsigned Num_aliases;
 
 extern int Piggy_hamfile_version;
 extern int Pigfile_initialized;
@@ -62,6 +69,7 @@ struct bitmap_index
 {
 	ushort index;
 };
+#define DEFINE_BITMAP_SERIAL_UDT() DEFINE_SERIAL_UDT_TO_MESSAGE(bitmap_index, b, (b.index))
 
 struct BitmapFile
 {
@@ -74,21 +82,19 @@ extern int PCSharePig;
 
 extern grs_bitmap bogus_bitmap;
 #endif
-extern ubyte bogus_data[64 * 64];
+extern array<uint8_t, 64 * 64> bogus_data;
 
 int properties_init();
 void piggy_close();
 bitmap_index piggy_register_bitmap( grs_bitmap * bmp, const char * name, int in_file );
 int piggy_register_sound( digi_sound * snd, const char * name, int in_file );
-bitmap_index piggy_find_bitmap( char * name );
-int piggy_find_sound( char * name );
+bitmap_index piggy_find_bitmap(const char *name);
+int piggy_find_sound(const char *name);
 
 void piggy_read_bitmap_data(grs_bitmap * bmp);
 void piggy_read_sound_data(digi_sound *snd);
 
 void piggy_load_level_data();
-
-char* piggy_game_bitmap_name(grs_bitmap *bmp);
 
 #if defined(DXX_BUILD_DESCENT_I)
 #define MAX_BITMAP_FILES	1800
@@ -150,12 +156,8 @@ bitmap_index read_extra_bitmap_d1_pig(const char *name);
 /*
  * reads a bitmap_index structure from a PHYSFS_file
  */
-void bitmap_index_read(bitmap_index *bi, PHYSFS_file *fp);
-
-/*
- * reads n bitmap_index structs from a PHYSFS_file
- */
-int bitmap_index_read_n(bitmap_index *bi, int n, PHYSFS_file *fp);
+void bitmap_index_read(PHYSFS_file *fp, bitmap_index &bi);
+void bitmap_index_read_n(PHYSFS_file *fp, partial_range_t<bitmap_index *> r);
 
 extern void remove_char( char * s, char c );	// in piggy.c
 #define REMOVE_EOL(s)		remove_char((s),'\n')
@@ -166,8 +168,8 @@ extern int Num_bitmap_files;
 extern int Num_sound_files;
 extern ubyte bogus_bitmap_initialized;
 extern digi_sound bogus_sound;
-extern const char space[3];
-extern const char equal_space[4];
+#define space_tab " \t"
+#define equal_space " \t="
 #if defined(DXX_BUILD_DESCENT_I)
 extern hashtable AllBitmapsNames;
 extern hashtable AllDigiSndNames;

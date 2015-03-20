@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -20,10 +26,13 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #ifndef _MISSION_H
 #define _MISSION_H
 
+#include <memory>
+#include <string>
 #include "pstypes.h"
 #include "inferno.h"
 
 #ifdef __cplusplus
+#include "ntstring.h"
 
 #define MAX_MISSIONS                    5000 // ZICO - changed from 300 to get more levels in list
 #define MAX_LEVELS_PER_MISSION          127	// KREATOR - increased from 30 (limited by Demo and Multiplayer code)
@@ -67,32 +76,70 @@ static const ubyte MAX_SECRET_LEVELS_PER_MISSION = 127;	// KREATOR - increased f
 //where the missions go
 #define MISSION_DIR "missions/"
 
-struct Mission {
-	char    *filename;          // filename
+/* Path and filename must be kept in sync. */
+class Mission_path
+{
+public:
+	Mission_path() = default;
+	Mission_path(const Mission_path &m) :
+		path(m.path),
+		filename(std::next(path.cbegin(), std::distance(m.path.cbegin(), m.filename)))
+	{
+	}
+	Mission_path &operator=(const Mission_path &m)
+	{
+		path = m.path;
+		filename = std::next(path.begin(), std::distance(m.path.cbegin(), m.filename));
+		return *this;
+	}
+	/* Caller's offset is ignored; it is only here to provide a
+	 * temporary to store the old path distance before old path is moved
+	 * to new path.
+	 */
+	Mission_path(Mission_path &&m, std::size_t offset = 0) :
+		path((offset = std::distance(m.path.cbegin(), m.filename), std::move(m.path))),
+		filename(std::next(path.cbegin(), offset))
+	{
+	}
+	Mission_path &operator=(Mission_path &&rhs)
+	{
+		std::size_t offset = std::distance(rhs.path.cbegin(), rhs.filename);
+		path = std::move(rhs.path);
+		filename = std::next(path.begin(), offset);
+		return *this;
+	}
+	/* Must be in this order for move constructor to work properly */
+	std::string path;				// relative file path
+	std::string::const_iterator filename;          // filename without extension
+};
+
+struct Mission : Mission_path
+{
+	std::unique_ptr<ubyte[]>	secret_level_table; // originating level no for each secret level 
+	// arrays of names of the level files
+	std::unique_ptr<d_fname[]>	level_names;
+	std::unique_ptr<d_fname[]>	secret_level_names;
 	int     builtin_hogsize;    // the size of the hogfile for a builtin mission, and 0 for an add-on mission
-	char	mission_name[MISSION_NAME_LEN+1];
-	ubyte   anarchy_only_flag;  // if true, mission is only for anarchy
-	char	*path;				// relative file path
+	ntstring<MISSION_NAME_LEN> mission_name;
 	d_fname	briefing_text_filename; // name of briefing file
 	d_fname	ending_text_filename; // name of ending file
-	ubyte	*secret_level_table; // originating level no for each secret level 
-	// arrays of names of the level files
-	d_fname	*level_names;
-	d_fname	*secret_level_names;
+	ubyte   anarchy_only_flag;  // if true, mission is only for anarchy
 	ubyte	last_level;
 	sbyte	last_secret_level;
 	ubyte	n_secret_levels;
 #if defined(DXX_BUILD_DESCENT_II)
 	ubyte	descent_version;	// descent 1 or descent 2?
 	ubyte	enhanced;	// 0: mission has "name", 1:"xname", 2:"zname"
-	d_fname *alternate_ham_file;
+	std::unique_ptr<d_fname> alternate_ham_file;
 #endif
+	~Mission();
 };
 
-extern Mission *Current_mission; // current mission
+typedef std::unique_ptr<Mission> Mission_ptr;
+extern Mission_ptr Current_mission; // current mission
 
 #define Current_mission_longname	Current_mission->mission_name
-#define Current_mission_filename	Current_mission->filename
+#define Current_mission_filename	&*Current_mission->filename
 #define Briefing_text_filename		Current_mission->briefing_text_filename
 #define Ending_text_filename		Current_mission->ending_text_filename
 #define Last_level			Current_mission->last_level
@@ -139,8 +186,6 @@ int load_mission_by_name (const char *mission_name);
 //Handles creating and selecting from the mission list.
 //Returns 1 if a mission was loaded.
 int select_mission (int anarchy_mode, const char *message, int (*when_selected)(void));
-
-void free_mission(void);
 
 #ifdef EDITOR
 void create_new_mission(void);

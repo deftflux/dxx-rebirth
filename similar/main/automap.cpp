@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -52,6 +58,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "wall.h"
 #include "hostage.h"
 #include "fuelcen.h"
+#include "physfsx.h"
 #include "gameseq.h"
 #include "gamefont.h"
 #include "gameseg.h"
@@ -74,6 +81,10 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "args.h"
 #include "physics.h"
 
+#include "compiler-make_unique.h"
+#include "compiler-range_for.h"
+#include "highest_valid.h"
+
 #define LEAVE_TIME 0x4000
 
 #define EF_USED     1   // This edge is used
@@ -86,15 +97,15 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 struct Edge_info
 {
-	int   verts[2];     // 8  bytes
+	array<int, 2>   verts;     // 8  bytes
 	ubyte sides[4];     // 4  bytes
-	int   segnum[4];    // 16 bytes  // This might not need to be stored... If you can access the normals of a side.
+	segnum_t   segnum[4];    // 16 bytes  // This might not need to be stored... If you can access the normals of a side.
 	ubyte flags;        // 1  bytes  // See the EF_??? defines above.
-	ubyte color;        // 1  bytes
+	color_t color;        // 1  bytes
 	ubyte num_faces;    // 1  bytes  // 31 bytes...
 };
 
-struct automap
+struct automap : ignore_window_pointer_t
 {
 	fix64			entry_time;
 	fix64			t1, t2;
@@ -109,8 +120,8 @@ struct automap
 	int			num_edges;
 	int			max_edges; //set each frame
 	int			highest_edge_index;
-	Edge_info		*edges;
-	int			*drawingListBright;
+	std::unique_ptr<Edge_info[]>		edges;
+	std::unique_ptr<int[]>			drawingListBright;
 	
 	// Screen canvas variables
 	grs_canvas		automap_view;
@@ -125,24 +136,24 @@ struct automap
 	vms_matrix		viewMatrix;
 	fix			viewDist;
 	
-	int			wall_normal_color;
-	int			wall_door_color;
-	int			wall_door_blue;
-	int			wall_door_gold;
-	int			wall_door_red;
-	int			wall_revealed_color;
-	int			hostage_color;
-	int			font_color_20;
-	int			green_31;
-	int			white_63;
-	int			blue_48;
-	int			red_48;
+	color_t			wall_normal_color;
+	color_t			wall_door_color;
+	color_t			wall_door_blue;
+	color_t			wall_door_gold;
+	color_t			wall_door_red;
+#if defined(DXX_BUILD_DESCENT_II)
+	color_t			wall_revealed_color;
+#endif
+	color_t			hostage_color;
+	color_t			green_31;
+	color_t			white_63;
+	color_t			blue_48;
+	color_t			red_48;
 	control_info controls;
 	segment_depth_array_t depth_array;
 };
 
 #define MAX_EDGES_FROM_VERTS(v)     ((v)*4)
-#define MAX_EDGES 6000  // Determined by loading all the levels by John & Mike, Feb 9, 1995
 
 #define K_WALL_NORMAL_COLOR     BM_XRGB(29, 29, 29 )
 #define K_WALL_DOOR_COLOR       BM_XRGB(5, 27, 5 )
@@ -168,7 +179,6 @@ static void init_automap_colors(automap *am)
 	am->wall_revealed_color = K_WALL_REVEALED_COLOR;
 #endif
 	am->hostage_color = K_HOSTAGE_COLOR;
-	am->font_color_20 = K_FONT_COLOR_20;
 	am->green_31 = K_GREEN_31;
 
 	am->white_63 = gr_find_closest_color_current(63,63,63);
@@ -197,11 +207,20 @@ static void automap_build_edge_list(automap *am, int add_all_edges);
 #define	MAX_DROP_SINGLE	9
 
 #if defined(DXX_BUILD_DESCENT_II)
-vms_vector MarkerPoint[NUM_MARKERS]; //these are only used in multi.c, and I'd get rid of them there, but when I tried to do that once, I caused some horrible bug. -MT
+#include "compiler-integer_sequence.h"
+
 int HighlightMarker=-1;
-char MarkerMessage[NUM_MARKERS][MARKER_MESSAGE_LEN];
+marker_message_text_t Marker_input;
+marker_messages_array_t MarkerMessage;
 float MarkerScale=2.0;
-int	MarkerObject[NUM_MARKERS];
+
+template <std::size_t... N>
+static inline constexpr array<objnum_t, sizeof...(N)> init_MarkerObject(index_sequence<N...>)
+{
+	return {{((void)N, object_none)...}};
+}
+
+array<objnum_t, NUM_MARKERS> MarkerObject = init_MarkerObject(make_tree_index_sequence<NUM_MARKERS>());
 #endif
 
 # define automap_draw_line g3_draw_line
@@ -221,7 +240,7 @@ static inline void ClearMarkers()
 static void DrawMarkerNumber (automap *am, int num)
 {
 	int i;
-	g3s_point BasePoint,FromPoint,ToPoint;
+	g3s_point FromPoint,ToPoint;
 
 	static const float sArrayX[10][20]={ 	{-.25, 0.0, 0.0, 0.0, -1.0, 1.0},
 				{-1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0},
@@ -260,7 +279,7 @@ static void DrawMarkerNumber (automap *am, int num)
 		gr_setcolor (am->blue_48);
 	
 	
-	g3_rotate_point(&BasePoint,&Objects[MarkerObject[(Player_num*2)+num]].pos);
+	const auto BasePoint = g3_rotate_point(Objects[MarkerObject[(Player_num*2)+num]].pos);
 	
 	for (i=0;i<NumOfPoints[num];i+=2)
 	{
@@ -270,15 +289,15 @@ static void DrawMarkerNumber (automap *am, int num)
 		
 		FromPoint.p3_x+=fixmul ((fl2f (ArrayX[i])),Matrix_scale.x);
 		FromPoint.p3_y+=fixmul ((fl2f (ArrayY[i])),Matrix_scale.y);
-		g3_code_point (&FromPoint);
-		g3_project_point (&FromPoint);
+		g3_code_point(FromPoint);
+		g3_project_point(FromPoint);
 		
 		ToPoint.p3_x+=fixmul ((fl2f (ArrayX[i+1])),Matrix_scale.x);
 		ToPoint.p3_y+=fixmul ((fl2f (ArrayY[i+1])),Matrix_scale.y);
-		g3_code_point (&ToPoint);
-		g3_project_point (&ToPoint);
+		g3_code_point(ToPoint);
+		g3_project_point(ToPoint);
 	
-		automap_draw_line(&FromPoint, &ToPoint);
+		automap_draw_line(FromPoint, ToPoint);
 	}
 }
 
@@ -287,35 +306,32 @@ static void DropMarker (int player_marker_num)
 	int marker_num = (Player_num*2)+player_marker_num;
 	object *playerp = &Objects[Players[Player_num].objnum];
 
-	MarkerPoint[marker_num] = playerp->pos;
-
 	if (MarkerObject[marker_num] != object_none)
 		obj_delete(MarkerObject[marker_num]);
 
-	MarkerObject[marker_num] = drop_marker_object(&playerp->pos,playerp->segnum,&playerp->orient,marker_num);
+	MarkerObject[marker_num] = drop_marker_object(playerp->pos,playerp->segnum,playerp->orient,marker_num);
 
 	if (Game_mode & GM_MULTI)
 		multi_send_drop_marker (Player_num,playerp->pos,player_marker_num,MarkerMessage[marker_num]);
 
 }
 
-void DropBuddyMarker(object *objp)
+void DropBuddyMarker(const vobjptr_t objp)
 {
 	int marker_num;
 
 	// Find spare marker slot.  "if" code below should be an assert, but what if someone changes NUM_MARKERS or MAX_CROP_SINGLE and it never gets hit?
+	static_assert(MAX_DROP_SINGLE + 1 <= NUM_MARKERS - 1, "not enough markers");
 	marker_num = MAX_DROP_SINGLE+1;
 	if (marker_num > NUM_MARKERS-1)
 		marker_num = NUM_MARKERS-1;
 
-	sprintf(MarkerMessage[marker_num], "RIP: %s",PlayerCfg.GuidebotName);
+	snprintf(&MarkerMessage[marker_num][0], MarkerMessage[marker_num].size(), "RIP: %s", static_cast<const char *>(PlayerCfg.GuidebotName));
 
-	MarkerPoint[marker_num] = objp->pos;
-
-	if (MarkerObject[marker_num] != object_none && MarkerObject[marker_num] !=0)
+	if (MarkerObject[marker_num] != object_none)
 		obj_delete(MarkerObject[marker_num]);
 
-	MarkerObject[marker_num] = drop_marker_object(&objp->pos, objp->segnum, &objp->orient, marker_num);
+	MarkerObject[marker_num] = drop_marker_object(objp->pos, objp->segnum, objp->orient, marker_num);
 
 }
 
@@ -325,7 +341,6 @@ static void DrawMarkers (automap *am)
  {
 	int i,maxdrop;
 	static int cyc=10,cycdir=1;
-	g3s_point sphere_point;
 
 	if (Game_mode & GM_MULTI)
 		maxdrop=2;
@@ -335,14 +350,13 @@ static void DrawMarkers (automap *am)
 	for (i=0;i<maxdrop;i++)
 		if (MarkerObject[(Player_num*2)+i] != object_none) {
 
-			g3_rotate_point(&sphere_point,&Objects[MarkerObject[(Player_num*2)+i]].pos);
-
+			auto sphere_point = g3_rotate_point(Objects[MarkerObject[(Player_num*2)+i]].pos);
 			gr_setcolor (gr_find_closest_color_current(cyc,0,0));
-			g3_draw_sphere(&sphere_point,MARKER_SPHERE_SIZE);
+			g3_draw_sphere(sphere_point,MARKER_SPHERE_SIZE);
 			gr_setcolor (gr_find_closest_color_current(cyc+10,0,0));
-			g3_draw_sphere(&sphere_point,MARKER_SPHERE_SIZE/2);
+			g3_draw_sphere(sphere_point,MARKER_SPHERE_SIZE/2);
 			gr_setcolor (gr_find_closest_color_current(cyc+20,0,0));
-			g3_draw_sphere(&sphere_point,MARKER_SPHERE_SIZE/4);
+			g3_draw_sphere(sphere_point,MARKER_SPHERE_SIZE/4);
 
 			DrawMarkerNumber (am, i);
 		}
@@ -385,36 +399,38 @@ void automap_clear_visited()
 		ClearMarkers();
 }
 
-static void draw_player( object * obj )
+static void draw_player(const vobjptr_t obj)
 {
-	vms_vector arrow_pos, head_pos;
-	g3s_point sphere_point, arrow_point, head_point;
-
 	// Draw Console player -- shaped like a ellipse with an arrow.
-	g3_rotate_point(&sphere_point,&obj->pos);
-	g3_draw_sphere(&sphere_point,obj->size);
+	auto sphere_point = g3_rotate_point(obj->pos);
+	g3_draw_sphere(sphere_point,obj->size);
 
 	// Draw shaft of arrow
-	vm_vec_scale_add( &arrow_pos, &obj->pos, &obj->orient.fvec, obj->size*3 );
-	g3_rotate_point(&arrow_point,&arrow_pos);
-	automap_draw_line(&sphere_point, &arrow_point);
+	const auto arrow_pos = vm_vec_scale_add(obj->pos, obj->orient.fvec, obj->size*3 );
+	auto arrow_point = g3_rotate_point(arrow_pos);
+	automap_draw_line(sphere_point, arrow_point);
 
 	// Draw right head of arrow
-	vm_vec_scale_add( &head_pos, &obj->pos, &obj->orient.fvec, obj->size*2 );
-	vm_vec_scale_add2( &head_pos, &obj->orient.rvec, obj->size*1 );
-	g3_rotate_point(&head_point,&head_pos);
-	automap_draw_line(&arrow_point, &head_point);
+	const auto head_pos = vm_vec_scale_add(obj->pos, obj->orient.fvec, obj->size*2 );
+	{
+		auto rhead_pos = vm_vec_scale_add( head_pos, obj->orient.rvec, obj->size*1 );
+		auto head_point = g3_rotate_point(rhead_pos);
+	automap_draw_line(arrow_point, head_point);
+	}
 
 	// Draw left head of arrow
-	vm_vec_scale_add( &head_pos, &obj->pos, &obj->orient.fvec, obj->size*2 );
-	vm_vec_scale_add2( &head_pos, &obj->orient.rvec, obj->size*(-1) );
-	g3_rotate_point(&head_point,&head_pos);
-	automap_draw_line(&arrow_point, &head_point);
+	{
+		auto lhead_pos = vm_vec_scale_add( head_pos, obj->orient.rvec, obj->size*(-1) );
+		auto head_point = g3_rotate_point(lhead_pos);
+	automap_draw_line(arrow_point, head_point);
+	}
 
 	// Draw player's up vector
-	vm_vec_scale_add( &arrow_pos, &obj->pos, &obj->orient.uvec, obj->size*2 );
-	g3_rotate_point(&arrow_point,&arrow_pos);
-	automap_draw_line(&sphere_point, &arrow_point);
+	{
+	const auto arrow_pos = vm_vec_scale_add(obj->pos, obj->orient.uvec, obj->size*2 );
+	auto arrow_point = g3_rotate_point(arrow_pos);
+	automap_draw_line(sphere_point, arrow_point);
+	}
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
@@ -438,7 +454,7 @@ static void name_frame(automap *am)
 	const char *name_level;
 	if (Current_level_num > 0)
 	{
-		snprintf(name_level_left, sizeof(name_level_left), "%s %i: %s",TXT_LEVEL, Current_level_num, Current_level_name);
+		snprintf(name_level_left, sizeof(name_level_left), "%s %i: %s",TXT_LEVEL, Current_level_num, static_cast<const char *>(Current_level_name));
 		name_level = name_level_left;
 	}
 	else
@@ -469,15 +485,11 @@ static void name_frame(automap *am)
 static void draw_automap(automap *am)
 {
 	int i;
-	int color;
-	object * objp;
-	g3s_point sphere_point;
-
 	if ( am->leave_mode==0 && am->controls.state.automap && (timer_query()-am->entry_time)>LEAVE_TIME)
 		am->leave_mode = 1;
 
 	gr_set_current_canvas(NULL);
-	show_fullscr(&am->automap_background);
+	show_fullscr(am->automap_background);
 	gr_set_curfont(HUGE_FONT);
 	gr_set_fontcolor(BM_XRGB(20, 20, 20), -1);
 #if defined(DXX_BUILD_DESCENT_I)
@@ -516,18 +528,14 @@ static void draw_automap(automap *am)
 	render_start_frame();
 
 	if (!PlayerCfg.AutomapFreeFlight)
-		vm_vec_scale_add(&am->view_position,&am->view_target,&am->viewMatrix.fvec,-am->viewDist);
+		vm_vec_scale_add(am->view_position,am->view_target,am->viewMatrix.fvec,-am->viewDist);
 
-	g3_set_view_matrix(&am->view_position,&am->viewMatrix,am->zoom);
+	g3_set_view_matrix(am->view_position,am->viewMatrix,am->zoom);
 
 	draw_all_edges(am);
 
 	// Draw player...
-	if (Game_mode & GM_TEAM)
-		color = get_team(Player_num);
-	else
-		color = Player_num;	// Note link to above if!
-
+	const auto color = get_player_or_team_color(Player_num);
 	gr_setcolor(BM_XRGB(player_rgb[color].r,player_rgb[color].g,player_rgb[color].b));
 	draw_player(&Objects[Players[Player_num].objnum]);
 
@@ -538,10 +546,7 @@ static void draw_automap(automap *am)
 		for (i=0; i<N_players; i++)		{
 			if ( (i != Player_num) && ((Game_mode & GM_MULTI_COOP) || (get_team(Player_num) == get_team(i)) || (Netgame.game_flag.show_on_map)) )	{
 				if ( Objects[Players[i].objnum].type == OBJ_PLAYER )	{
-					if (Game_mode & GM_TEAM)
-						color = get_team(i);
-					else
-						color = i;
+					const auto color = get_player_or_team_color(i);
 					gr_setcolor(BM_XRGB(player_rgb[color].r,player_rgb[color].g,player_rgb[color].b));
 					draw_player(&Objects[Players[i].objnum]);
 				}
@@ -549,13 +554,16 @@ static void draw_automap(automap *am)
 		}
 	}
 
-	objp = &Objects[0];
-	for (i=0;i<=Highest_object_index;i++,objp++) {
+	range_for (const auto i, highest_valid(Objects))
+	{
+		auto objp = vobjptridx(i);
 		switch( objp->type )	{
 		case OBJ_HOSTAGE:
 			gr_setcolor(am->hostage_color);
-			g3_rotate_point(&sphere_point,&objp->pos);
-			g3_draw_sphere(&sphere_point,objp->size);	
+			{
+			auto sphere_point = g3_rotate_point(objp->pos);
+			g3_draw_sphere(sphere_point,objp->size);	
+			}
 			break;
 		case OBJ_POWERUP:
 			if (Automap_visited[objp->segnum] || Automap_debug_show_all_segments)
@@ -569,8 +577,10 @@ static void draw_automap(automap *am)
 					gr_setcolor(BM_XRGB(63, 63, 10));
 				else
 					break;
-				g3_rotate_point(&sphere_point,&objp->pos);
-				g3_draw_sphere(&sphere_point,objp->size*4);	
+				{
+				auto sphere_point = g3_rotate_point(objp->pos);
+				g3_draw_sphere(sphere_point,objp->size*4);	
+				}
 			}
 			break;
 		}
@@ -583,7 +593,7 @@ static void draw_automap(automap *am)
 #if defined(DXX_BUILD_DESCENT_II)
 	if (HighlightMarker>-1 && MarkerMessage[HighlightMarker][0]!=0)
 	{
-		gr_printf((SWIDTH/64),(SHEIGHT/18), "Marker %d: %s",HighlightMarker+1,MarkerMessage[(Player_num*2)+HighlightMarker]);
+		gr_printf((SWIDTH/64),(SHEIGHT/18), "Marker %d: %s",HighlightMarker+1,&MarkerMessage[(Player_num*2)+HighlightMarker][0]);
 	}
 #endif
 
@@ -593,11 +603,11 @@ static void draw_automap(automap *am)
 	am->t2 = timer_query();
 	while (am->t2 - am->t1 < F1_0 / (GameCfg.VSync?MAXIMUM_FPS:GameArg.SysMaxFPS)) // ogl is fast enough that the automap can read the input too fast and you start to turn really slow.  So delay a bit (and free up some cpu :)
 	{
-		multi_do_frame(); // during long wait, keep packets flowing
+		if (Game_mode & GM_MULTI)
+			multi_do_frame(); // during long wait, keep packets flowing
 		if (!GameArg.SysNoNiceFPS && !GameCfg.VSync)
 			timer_delay(F1_0>>8);
-		timer_update();
-		am->t2 = timer_query();
+		am->t2 = timer_update();
 	}
 	if (am->pause_game)
 	{
@@ -624,7 +634,7 @@ static void recompute_automap_segment_visibility(automap *am)
 	adjust_segment_limit(am, am->segment_limit);
 }
 
-static int automap_key_command(window *wind, d_event *event, automap *am)
+static window_event_result automap_key_command(window *wind,const d_event &event, automap *am)
 {
 	int c = event_key_get(event);
 #if defined(DXX_BUILD_DESCENT_II)
@@ -637,17 +647,14 @@ static int automap_key_command(window *wind, d_event *event, automap *am)
 		case KEY_PRINT_SCREEN: {
 			gr_set_current_canvas(NULL);
 			save_screen_shot(1);
-			return 1;
+			return window_event_result::handled;
 		}
-			
 		case KEY_ESC:
 			if (am->leave_mode==0)
 			{
-				window_close(wind);
-				return 1;
+				return window_event_result::close;
 			}
-			return 1;
-			
+			return window_event_result::handled;
 #if defined(DXX_BUILD_DESCENT_I)
 		case KEY_ALTED+KEY_F:           // Alt+F shows full map, if cheats enabled
 			if (cheats.enabled) 	 
@@ -656,28 +663,27 @@ static int automap_key_command(window *wind, d_event *event, automap *am)
 				// if cheat of map powerup, work with full depth
 				recompute_automap_segment_visibility(am);
 			}
-			return 1;
+			return window_event_result::handled;
 #endif
 #ifndef NDEBUG
 		case KEY_DEBUGGED+KEY_F: 	{
 				Automap_debug_show_all_segments = !Automap_debug_show_all_segments;
 				recompute_automap_segment_visibility(am);
 			}
-			return 1;
+			return window_event_result::handled;
 #endif
-			
 		case KEY_F9:
 			if (am->segment_limit > 1) 		{
 				am->segment_limit--;
 				adjust_segment_limit(am, am->segment_limit);
 			}
-			return 1;
+			return window_event_result::handled;
 		case KEY_F10:
 			if (am->segment_limit < am->max_segments_away) 	{
 				am->segment_limit++;
 				adjust_segment_limit(am, am->segment_limit);
 			}
-			return 1;
+			return window_event_result::handled;
 #if defined(DXX_BUILD_DESCENT_II)
 		case KEY_1:
 		case KEY_2:
@@ -700,8 +706,7 @@ static int automap_key_command(window *wind, d_event *event, automap *am)
 				if (MarkerObject[marker_num] != object_none)
 					HighlightMarker=marker_num;
 			}
-			return 1;
-			
+			return window_event_result::handled;
 		case KEY_D+KEY_CTRLED:
 			if (HighlightMarker > -1 && MarkerObject[HighlightMarker] != object_none) {
 				gr_set_current_canvas(NULL);
@@ -713,37 +718,32 @@ static int automap_key_command(window *wind, d_event *event, automap *am)
 				}
 				set_screen_mode(SCREEN_GAME);
 			}
-			return 1;
-			
+			return window_event_result::handled;
 #ifndef RELEASE
 		case KEY_F11:	//KEY_COMMA:
 			if (MarkerScale>.5)
 				MarkerScale-=.5;
-			return 1;
+			return window_event_result::handled;
 		case KEY_F12:	//KEY_PERIOD:
 			if (MarkerScale<30.0)
 				MarkerScale+=.5;
-			return 1;
+			return window_event_result::handled;
 #endif
 #endif
 	}
-	
-	return 0;
+	return window_event_result::ignored;
 }
 
-static int automap_process_input(window *wind, d_event *event, automap *am)
+static window_event_result automap_process_input(window *wind,const d_event &event, automap *am)
 {
-	vms_matrix tempm;
-
 	Controls = am->controls;
 	kconfig_read_controls(event, 1);
 	am->controls = Controls;
-	memset(&Controls, 0, sizeof(control_info));
+	Controls = {};
 
 	if ( !am->controls.state.automap && (am->leave_mode==1) )
 	{
-		window_close(wind);
-		return 1;
+		return window_event_result::close;
 	}
 	
 	if ( am->controls.state.automap)
@@ -751,8 +751,7 @@ static int automap_process_input(window *wind, d_event *event, automap *am)
 		am->controls.state.automap = 0;
 		if (am->leave_mode==0)
 		{
-			window_close(wind);
-			return 1;
+			return window_event_result::close;
 		}
 	}
 	
@@ -762,30 +761,28 @@ static int automap_process_input(window *wind, d_event *event, automap *am)
 		{
 			// Reset orientation
 			am->viewMatrix = Objects[Players[Player_num].objnum].orient;
-			vm_vec_scale_add(&am->view_position, &Objects[Players[Player_num].objnum].pos, &am->viewMatrix.fvec, -ZOOM_DEFAULT );
+			vm_vec_scale_add(am->view_position, Objects[Players[Player_num].objnum].pos, am->viewMatrix.fvec, -ZOOM_DEFAULT );
 			am->controls.state.fire_primary = 0;
 		}
 		
 		if (am->controls.pitch_time || am->controls.heading_time || am->controls.bank_time)
 		{
 			vms_angvec tangles;
-			vms_matrix new_m;
 
 			tangles.p = fixdiv( am->controls.pitch_time, ROT_SPEED_DIVISOR );
 			tangles.h = fixdiv( am->controls.heading_time, ROT_SPEED_DIVISOR );
 			tangles.b = fixdiv( am->controls.bank_time, ROT_SPEED_DIVISOR*2 );
 
-			vm_angles_2_matrix(&tempm, &tangles);
-			vm_matrix_x_matrix(&new_m,&am->viewMatrix,&tempm);
-			am->viewMatrix = new_m;
-			check_and_fix_matrix(&am->viewMatrix);
+			const auto &&tempm = vm_angles_2_matrix(tangles);
+			am->viewMatrix = vm_matrix_x_matrix(am->viewMatrix,tempm);
+			check_and_fix_matrix(am->viewMatrix);
 		}
 		
 		if ( am->controls.forward_thrust_time || am->controls.vertical_thrust_time || am->controls.sideways_thrust_time )
 		{
-			vm_vec_scale_add2( &am->view_position, &am->viewMatrix.fvec, am->controls.forward_thrust_time*ZOOM_SPEED_FACTOR );
-			vm_vec_scale_add2( &am->view_position, &am->viewMatrix.uvec, am->controls.vertical_thrust_time*SLIDE_SPEED );
-			vm_vec_scale_add2( &am->view_position, &am->viewMatrix.rvec, am->controls.sideways_thrust_time*SLIDE_SPEED );
+			vm_vec_scale_add2( am->view_position, am->viewMatrix.fvec, am->controls.forward_thrust_time*ZOOM_SPEED_FACTOR );
+			vm_vec_scale_add2( am->view_position, am->viewMatrix.uvec, am->controls.vertical_thrust_time*SLIDE_SPEED );
+			vm_vec_scale_add2( am->view_position, am->viewMatrix.rvec, am->controls.sideways_thrust_time*SLIDE_SPEED );
 			
 			// Crude wrapping check
 			clamp_fix_symmetric(am->view_position.x, F1_0*32000);
@@ -818,26 +815,25 @@ static int automap_process_input(window *wind, d_event *event, automap *am)
 
 			old_vt = am->view_target;
 			tangles1 = am->tangles;
-			vm_angles_2_matrix(&tempm,&tangles1);
-			vm_matrix_x_matrix(&am->viewMatrix,&Objects[Players[Player_num].objnum].orient,&tempm);
-			vm_vec_scale_add2( &am->view_target, &am->viewMatrix.uvec, am->controls.vertical_thrust_time*SLIDE_SPEED );
-			vm_vec_scale_add2( &am->view_target, &am->viewMatrix.rvec, am->controls.sideways_thrust_time*SLIDE_SPEED );
-			if ( vm_vec_dist_quick( &am->view_target, &Objects[Players[Player_num].objnum].pos) > i2f(1000) )
+			const auto &&tempm = vm_angles_2_matrix(tangles1);
+			vm_matrix_x_matrix(am->viewMatrix,Objects[Players[Player_num].objnum].orient,tempm);
+			vm_vec_scale_add2( am->view_target, am->viewMatrix.uvec, am->controls.vertical_thrust_time*SLIDE_SPEED );
+			vm_vec_scale_add2( am->view_target, am->viewMatrix.rvec, am->controls.sideways_thrust_time*SLIDE_SPEED );
+			if ( vm_vec_dist_quick( am->view_target, Objects[Players[Player_num].objnum].pos) > i2f(1000) )
 				am->view_target = old_vt;
 		}
 
-		vm_angles_2_matrix(&tempm,&am->tangles);
-		vm_matrix_x_matrix(&am->viewMatrix,&Objects[Players[Player_num].objnum].orient,&tempm);
+		const auto &&tempm = vm_angles_2_matrix(am->tangles);
+		vm_matrix_x_matrix(am->viewMatrix,Objects[Players[Player_num].objnum].orient,tempm);
 
 		clamp_fix_lh(am->viewDist, ZOOM_MIN_VALUE, ZOOM_MAX_VALUE);
 	}
-	
-	return 0;
+	return window_event_result::ignored;
 }
 
-static int automap_handler(window *wind, d_event *event, automap *am)
+static window_event_result automap_handler(window *wind,const d_event &event, automap *am)
 {
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_WINDOW_ACTIVATED:
 			game_flush_inputs();
@@ -858,13 +854,12 @@ static int automap_handler(window *wind, d_event *event, automap *am)
 		case EVENT_MOUSE_BUTTON_DOWN:
 		case EVENT_MOUSE_MOVED:
 		case EVENT_KEY_RELEASE:
-			automap_process_input(wind, event, am);
-			break;
+			return automap_process_input(wind, event, am);
 		case EVENT_KEY_COMMAND:
 		{
-			int kret = automap_key_command(wind, event, am);
-			if (!kret)
-				automap_process_input(wind, event, am);
+			window_event_result kret = automap_key_command(wind, event, am);
+			if (kret == window_event_result::ignored)
+				kret = automap_process_input(wind, event, am);
 			return kret;
 		}
 			
@@ -878,45 +873,28 @@ static int automap_handler(window *wind, d_event *event, automap *am)
 			event_toggle_focus(0);
 			key_toggle_repeat(1);
 #ifdef OGL
-			gr_free_bitmap_data(&am->automap_background);
+			gr_free_bitmap_data(am->automap_background);
 #endif
-			d_free(am->edges);
-			d_free(am->drawingListBright);
-			d_free(am);
+			std::default_delete<automap>()(am);
 			window_set_visible(Game_wind, 1);
 			Automap_active = 0;
 			multi_send_msgsend_state(msgsend_none);
-			return 0;	// continue closing
+			return window_event_result::ignored;	// continue closing
 			break;
 
 		default:
-			return 0;
+			return window_event_result::ignored;
 			break;
 	}
-
-	return 1;
+	return window_event_result::handled;
 }
 
-void do_automap( int key_code )
+void do_automap()
 {
 	int pcx_error;
 	palette_array_t pal;
-	window *automap_wind = NULL;
-	automap *am;
-	
-	CALLOC(am, automap, 1);
-	
-	if (am)
-	{
-		automap_wind = window_create(&grd_curscreen->sc_canvas, 0, 0, SWIDTH, SHEIGHT, automap_handler, am);
-	}
-
-	if (automap_wind == NULL)
-	{
-		Warning("Out of memory");
-		return;
-	}
-
+	automap *am = new automap{};
+	window_create(&grd_curscreen->sc_canvas, 0, 0, SWIDTH, SHEIGHT, automap_handler, am);
 	am->leave_mode = 0;
 	am->pause_game = 1; // Set to 1 if everything is paused during automap...No pause during net.
 	am->max_segments_away = 0;
@@ -924,27 +902,13 @@ void do_automap( int key_code )
 	am->num_edges = 0;
 	am->highest_edge_index = -1;
 	am->max_edges = Num_segments*12;
-	MALLOC(am->edges, Edge_info, am->max_edges);
-	MALLOC(am->drawingListBright, int, am->max_edges);
-	if (!am->edges || !am->drawingListBright)
-	{
-		if (am->edges)
-			d_free(am->edges);
-		if (am->drawingListBright)
-			d_free(am->drawingListBright);
-
-		Warning("Out of memory");
-		return;
-	}
-	
+	am->edges = make_unique<Edge_info[]>(am->max_edges);
+	am->drawingListBright = make_unique<int[]>(am->max_edges);
 	am->zoom = 0x9000;
 	am->farthest_dist = (F1_0 * 20 * 50); // 50 segments away
 	am->viewDist = 0;
 
 	init_automap_colors(am);
-
-	key_code = key_code;	// disable warning...
-
 	if ((Game_mode & GM_MULTI) && (!Endlevel_sequence))
 		am->pause_game = 0;
 
@@ -970,7 +934,7 @@ void do_automap( int key_code )
 	am->view_target = Objects[Players[Player_num].objnum].pos;
 	
 	if (PlayerCfg.AutomapFreeFlight)
-		vm_vec_scale_add(&am->view_position, &Objects[Players[Player_num].objnum].pos, &am->viewMatrix.fvec, -ZOOM_DEFAULT );
+		vm_vec_scale_add(am->view_position, Objects[Players[Player_num].objnum].pos, am->viewMatrix.fvec, -ZOOM_DEFAULT );
 
 	am->t1 = am->entry_time = timer_query();
 	am->t2 = am->t1;
@@ -980,17 +944,17 @@ void do_automap( int key_code )
 
 	// ZICO - code from above to show frame in OGL correctly. Redundant, but better readable.
 	// KREATOR - Now applies to all platforms so double buffering is supported
-	gr_init_bitmap_data (&am->automap_background);
-	pcx_error = pcx_read_bitmap(MAP_BACKGROUND_FILENAME, &am->automap_background, BM_LINEAR, pal);
+	gr_init_bitmap_data(am->automap_background);
+	pcx_error = pcx_read_bitmap(MAP_BACKGROUND_FILENAME, am->automap_background, BM_LINEAR, pal);
 	if (pcx_error != PCX_ERROR_NONE)
 		Error("File %s - PCX error: %s", MAP_BACKGROUND_FILENAME, pcx_errormsg(pcx_error));
-	gr_remap_bitmap_good(&am->automap_background, pal, -1, -1);
+	gr_remap_bitmap_good(am->automap_background, pal, -1, -1);
 #if defined(DXX_BUILD_DESCENT_I)
 	if (MacHog)
-		gr_init_sub_canvas(&am->automap_view, &grd_curscreen->sc_canvas, 38*(SWIDTH/640.0), 77*(SHEIGHT/480.0), 564*(SWIDTH/640.0), 381*(SHEIGHT/480.0));
+		gr_init_sub_canvas(am->automap_view, grd_curscreen->sc_canvas, 38*(SWIDTH/640.0), 77*(SHEIGHT/480.0), 564*(SWIDTH/640.0), 381*(SHEIGHT/480.0));
 	else
 #endif
-		gr_init_sub_canvas(&am->automap_view, &grd_curscreen->sc_canvas, (SWIDTH/23), (SHEIGHT/6), (SWIDTH/1.1), (SHEIGHT/1.45));
+		gr_init_sub_canvas(am->automap_view, grd_curscreen->sc_canvas, (SWIDTH/23), (SHEIGHT/6), (SWIDTH/1.1), (SHEIGHT/1.45));
 
 	gr_palette_load( gr_palette );
 	Automap_active = 1;
@@ -1017,11 +981,9 @@ void adjust_segment_limit(automap *am, int SegmentLimit)
 
 void draw_all_edges(automap *am)	
 {
-	g3s_codes cc;
 	int i,j,nbright;
 	ubyte nfacing,nnfacing;
 	Edge_info *e;
-	vms_vector *tv1;
 	fix distance;
 	fix min_distance = 0x7fffffff;
 	g3s_point *p1, *p2;
@@ -1040,8 +1002,7 @@ void draw_all_edges(automap *am)
 			if ( (!(e->flags&EF_SECRET))&&(e->color==am->wall_normal_color))
 				continue; 	// If a line isn't secret and is normal color, then don't draw it
 		}
-
-		cc=rotate_list(2,e->verts);
+		g3s_codes cc=rotate_list(e->verts);
 		distance = Segment_points[e->verts[1]].p3_z;
 
 		if (min_distance>distance )
@@ -1049,10 +1010,10 @@ void draw_all_edges(automap *am)
 
 		if (!cc.uand) {			//all off screen?
 			nfacing = nnfacing = 0;
-			tv1 = &Vertices[e->verts[0]];
+			auto &tv1 = Vertices[e->verts[0]];
 			j = 0;
 			while( j<e->num_faces && (nfacing==0 || nnfacing==0) )	{
-				if (!g3_check_normal_facing( tv1, &Segments[e->segnum[j]].sides[e->sides[j]].normals[0] ) )
+				if (!g3_check_normal_facing( tv1, Segments[e->segnum[j]].sides[e->sides[j]].normals[0] ) )
 					nfacing++;
 				else
 					nnfacing++;
@@ -1061,16 +1022,16 @@ void draw_all_edges(automap *am)
 
 			if ( nfacing && nnfacing )	{
 				// a contour line
-				am->drawingListBright[nbright++] = e-am->edges;
+				am->drawingListBright[nbright++] = e-am->edges.get();
 			} else if ( e->flags&(EF_DEFINING|EF_GRATE) )	{
 				if ( nfacing == 0 )	{
 					if ( e->flags & EF_NO_FADE )
 						gr_setcolor( e->color );
 					else
-						gr_setcolor( gr_fade_table[e->color+256*8] );
-					g3_draw_line( &Segment_points[e->verts[0]], &Segment_points[e->verts[1]] );
+						gr_setcolor( gr_fade_table[8][e->color] );
+					g3_draw_line( Segment_points[e->verts[0]], Segment_points[e->verts[1]] );
 				} 	else {
-					am->drawingListBright[nbright++] = e-am->edges;
+					am->drawingListBright[nbright++] = e-am->edges.get();
 				}
 			}
 		}
@@ -1080,7 +1041,6 @@ void draw_all_edges(automap *am)
 
 	// Sort the bright ones using a shell sort
 	{
-		int t;
 		int i, j, incr, v1, v2;
 	
 		incr = nbright / 2;
@@ -1094,9 +1054,7 @@ void draw_all_edges(automap *am)
 
 					if (Segment_points[v1].p3_z < Segment_points[v2].p3_z) {
 						// If not in correct order, them swap 'em
-						t=am->drawingListBright[j+incr];
-						am->drawingListBright[j+incr]=am->drawingListBright[j];
-						am->drawingListBright[j]=t;
+						std::swap(am->drawingListBright[j+incr], am->drawingListBright[j]);
 						j -= incr;
 					}
 					else
@@ -1124,9 +1082,9 @@ void draw_all_edges(automap *am)
 		} else {
 			dist = F1_0 - fixdiv( dist, am->farthest_dist );
 			color = f2i( dist*31 );
-			gr_setcolor( gr_fade_table[e->color+color*256] );	
+			gr_setcolor( gr_fade_table[color][e->color] );	
 		}
-		g3_draw_line( p1, p2 );
+		g3_draw_line(*p1, *p2);
 	}
 }
 
@@ -1139,7 +1097,7 @@ void draw_all_edges(automap *am)
 
 
 //finds edge, filling in edge_ptr. if found old edge, returns index, else return -1
-static int automap_find_edge(automap *am, int v0,int v1,Edge_info **edge_ptr)
+static int automap_find_edge(automap *am, int v0,int v1,Edge_info *&edge_ptr)
 {
 	long vv, evv;
 	int hash, oldhash;
@@ -1163,7 +1121,7 @@ static int automap_find_edge(automap *am, int v0,int v1,Edge_info **edge_ptr)
 		}
 	}
 
-	*edge_ptr = &am->edges[hash];
+	edge_ptr = &am->edges[hash];
 
 	if (ret == 0)
 		return -1;
@@ -1173,10 +1131,9 @@ static int automap_find_edge(automap *am, int v0,int v1,Edge_info **edge_ptr)
 }
 
 
-static void add_one_edge( automap *am, int va, int vb, ubyte color, ubyte side, int segnum, int hidden, int grate, int no_fade )	{
+static void add_one_edge( automap *am, int va, int vb, ubyte color, ubyte side, segnum_t segnum, int hidden, int grate, int no_fade )	{
 	int found;
 	Edge_info *e;
-	int tmp;
 
 	if ( am->num_edges >= am->max_edges)	{
 		// GET JOHN! (And tell him that his
@@ -1190,12 +1147,9 @@ static void add_one_edge( automap *am, int va, int vb, ubyte color, ubyte side, 
 	}
 
 	if ( va > vb )	{
-		tmp = va;
-		va = vb;
-		vb = tmp;
+		std::swap(va, vb);
 	}
-
-	found = automap_find_edge(am,va,vb,&e);
+	found = automap_find_edge(am,va,vb,e);
 		
 	if (found == -1) {
 		e->verts[0] = va;
@@ -1206,8 +1160,8 @@ static void add_one_edge( automap *am, int va, int vb, ubyte color, ubyte side, 
 		e->sides[0] = side;
 		e->segnum[0] = segnum;
 		//Edge_used_list[am->num_edges] = e-am->edges;
-		if ( (e-am->edges) > am->highest_edge_index )
-			am->highest_edge_index = e - am->edges;
+		if ( (e-am->edges.get()) > am->highest_edge_index )
+			am->highest_edge_index = e - am->edges.get();
 		am->num_edges++;
 	} else {
 		if ( color != am->wall_normal_color )
@@ -1236,30 +1190,25 @@ static void add_one_unknown_edge( automap *am, int va, int vb )
 {
 	int found;
 	Edge_info *e;
-	int tmp;
 
 	if ( va > vb )	{
-		tmp = va;
-		va = vb;
-		vb = tmp;
+		std::swap(va, vb);
 	}
 
-	found = automap_find_edge(am,va,vb,&e);
+	found = automap_find_edge(am,va,vb,e);
 	if (found != -1) 	
 		e->flags|=EF_FRONTIER;		// Mark as a border edge
 }
 
-static void add_segment_edges(automap *am, segment *seg)
+static void add_segment_edges(automap *am, const vcsegptridx_t seg)
 {
 	int 	is_grate, no_fade;
 	ubyte	color;
 	int	sn;
-	int	segnum = seg-Segments;
+	const auto &segnum = seg;
 	int	hidden_flag;
 	
 	for (sn=0;sn<MAX_SIDES_PER_SEGMENT;sn++) {
-		int	vertex_list[4];
-
 		hidden_flag = 0;
 
 		is_grate = 0;
@@ -1283,7 +1232,7 @@ static void add_segment_edges(automap *am, segment *seg)
 			break;
 		}
 
-		if (seg->sides[sn].wall_num > -1)	{
+		if (seg->sides[sn].wall_num != wall_none)	{
 		
 #if defined(DXX_BUILD_DESCENT_II)
 			int trigger_num = Walls[seg->sides[sn].wall_num].trigger;
@@ -1307,9 +1256,9 @@ static void add_segment_edges(automap *am, segment *seg)
 					no_fade = 1;
 					color = am->wall_door_red;
 				} else if (!(WallAnims[Walls[seg->sides[sn].wall_num].clip_num].flags & WCF_HIDDEN)) {
-					int	connected_seg = seg->children[sn];
+					auto connected_seg = seg->children[sn];
 					if (connected_seg != segment_none) {
-						int connected_side = find_connect_side(seg, &Segments[connected_seg]);
+						auto connected_side = find_connect_side(seg, &Segments[connected_seg]);
 						int	keytype = Walls[Segments[connected_seg].sides[connected_side].wall_num].keys;
 						if ((keytype != KEY_BLUE) && (keytype != KEY_GOLD) && (keytype != KEY_RED))
 							color = am->wall_door_color;
@@ -1356,8 +1305,7 @@ static void add_segment_edges(automap *am, segment *seg)
 				color = am->wall_revealed_color;
 			Here:
 #endif
-
-			get_side_verts(vertex_list,segnum,sn);
+			const auto vertex_list = get_side_verts(segnum,sn);
 			add_one_edge( am, vertex_list[0], vertex_list[1], color, sn, segnum, hidden_flag, 0, no_fade );
 			add_one_edge( am, vertex_list[1], vertex_list[2], color, sn, segnum, hidden_flag, 0, no_fade );
 			add_one_edge( am, vertex_list[2], vertex_list[3], color, sn, segnum, hidden_flag, 0, no_fade );
@@ -1374,17 +1322,14 @@ static void add_segment_edges(automap *am, segment *seg)
 
 // Adds all the edges from a segment we haven't visited yet.
 
-static void add_unknown_segment_edges(automap *am, segment *seg)
+static void add_unknown_segment_edges(automap *am, const vcsegptridx_t seg)
 {
 	int sn;
-	int segnum = seg-Segments;
-	
+	const auto &segnum = seg;
 	for (sn=0;sn<MAX_SIDES_PER_SEGMENT;sn++) {
-		int	vertex_list[4];
-
 		// Only add edges that have no children
 		if (seg->children[sn] == segment_none) {
-			get_side_verts(vertex_list,segnum,sn);
+			const auto vertex_list = get_side_verts(segnum,sn);
 	
 			add_one_unknown_edge( am, vertex_list[0], vertex_list[1] );
 			add_one_unknown_edge( am, vertex_list[1], vertex_list[2] );
@@ -1396,7 +1341,7 @@ static void add_unknown_segment_edges(automap *am, segment *seg)
 
 void automap_build_edge_list(automap *am, int add_all_edges)
 {	
-	int	i,e1,e2,s;
+	int	i,e1,e2;
 	Edge_info * e;
 
 	// clear edge list
@@ -1409,7 +1354,7 @@ void automap_build_edge_list(automap *am, int add_all_edges)
 
 	if (add_all_edges)	{
 		// Cheating, add all edges as visited
-		for (s=0; s<=Highest_segment_index; s++)
+		range_for (const auto s, highest_valid(Segments))
 #ifdef EDITOR
 			if (Segments[s].segnum != segment_none)
 #endif
@@ -1418,7 +1363,7 @@ void automap_build_edge_list(automap *am, int add_all_edges)
 			}
 	} else {
 		// Not cheating, add visited edges, and then unvisited edges
-		for (s=0; s<=Highest_segment_index; s++)
+		range_for (const auto s, highest_valid(Segments))
 #ifdef EDITOR
 			if (Segments[s].segnum != segment_none)
 #endif
@@ -1426,7 +1371,7 @@ void automap_build_edge_list(automap *am, int add_all_edges)
 					add_segment_edges(am, &Segments[s]);
 				}
 	
-		for (s=0; s<=Highest_segment_index; s++)
+		range_for (const auto s, highest_valid(Segments))
 #ifdef EDITOR
 			if (Segments[s].segnum != segment_none)
 #endif
@@ -1443,7 +1388,7 @@ void automap_build_edge_list(automap *am, int add_all_edges)
 		for (e1=0; e1<e->num_faces; e1++ )	{
 			for (e2=1; e2<e->num_faces; e2++ )	{
 				if ( (e1 != e2) && (e->segnum[e1] != e->segnum[e2]) )	{
-					if ( vm_vec_dot( &Segments[e->segnum[e1]].sides[e->sides[e1]].normals[0], &Segments[e->segnum[e2]].sides[e->sides[e2]].normals[0] ) > (F1_0-(F1_0/10))  )	{
+					if ( vm_vec_dot( Segments[e->segnum[e1]].sides[e->sides[e1]].normals[0], Segments[e->segnum[e2]].sides[e->sides[e2]].normals[0] ) > (F1_0-(F1_0/10))  )	{
 						e->flags &= (~EF_DEFINING);
 						break;
 					}
@@ -1456,8 +1401,7 @@ void automap_build_edge_list(automap *am, int add_all_edges)
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
-char Marker_input [40];
-int Marker_index=0;
+static unsigned Marker_index;
 ubyte DefiningMarkerMessage=0;
 ubyte MarkerBeingDefined;
 ubyte LastMarkerDropped;
@@ -1496,7 +1440,7 @@ void InitMarkerInput ()
 	key_toggle_repeat(1);
 }
 
-int MarkerInputMessage(int key)
+window_event_result MarkerInputMessage(int key)
 {
 	switch( key )
 	{
@@ -1514,7 +1458,7 @@ int MarkerInputMessage(int key)
 			Marker_input[Marker_index] = 0;
 			break;
 		case KEY_ENTER:
-			strcpy (MarkerMessage[(Player_num*2)+MarkerBeingDefined],Marker_input);
+			MarkerMessage[(Player_num*2)+MarkerBeingDefined] = Marker_input;
 			DropMarker(MarkerBeingDefined);
 			LastMarkerDropped = MarkerBeingDefined;
 			key_toggle_repeat(0);
@@ -1525,16 +1469,14 @@ int MarkerInputMessage(int key)
 		{
 			int ascii = key_ascii();
 			if ((ascii < 255 ))
-				if (Marker_index < 38 )
+				if (Marker_index < Marker_input.size() - 1)
 				{
 					Marker_input[Marker_index++] = ascii;
 					Marker_input[Marker_index] = 0;
 				}
-			return 0;
-			break;
+			return window_event_result::ignored;
 		}
 	}
-	
-	return 1;
+	return window_event_result::handled;
 }
 #endif

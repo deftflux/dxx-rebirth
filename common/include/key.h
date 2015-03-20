@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,8 +23,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-#ifndef _KEY_H
-#define _KEY_H 
+#pragma once
 
 #include <SDL_keysym.h>
 #include "pstypes.h"
@@ -30,6 +35,8 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define KEY_REPEAT_INTERVAL 50
 
 #ifdef __cplusplus
+#include "dxxsconf.h"
+#include "compiler-array.h"
 
 struct SDL_KeyboardEvent;
 
@@ -43,11 +50,11 @@ extern void key_close();
 extern fix64 keyd_time_when_last_pressed;
 
 // Stores Unicode values registered in one event_loop call
-extern unsigned char unicode_frame_buffer[KEY_BUFFER_SIZE];
+extern array<unsigned char, KEY_BUFFER_SIZE> unicode_frame_buffer;
 
 extern void key_flush();    // Clears the 256 char buffer
-extern int event_key_get(d_event *event);	// Get the keycode from the EVENT_KEY_COMMAND event
-extern int event_key_get_raw(d_event *event);	// same as above but without mod states
+extern int event_key_get(const d_event &event);	// Get the keycode from the EVENT_KEY_COMMAND event
+extern int event_key_get_raw(const d_event &event);	// same as above but without mod states
 extern unsigned char key_ascii();
 
 // Set to 1 if the key is currently down, else 0
@@ -196,8 +203,6 @@ struct key_props
 	SDLKey sym;
 };
 
-extern const key_props key_properties[256];
-
-#endif
+extern const array<key_props, 256> key_properties;
 
 #endif

@@ -1,62 +1,50 @@
 /*
-THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
-SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
-END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
-ROYALTY-FREE, PERPETUAL LICENSE TO SUCH END-USERS FOR USE BY SUCH END-USERS
-IN USING, DISPLAYING,  AND CREATING DERIVATIVE WORKS THEREOF, SO LONG AS
-SUCH USE, DISPLAY OR CREATION IS FOR NON-COMMERCIAL, ROYALTY OR REVENUE
-FREE PURPOSES.  IN NO EVENT SHALL THE END-USER USE THE COMPUTER CODE
-CONTAINED HEREIN FOR REVENUE-BEARING PURPOSES.  THE END-USER UNDERSTANDS
-AND AGREES TO THE TERMS HEREIN AND ACCEPTS THE SAME BY USE OF THIS FILE.
-COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
-*/
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 
 #include "3d.h"
 #include "globvars.h"
 #include "clipper.h"
 #include "dxxerror.h"
 
-int free_point_num=0;
+#include "compiler-exchange.h"
+#include "compiler-range_for.h"
 
-g3s_point temp_points[MAX_POINTS_IN_POLY];
-g3s_point *free_points[MAX_POINTS_IN_POLY];
-
-void init_free_points(void)
+temporary_points_t::temporary_points_t() :
+	free_point_num(0)
 {
-	int i;
-
-	for (i=0;i<MAX_POINTS_IN_POLY;i++)
-		free_points[i] = &temp_points[i];
+	auto p = &temp_points.front();
+	range_for (auto &f, free_points)
+		f = p++;
 }
 
-
-static g3s_point *get_temp_point()
+static g3s_point &get_temp_point(temporary_points_t &t)
 {
-	g3s_point *p;
-
-	Assert (free_point_num < MAX_POINTS_IN_POLY );
-	p = free_points[free_point_num++];
-
-	p->p3_flags = PF_TEMP_POINT;
-
+	if (t.free_point_num >= t.free_points.size())
+		throw std::out_of_range("not enough free points");
+	auto &p = *t.free_points[t.free_point_num++];
+	p.p3_flags = PF_TEMP_POINT;
 	return p;
 }
 
-void free_temp_point(g3s_point *p)
+void temporary_points_t::free_temp_point(g3s_point *p)
 {
-	Assert(p->p3_flags & PF_TEMP_POINT);
-
-	free_points[--free_point_num] = p;
-
+	if (!(p->p3_flags & PF_TEMP_POINT))
+		throw std::invalid_argument("freeing non-temporary point");
+	if (--free_point_num >= free_points.size())
+		throw std::out_of_range("too many free points");
+	free_points[free_point_num] = p;
 	p->p3_flags &= ~PF_TEMP_POINT;
 }
 
 //clips an edge against one plane. 
-static g3s_point *clip_edge(int plane_flag,g3s_point *on_pnt,g3s_point *off_pnt)
+static g3s_point &clip_edge(int plane_flag,g3s_point *on_pnt,g3s_point *off_pnt, temporary_points_t &tp)
 {
 	fix psx_ratio;
 	fix a,b,kn,kd;
-	g3s_point *tmp;
 
 	//compute clipping value k = (xs-zs) / (xs-xe-zs+ze)
 	//use x or y as appropriate, and negate x/y value as appropriate
@@ -78,146 +66,122 @@ static g3s_point *clip_edge(int plane_flag,g3s_point *on_pnt,g3s_point *off_pnt)
 	kn = a - on_pnt->p3_z;						//xs-zs
 	kd = kn - b + off_pnt->p3_z;				//xs-zs-xe+ze
 
-	tmp = get_temp_point();
+	auto &tmp = get_temp_point(tp);
 
 	psx_ratio = fixdiv( kn, kd );
-
-	
-// PSX_HACK!!!!
-//	tmp->p3_x = on_pnt->p3_x + fixmuldiv(off_pnt->p3_x-on_pnt->p3_x,kn,kd);
-//	tmp->p3_y = on_pnt->p3_y + fixmuldiv(off_pnt->p3_y-on_pnt->p3_y,kn,kd);
-
-	tmp->p3_x = on_pnt->p3_x + fixmul( (off_pnt->p3_x-on_pnt->p3_x), psx_ratio);
-	tmp->p3_y = on_pnt->p3_y + fixmul( (off_pnt->p3_y-on_pnt->p3_y), psx_ratio);
+	tmp.p3_x = on_pnt->p3_x + fixmul( (off_pnt->p3_x-on_pnt->p3_x), psx_ratio);
+	tmp.p3_y = on_pnt->p3_y + fixmul( (off_pnt->p3_y-on_pnt->p3_y), psx_ratio);
 
 	if (plane_flag & (CC_OFF_TOP|CC_OFF_BOT))
-		tmp->p3_z = tmp->p3_y;
+		tmp.p3_z = tmp.p3_y;
 	else
-		tmp->p3_z = tmp->p3_x;
+		tmp.p3_z = tmp.p3_x;
 
 	if (plane_flag & (CC_OFF_LEFT|CC_OFF_BOT))
-		tmp->p3_z = -tmp->p3_z;
+		tmp.p3_z = -tmp.p3_z;
 
 	if (on_pnt->p3_flags & PF_UVS) {
 // PSX_HACK!!!!
-//		tmp->p3_u = on_pnt->p3_u + fixmuldiv(off_pnt->p3_u-on_pnt->p3_u,kn,kd);
-//		tmp->p3_v = on_pnt->p3_v + fixmuldiv(off_pnt->p3_v-on_pnt->p3_v,kn,kd);
-		tmp->p3_u = on_pnt->p3_u + fixmul((off_pnt->p3_u-on_pnt->p3_u), psx_ratio);
-		tmp->p3_v = on_pnt->p3_v + fixmul((off_pnt->p3_v-on_pnt->p3_v), psx_ratio);
+//		tmp.p3_u = on_pnt->p3_u + fixmuldiv(off_pnt->p3_u-on_pnt->p3_u,kn,kd);
+//		tmp.p3_v = on_pnt->p3_v + fixmuldiv(off_pnt->p3_v-on_pnt->p3_v,kn,kd);
+		tmp.p3_u = on_pnt->p3_u + fixmul((off_pnt->p3_u-on_pnt->p3_u), psx_ratio);
+		tmp.p3_v = on_pnt->p3_v + fixmul((off_pnt->p3_v-on_pnt->p3_v), psx_ratio);
 
-		tmp->p3_flags |= PF_UVS;
+		tmp.p3_flags |= PF_UVS;
 	}
 
 	if (on_pnt->p3_flags & PF_LS) {
 // PSX_HACK
-//		tmp->p3_r = on_pnt->p3_r + fixmuldiv(off_pnt->p3_r-on_pnt->p3_r,kn,kd);
-//		tmp->p3_g = on_pnt->p3_g + fixmuldiv(off_pnt->p3_g-on_pnt->p3_g,kn,kd);
-//		tmp->p3_b = on_pnt->p3_b + fixmuldiv(off_pnt->p3_b-on_pnt->p3_b,kn,kd);
-
-		tmp->p3_l = on_pnt->p3_l + fixmul((off_pnt->p3_l-on_pnt->p3_l), psx_ratio);
-
-		tmp->p3_flags |= PF_LS;
+//		tmp.p3_r = on_pnt->p3_r + fixmuldiv(off_pnt->p3_r-on_pnt->p3_r,kn,kd);
+//		tmp.p3_g = on_pnt->p3_g + fixmuldiv(off_pnt->p3_g-on_pnt->p3_g,kn,kd);
+//		tmp.p3_b = on_pnt->p3_b + fixmuldiv(off_pnt->p3_b-on_pnt->p3_b,kn,kd);
+		tmp.p3_l = on_pnt->p3_l + fixmul((off_pnt->p3_l-on_pnt->p3_l), psx_ratio);
+		tmp.p3_flags |= PF_LS;
 	}
-
 	g3_code_point(tmp);
-
-	return tmp;	
+	return tmp;
 }
 
+#ifndef OGL
 //clips a line to the viewing pyramid.
-void clip_line(g3s_point **p0,g3s_point **p1,ubyte codes_or)
+void clip_line(g3s_point *&p0,g3s_point *&p1,const uint_fast8_t codes_or, temporary_points_t &tp)
 {
-	int plane_flag;
-	g3s_point *old_p1;
-
 	//might have these left over
-	(*p0)->p3_flags &= ~(PF_UVS|PF_LS);
-	(*p1)->p3_flags &= ~(PF_UVS|PF_LS);
+	p0->p3_flags &= ~(PF_UVS|PF_LS);
+	p1->p3_flags &= ~(PF_UVS|PF_LS);
 
-	for (plane_flag=1;plane_flag<16;plane_flag<<=1)
+	for (int plane_flag=1;plane_flag<16;plane_flag<<=1)
 		if (codes_or & plane_flag) {
 
-			if ((*p0)->p3_codes & plane_flag)
-				{g3s_point *t=*p0; *p0=*p1; *p1=t;}	//swap!
-
-			old_p1 = *p1;
-
-			*p1 = clip_edge(plane_flag,*p0,*p1);
-
+			if (p0->p3_codes & plane_flag)
+				std::swap(p0, p1);
+			const auto old_p1 = exchange(p1, &clip_edge(plane_flag,p0,p1,tp));
 			if (old_p1->p3_flags & PF_TEMP_POINT)
-				free_temp_point(old_p1);
+				tp.free_temp_point(old_p1);
 		}
-
 }
+#endif
 
-
-static int clip_plane(int plane_flag,g3s_point **src,g3s_point **dest,int *nv,g3s_codes *cc)
+static int clip_plane(int plane_flag,polygon_clip_points &src,polygon_clip_points &dest,int *nv,g3s_codes *cc, temporary_points_t &tp)
 {
-	int i;
-	g3s_point **save_dest=dest;
-
 	//copy first two verts to end
 	src[*nv] = src[0];
 	src[*nv+1] = src[1];
 
 	cc->uand = 0xff; cc->uor = 0;
 
-	for (i=1;i<=*nv;i++) {
+	uint_fast32_t j = 0;
+	for (int i=1;i<=*nv;i++) {
 
 		if (src[i]->p3_codes & plane_flag) {				//cur point off?
 
 			if (! (src[i-1]->p3_codes & plane_flag)) {	//prev not off?
 
-				*dest = clip_edge(plane_flag,src[i-1],src[i]);
-				cc->uor  |= (*dest)->p3_codes;
-				cc->uand &= (*dest)->p3_codes;
-				dest++;
+				dest[j] = &clip_edge(plane_flag,src[i-1],src[i],tp);
+				cc->uor  |= dest[j]->p3_codes;
+				cc->uand &= dest[j]->p3_codes;
+				++j;
 			}
 
 			if (! (src[i+1]->p3_codes & plane_flag)) {
 
-				*dest = clip_edge(plane_flag,src[i+1],src[i]);
-				cc->uor  |= (*dest)->p3_codes;
-				cc->uand &= (*dest)->p3_codes;
-				dest++;
+				dest[j] = &clip_edge(plane_flag,src[i+1],src[i],tp);
+				cc->uor  |= dest[j]->p3_codes;
+				cc->uand &= dest[j]->p3_codes;
+				++j;
 			}
 
 			//see if must free discarded point
 
 			if (src[i]->p3_flags & PF_TEMP_POINT)
-				free_temp_point(src[i]);
+				tp.free_temp_point(src[i]);
 		}
 		else {			//cur not off, copy to dest buffer
 
-			*dest++ = src[i];
+			dest[j++] = src[i];
 
 			cc->uor  |= src[i]->p3_codes;
 			cc->uand &= src[i]->p3_codes;
 		}
 	}
-
-	return (dest-save_dest);
+	return j;
 }
 
-
-g3s_point **clip_polygon(g3s_point **src,g3s_point **dest,int *nv,g3s_codes *cc)
+const polygon_clip_points &clip_polygon(polygon_clip_points &rsrc,polygon_clip_points &rdest,int *nv,g3s_codes *cc, temporary_points_t &tp)
 {
-	int plane_flag;
-	g3s_point **t;
-
-	for (plane_flag=1;plane_flag<16;plane_flag<<=1)
+	polygon_clip_points *src = &rsrc, *dest = &rdest;
+	for (int plane_flag=1;plane_flag<16;plane_flag<<=1)
 
 		if (cc->uor & plane_flag) {
 
-			*nv = clip_plane(plane_flag,src,dest,nv,cc);
+			*nv = clip_plane(plane_flag,*src,*dest,nv,cc,tp);
 
 			if (cc->uand)		//clipped away
-				return dest;
+				return *dest;
 
-			t = src; src = dest; dest = t;
-
+			std::swap(src, dest);
 		}
 
-	return src;		//we swapped after we copied
+	return *src;		//we swapped after we copied
 }
 

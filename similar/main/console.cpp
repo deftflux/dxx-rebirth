@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * Game console
  *
@@ -22,25 +28,23 @@
 #include "vers_id.h"
 #include "timer.h"
 
-static PHYSFS_file *gamelog_fp=NULL;
-static struct console_buffer con_buffer[CON_LINES_MAX];
+#include "dxxsconf.h"
+#include "compiler-array.h"
+
+static RAIIPHYSFS_File gamelog_fp;
+static array<console_buffer, CON_LINES_MAX> con_buffer;
 static int con_state = CON_STATE_CLOSED, con_scroll_offset = 0, con_size = 0;
 
 static void con_add_buffer_line(int priority, const char *buffer, size_t len)
 {
-	int i=0;
-
 	/* shift con_buffer for one line */
-	for (i=1; i<CON_LINES_MAX; i++)
-	{
-		con_buffer[i-1].priority=con_buffer[i].priority;
-		memcpy(&con_buffer[i-1].line,&con_buffer[i].line,CON_LINE_LENGTH);
-	}
-	con_buffer[CON_LINES_MAX-1].priority=priority;
+	std::move(std::next(con_buffer.begin()), con_buffer.end(), con_buffer.begin());
+	console_buffer &c = con_buffer.back();
+	c.priority=priority;
 
 	size_t copy = std::min(len, CON_LINE_LENGTH - 1);
-	memcpy(&con_buffer[CON_LINES_MAX-1].line,buffer, copy);
-	con_buffer[CON_LINES_MAX-1].line[copy] = 0;
+	memcpy(&c.line,buffer, copy);
+	c.line[copy] = 0;
 }
 
 void (con_printf)(int priority, const char *fmt, ...)
@@ -173,12 +177,12 @@ static void con_draw(void)
 	gr_string(SWIDTH-FSPACX(110),FSPACY(1),"PAGE-UP/DOWN TO SCROLL");
 }
 
-static int con_handler(window *wind, d_event *event, unused_window_userdata_t *)
+static window_event_result con_handler(window *wind,const d_event &event, const unused_window_userdata_t *)
 {
 	int key;
 	static fix64 last_scroll_time = 0;
 	
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_WINDOW_ACTIVATED:
 			break;
@@ -221,7 +225,7 @@ static int con_handler(window *wind, d_event *event, unused_window_userdata_t *)
 				default:
 					break;
 			}
-			return 1;
+			return window_event_result::handled;
 
 		case EVENT_WINDOW_DRAW:
 			timer_delay2(50);
@@ -245,10 +249,11 @@ static int con_handler(window *wind, d_event *event, unused_window_userdata_t *)
 				con_state = CON_STATE_OPEN;
 			else if (con_size <= 0)
 				con_state = CON_STATE_CLOSED;
-			if (con_state == CON_STATE_CLOSED && wind)
-				window_close(wind);
-
 			con_draw();
+			if (con_state == CON_STATE_CLOSED && wind)
+			{
+				return window_event_result::close;
+			}
 			break;
 		case EVENT_WINDOW_CLOSE:
 			break;
@@ -256,7 +261,7 @@ static int con_handler(window *wind, d_event *event, unused_window_userdata_t *)
 			break;
 	}
 	
-	return 0;
+	return window_event_result::ignored;
 }
 
 void con_showup(void)
@@ -270,25 +275,21 @@ void con_showup(void)
 	if (!wind)
 	{
 		d_event event = { EVENT_WINDOW_CLOSE };
-		con_handler(NULL, &event, NULL);
+		con_handler(NULL, event, NULL);
 		return;
 	}
 }
 
 static void con_close(void)
 {
-	if (gamelog_fp)
-		PHYSFS_close(gamelog_fp);
-	
-	gamelog_fp = NULL;
+	gamelog_fp.reset();
 }
 
 void con_init(void)
 {
-	memset(con_buffer,0,sizeof(con_buffer));
-
+	con_buffer = {};
 	if (GameArg.DbgSafelog)
-		gamelog_fp = PHYSFS_openWrite("gamelog.txt");
+		gamelog_fp.reset(PHYSFS_openWrite("gamelog.txt"));
 	else
 		gamelog_fp = PHYSFSX_openWriteBuffered("gamelog.txt");
 	atexit(con_close);

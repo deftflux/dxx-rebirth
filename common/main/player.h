@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -27,9 +33,17 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #endif
 
 #ifdef __cplusplus
+#include <algorithm>
+#include <cctype>
+#include "pack.h"
+#include "dxxsconf.h"
+#include "compiler-array.h"
+#include "compiler-static_assert.h"
+#include "objnum.h"
 
-#define MAX_PLAYERS 8
+#define MAX_PLAYERS 8u
 #define MAX_MULTI_PLAYERS MAX_PLAYERS+3
+#define MULTI_PNUM_UNDEF 0xcc
 
 // Initial player stat values
 #define INITIAL_ENERGY  i2f(100)    // 100% energy to start
@@ -79,14 +93,81 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #endif
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
+
+struct callsign_t
+{
+	static const std::size_t array_length = CALLSIGN_LEN + 1;
+	operator const void *() const = delete;
+	typedef array<char, array_length> array_t;
+	typedef char elements_t[array_length];
+	array_t a;
+	static char lower_predicate(char c)
+	{
+		return std::tolower(static_cast<unsigned>(c));
+	}
+	callsign_t &zero_terminate(array_t::iterator i)
+	{
+		std::fill(i, end(a), 0);
+		return *this;
+	}
+	callsign_t &copy(const char *s, std::size_t N)
+	{
+		return zero_terminate(std::copy_n(s, std::min(a.size() - 1, N), begin(a)));
+	}
+	callsign_t &copy_lower(const char *s, std::size_t N)
+	{
+		return zero_terminate(std::transform(s, std::next(s, std::min(a.size() - 1, N)), begin(a), lower_predicate));
+	}
+	void lower()
+	{
+		auto ba = begin(a);
+		std::transform(ba, std::prev(end(a)), ba, lower_predicate);
+		a.back() = 0;
+	}
+	elements_t &buffer() __attribute_warn_unused_result
+	{
+		return *reinterpret_cast<elements_t *>(a.data());
+	}
+	template <std::size_t N>
+		callsign_t &operator=(const char (&s)[N])
+		{
+			static_assert(N <= array_length, "string too long");
+			return copy(s, N);
+		}
+	template <std::size_t N>
+		void copy_lower(const char (&s)[N])
+		{
+			static_assert(N <= array_length, "string too long");
+			return copy_lower(s, N);
+		}
+	void fill(char c) { a.fill(c); }
+	const char &operator[](std::size_t i) const
+	{
+		return a[i];
+	}
+	operator const char *() const
+	{
+		return &a[0];
+	};
+	bool operator==(const callsign_t &r) const
+	{
+		return a == r.a;
+	}
+	bool operator!=(const callsign_t &r) const
+	{
+		return !(*this == r);
+	}
+};
+static_assert(sizeof(callsign_t) == CALLSIGN_LEN + 1, "callsign_t too big");
+
 // When this structure changes, increment the constant
 // SAVE_FILE_VERSION in playsave.c
-struct player
+struct player : public prohibit_void_ptr<player>
 {
 	// Who am I data
-	char    callsign[CALLSIGN_LEN+1];   // The callsign of this player, for net purposes.
+	callsign_t callsign;   // The callsign of this player, for net purposes.
 	sbyte   connected;              // Is the player connected or not?
-	int     objnum;                 // What object number this player is. (made an int by mk because it's very often referenced)
+	objnum_t     objnum;                 // What object number this player is. (made an int by mk because it's very often referenced)
 
 	//  -- make sure you're 4 byte aligned now!
 
@@ -98,7 +179,7 @@ struct player
 	sbyte   level;                  // Current level player is playing. (must be signed for secret levels)
 	ubyte   laser_level;            // Current level of the laser.
 	sbyte   starting_level;         // What level the player started on.
-	short   killer_objnum;          // Who killed me.... (-1 if no one)
+	objnum_t   killer_objnum;          // Who killed me.... (-1 if no one)
 #if defined(DXX_BUILD_DESCENT_I)
 	ubyte		primary_weapon_flags;					//	bit set indicates the player has this weapon.
 	ubyte		secondary_weapon_flags;					//	bit set indicates the player has this weapon.
@@ -138,7 +219,7 @@ struct player
 struct player_rw
 {
 	// Who am I data
-	char    callsign[CALLSIGN_LEN+1];   // The callsign of this player, for net purposes.
+	callsign_t callsign;   // The callsign of this player, for net purposes.
 	ubyte   net_address[6];         // The network address of the player.
 	sbyte   connected;              // Is the player connected or not?
 	int     objnum;                 // What object number this player is. (made an int by mk because it's very often referenced)
@@ -227,8 +308,11 @@ __pack__
 #endif
 ;
 
-extern int N_players;   // Number of players ( >1 means a net game, eh?)
-extern int Player_num;  // The player number who is on the console.
+typedef unsigned playernum_t;
+typedef array<playernum_t, MAX_PLAYERS> playernum_array_t;
+
+extern unsigned N_players;   // Number of players ( >1 means a net game, eh?)
+extern playernum_t Player_num;  // The player number who is on the console.
 
 #if defined(DXX_BUILD_DESCENT_I)
 #define DXX_PLAYER_HEADER_ADD_EXTRA_PLAYERS	0
@@ -236,7 +320,7 @@ extern int Player_num;  // The player number who is on the console.
 #define DXX_PLAYER_HEADER_ADD_EXTRA_PLAYERS	4
 #endif
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
-extern player Players[MAX_PLAYERS + DXX_PLAYER_HEADER_ADD_EXTRA_PLAYERS];   // Misc player info
+extern array<player, MAX_PLAYERS + DXX_PLAYER_HEADER_ADD_EXTRA_PLAYERS> Players;   // Misc player info
 void player_rw_swap(player_rw *p, int swap);
 #endif
 

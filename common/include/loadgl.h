@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * dynamic opengl loading - courtesy of Jeff Slutter
  *
@@ -108,7 +114,7 @@
 
 #define GL_SCISSOR_TEST 0x0C11
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 #define OEXTERN	extern "C"
 #else
 #define OEXTERN extern

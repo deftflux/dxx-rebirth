@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -35,8 +41,8 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #define OBJS_PER_PAGE 8
 
-static UI_GADGET_USERBOX * ObjBox[OBJS_PER_PAGE];
-static UI_GADGET_USERBOX * ObjCurrent;
+static array<std::unique_ptr<UI_GADGET_USERBOX>, OBJS_PER_PAGE> ObjBox;
+static std::unique_ptr<UI_GADGET_USERBOX> ObjCurrent;
 
 static int ObjectPage = 0;
 
@@ -64,13 +70,13 @@ void draw_object_picture(int id, vms_angvec *orient_angles, int type)
 
 		case OBJ_HOSTAGE:
 			PIGGY_PAGE_IN(Vclip[Hostage_vclip_num[id]].frames[0]);
-			gr_bitmap(0,0,&GameBitmaps[Vclip[Hostage_vclip_num[id]].frames[0].index]);
+			gr_bitmap(0,0,GameBitmaps[Vclip[Hostage_vclip_num[id]].frames[0].index]);
 			break;
 
 		case OBJ_POWERUP:
 			if ( Powerup_info[id].vclip_num > -1 )	{
 				PIGGY_PAGE_IN(Vclip[Powerup_info[id].vclip_num].frames[0]);
-				gr_bitmap(0,0,&GameBitmaps[Vclip[Powerup_info[id].vclip_num].frames[0].index]);
+				gr_bitmap(0,0,GameBitmaps[Vclip[Powerup_info[id].vclip_num].frames[0].index]);
 			}
 			break;
 
@@ -120,10 +126,8 @@ static void gr_label_box( int i)
 
 int objpage_goto_first()
 {
-	int i;
-
 	ObjectPage=0;
-	for (i=0;  i<OBJS_PER_PAGE; i++ ) {
+	for (int i=0;  i<OBJS_PER_PAGE; i++ ) {
 		gr_set_current_canvas(ObjBox[i]->canvas);
 		if (i+ObjectPage*OBJS_PER_PAGE < Num_object_subtypes ) {
 			//gr_ubitmap(0,0, robot_bms[robot_bm_nums[ i+ObjectPage*OBJS_PER_PAGE ] ] );
@@ -137,10 +141,8 @@ int objpage_goto_first()
 
 static int objpage_goto_last()
 {
-	int i;
-
 	ObjectPage=(Num_object_subtypes)/OBJS_PER_PAGE;
-	for (i=0;  i<OBJS_PER_PAGE; i++ )
+	for (int i=0;  i<OBJS_PER_PAGE; i++ )
 	{
 		gr_set_current_canvas(ObjBox[i]->canvas);
 		if (i+ObjectPage*OBJS_PER_PAGE < Num_object_subtypes )
@@ -156,10 +158,9 @@ static int objpage_goto_last()
 
 static int objpage_goto_prev()
 {
-	int i;
 	if (ObjectPage > 0) {
 		ObjectPage--;
-		for (i=0;  i<OBJS_PER_PAGE; i++ )
+		for (int i=0;  i<OBJS_PER_PAGE; i++ )
 		{
 			gr_set_current_canvas(ObjBox[i]->canvas);
 			if (i+ObjectPage*OBJS_PER_PAGE < Num_object_subtypes)
@@ -176,10 +177,9 @@ static int objpage_goto_prev()
 
 static int objpage_goto_next()
 {
-	int i;
 	if ((ObjectPage+1)*OBJS_PER_PAGE < Num_object_subtypes) {
 		ObjectPage++;
-		for (i=0;  i<OBJS_PER_PAGE; i++ )
+		for (int i=0;  i<OBJS_PER_PAGE; i++ )
 		{
 			gr_set_current_canvas(ObjBox[i]->canvas);
 			if (i+ObjectPage*OBJS_PER_PAGE < Num_object_subtypes)
@@ -196,14 +196,12 @@ static int objpage_goto_next()
 
 int objpage_grab_current(int n)
 {
-	int i;
-
 	if ((n < 0) || (n >= Num_object_subtypes)) return 0;
 	
 	ObjectPage = n / OBJS_PER_PAGE;
 	
 	if (ObjectPage*OBJS_PER_PAGE < Num_object_subtypes) {
-		for (i=0;  i<OBJS_PER_PAGE; i++ )
+		for (int i=0;  i<OBJS_PER_PAGE; i++ )
 		{
 			gr_set_current_canvas(ObjBox[i]->canvas);
 			if (i + ObjectPage*OBJS_PER_PAGE < Num_object_subtypes)
@@ -342,8 +340,6 @@ static int objpage_reset_orient()
 
 void objpage_init( UI_DIALOG *dlg )
 {
-	int i;
-
 	//Num_total_object_types = N_polygon_models + N_hostage_types + N_powerup_types;
 	//Assert (N_polygon_models < MAX_POLYGON_MODELS);
 	//Assert (Num_total_object_types < MAX_OBJTYPE );
@@ -367,13 +363,10 @@ void objpage_init( UI_DIALOG *dlg )
 	ui_add_gadget_button( dlg, OBJCURBOX_X + 50, OBJCURBOX_Y + 62, 22, 13, "Z-", objpage_decrease_z );
 	ui_add_gadget_button( dlg, OBJCURBOX_X + 25, OBJCURBOX_Y + 76, 22, 13, "R", objpage_reset_orient );
 
-	for (i=0;i<OBJS_PER_PAGE;i++)
+	for (int i=0;i<OBJS_PER_PAGE;i++)
 		ObjBox[i] = ui_add_gadget_userbox( dlg, OBJBOX_X + (i/2)*(2+OBJBOX_W), OBJBOX_Y + (i%2)*(2+OBJBOX_H), OBJBOX_W, OBJBOX_H);
-
 	ObjCurrent = ui_add_gadget_userbox( dlg, OBJCURBOX_X, OBJCURBOX_Y-5, 64, 64 );
-
 	objpage_reset_orient();
-
 }
 
 void objpage_close()
@@ -384,13 +377,11 @@ void objpage_close()
 
 // DO TEXTURE STUFF
 
-int objpage_do(d_event *event)
+int objpage_do(const d_event &event)
 {
-	int i;
-	
-	if (event->type == EVENT_UI_DIALOG_DRAW)
+	if (event.type == EVENT_UI_DIALOG_DRAW)
 	{
-		for (i=0;  i<OBJS_PER_PAGE; i++ )
+		for (int i=0;  i<OBJS_PER_PAGE; i++ )
 		{
 			gr_set_current_canvas(ObjBox[i]->canvas);
 			if (i+ObjectPage*OBJS_PER_PAGE < Num_object_subtypes)
@@ -417,9 +408,9 @@ int objpage_do(d_event *event)
 		return 1;
 	}
 
-	for (i=0; i<OBJS_PER_PAGE; i++ )
+	for (int i=0; i<OBJS_PER_PAGE; i++ )
 	{
-		if (GADGET_PRESSED(ObjBox[i]) && (i+ObjectPage*OBJS_PER_PAGE < Num_object_subtypes))
+		if (GADGET_PRESSED(ObjBox[i].get()) && (i+ObjectPage*OBJS_PER_PAGE < Num_object_subtypes))
 		{
 			Cur_object_id = i+ObjectPage*OBJS_PER_PAGE;
 			gr_set_current_canvas(ObjCurrent->canvas);

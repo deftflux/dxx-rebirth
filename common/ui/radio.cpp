@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -41,7 +47,7 @@ void ui_draw_radio( UI_DIALOG *dlg, UI_GADGET_RADIO * radio )
 
 		gr_set_current_canvas( radio->canvas );
 
-		if (dlg->keyboard_focus_gadget == (UI_GADGET *) radio)
+		if (dlg->keyboard_focus_gadget ==  radio)
 			gr_set_fontcolor(CRED, -1);
 		else
 			gr_set_fontcolor(CBLACK, -1);
@@ -61,18 +67,15 @@ void ui_draw_radio( UI_DIALOG *dlg, UI_GADGET_RADIO * radio )
 				ui_string_centered(Middle(radio->width) + 1, Middle(radio->height) + 1, " ");
 		}
 
-		gr_ustring( radio->width+4, 2, radio->text );
+		gr_ustring(radio->width+4, 2, radio->text.get());
 	}
 }
 
 
-UI_GADGET_RADIO * ui_add_gadget_radio( UI_DIALOG * dlg, short x, short y, short w, short h, short group, const char * text )
+std::unique_ptr<UI_GADGET_RADIO> ui_add_gadget_radio(UI_DIALOG * dlg, short x, short y, short w, short h, short group, const char * text)
 {
-	UI_GADGET_RADIO * radio;
-
-	radio = (UI_GADGET_RADIO *)ui_gadget_add( dlg, 4, x, y, x+w-1, y+h-1 );
-
-	radio->text = d_strdup(text);
+	std::unique_ptr<UI_GADGET_RADIO> radio{ui_gadget_add<UI_GADGET_RADIO>(dlg, x, y, x+w-1, y+h-1)};
+	radio->text = RAIIdmem<char[]>(d_strdup(text));
 	radio->width = w;
 	radio->height = h;
 	radio->position = 0;
@@ -80,31 +83,26 @@ UI_GADGET_RADIO * ui_add_gadget_radio( UI_DIALOG * dlg, short x, short y, short 
 	radio->pressed = 0;
 	radio->flag = 0;
 	radio->group = group;
-
 	return radio;
-
 }
 
-
-int ui_radio_do( UI_DIALOG *dlg, UI_GADGET_RADIO * radio, d_event *event )
+window_event_result ui_radio_do( UI_DIALOG *dlg, UI_GADGET_RADIO * radio,const d_event &event )
 {
 	UI_GADGET * tmp;
-	UI_GADGET_RADIO * tmpr;
-	int rval = 0;
-	
 	radio->oldposition = radio->position;
 	radio->pressed = 0;
 
-	if (event->type == EVENT_MOUSE_BUTTON_DOWN || event->type == EVENT_MOUSE_BUTTON_UP)
+	window_event_result rval = window_event_result::ignored;
+	if (event.type == EVENT_MOUSE_BUTTON_DOWN || event.type == EVENT_MOUSE_BUTTON_UP)
 	{
 		int OnMe;
 		
-		OnMe = ui_mouse_on_gadget( (UI_GADGET *)radio );
+		OnMe = ui_mouse_on_gadget( radio );
 
 		if ( B1_JUST_PRESSED && OnMe)
 		{
 			radio->position = 1;
-			rval = 1;
+			rval = window_event_result::handled;
 		} 
 		else if (B1_JUST_RELEASED)
 		{
@@ -116,19 +114,19 @@ int ui_radio_do( UI_DIALOG *dlg, UI_GADGET_RADIO * radio, d_event *event )
 	}
 
 	
-	if (event->type == EVENT_KEY_COMMAND)
+	if (event.type == EVENT_KEY_COMMAND)
 	{
 		int key;
 		
 		key = event_key_get(event);
 		
-		if ((dlg->keyboard_focus_gadget==(UI_GADGET *)radio) && ((key==KEY_SPACEBAR) || (key==KEY_ENTER)) )
+		if ((dlg->keyboard_focus_gadget==radio) && ((key==KEY_SPACEBAR) || (key==KEY_ENTER)) )
 		{
 			radio->position = 2;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 	}
-	else if (event->type == EVENT_KEY_RELEASE)
+	else if (event.type == EVENT_KEY_RELEASE)
 	{
 		int key;
 		
@@ -136,19 +134,19 @@ int ui_radio_do( UI_DIALOG *dlg, UI_GADGET_RADIO * radio, d_event *event )
 		
 		radio->position = 0;
 		
-		if ((dlg->keyboard_focus_gadget==(UI_GADGET *)radio) && ((key==KEY_SPACEBAR) || (key==KEY_ENTER)) )
+		if ((dlg->keyboard_focus_gadget==radio) && ((key==KEY_SPACEBAR) || (key==KEY_ENTER)) )
 			radio->pressed = 1;
 	}
 		
 	if ((radio->pressed == 1) && (radio->flag==0))
 	{
-		tmp = (UI_GADGET *)radio->next;
+		tmp = radio->next;
 
-		while (tmp != (UI_GADGET *)radio )
+		while (tmp != radio )
 		{
-			if (tmp->kind==4)
+			if (tmp->kind==UI_GADGET_RADIO::s_kind)
 			{
-				tmpr = (UI_GADGET_RADIO *)tmp;
+				auto tmpr = static_cast<UI_GADGET_RADIO *>(tmp);
 				if ((tmpr->group == radio->group ) && (tmpr->flag) )
 				{
 					tmpr->flag = 0;
@@ -159,11 +157,11 @@ int ui_radio_do( UI_DIALOG *dlg, UI_GADGET_RADIO * radio, d_event *event )
 			tmp = tmp->next;
 		}
 		radio->flag = 1;
-		ui_gadget_send_event(dlg, EVENT_UI_GADGET_PRESSED, (UI_GADGET *)radio);
-		rval = 1;
+		ui_gadget_send_event(dlg, EVENT_UI_GADGET_PRESSED, radio);
+		rval = window_event_result::handled;
 	}
 
-	if (event->type == EVENT_WINDOW_DRAW)
+	if (event.type == EVENT_WINDOW_DRAW)
 		ui_draw_radio( dlg, radio );
 
 	return rval;
@@ -171,8 +169,6 @@ int ui_radio_do( UI_DIALOG *dlg, UI_GADGET_RADIO * radio, d_event *event )
 
 void ui_radio_set_value(UI_GADGET_RADIO *radio, int value)
 {
-	UI_GADGET_RADIO *tmp;
-
 	value = value != 0;
 	if (radio->flag == value)
 		return;
@@ -180,11 +176,11 @@ void ui_radio_set_value(UI_GADGET_RADIO *radio, int value)
 	radio->flag = value;
 	radio->status = 1;	// redraw
 
-	tmp = (UI_GADGET_RADIO *) radio->next;
+	auto tmp = static_cast<UI_GADGET_RADIO *>(radio->next);
 
 	while (tmp != radio)
 	{
-		if ((tmp->kind == 4) && (tmp->group == radio->group) && tmp->flag)
+		if ((tmp->kind == UI_GADGET_RADIO::s_kind) && (tmp->group == radio->group) && tmp->flag)
 		{
 			tmp->flag = 0;
 			tmp->status = 1;

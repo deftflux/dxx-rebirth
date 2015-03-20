@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -35,8 +41,11 @@ static inline int load_palette(const char *name, int used_for_level, int no_chan
 #define D2_DEFAULT_PALETTE "default.256"
 #define MENU_PALETTE    "default.256"
 
+template <std::size_t>
+struct PHYSFSX_gets_line_t;
+
 extern char last_palette_loaded[FILENAME_LEN];
-extern char Current_level_palette[FILENAME_LEN];
+extern PHYSFSX_gets_line_t<FILENAME_LEN> Current_level_palette;
 extern char last_palette_loaded_pig[FILENAME_LEN];
 
 // load a palette by name. returns 1 if new palette loaded, else 0

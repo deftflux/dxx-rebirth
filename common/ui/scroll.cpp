@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -33,7 +39,7 @@ void ui_draw_scrollbar( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar )
 	scrollbar->status = 0;
 	gr_set_current_canvas( scrollbar->canvas );
 
-	if (dlg->keyboard_focus_gadget == (UI_GADGET *)scrollbar)
+	if (dlg->keyboard_focus_gadget == scrollbar)
 		gr_setcolor( CRED );
 	else
 		gr_setcolor( CGREY );
@@ -44,11 +50,10 @@ void ui_draw_scrollbar( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar )
 	ui_draw_box_out(0, scrollbar->fake_position, scrollbar->width-1, scrollbar->fake_position+scrollbar->fake_size-1 );
 }
 
-UI_GADGET_SCROLLBAR * ui_add_gadget_scrollbar( UI_DIALOG * dlg, short x, short y, short w, short h, int start, int stop, int position, int window_size  )
+std::unique_ptr<UI_GADGET_SCROLLBAR> ui_add_gadget_scrollbar(UI_DIALOG * dlg, short x, short y, short w, short h, int start, int stop, int position, int window_size)
 {
 	int tw, th, taw;
 
-	UI_GADGET_SCROLLBAR * scrollbar;
 	char up[2];
 	char down[2];
 	up[0] = 30; up[1] = 0;
@@ -60,13 +65,13 @@ UI_GADGET_SCROLLBAR * ui_add_gadget_scrollbar( UI_DIALOG * dlg, short x, short y
 
 	if (stop < start ) stop = start;
 
-	scrollbar = (UI_GADGET_SCROLLBAR *)ui_gadget_add( dlg, 3, x, y+w, x+w-1, y+h-w-1 );
+	std::unique_ptr<UI_GADGET_SCROLLBAR> scrollbar{ui_gadget_add<UI_GADGET_SCROLLBAR>(dlg, x, y+w, x+w-1, y+h-w-1)};
 
 	scrollbar->up_button = ui_add_gadget_button( dlg, x, y, w, w, up, NULL );
-	scrollbar->up_button->parent = (UI_GADGET *)scrollbar;
+	scrollbar->up_button->parent = scrollbar.get();
 
 	scrollbar->down_button =ui_add_gadget_button( dlg, x, y+h-w, w, w, down, NULL );
-	scrollbar->down_button->parent = (UI_GADGET *)scrollbar;
+	scrollbar->down_button->parent = scrollbar.get();
 
 	scrollbar->horz = 0;
 	scrollbar->width = scrollbar->x2-scrollbar->x1+1;
@@ -90,22 +95,22 @@ UI_GADGET_SCROLLBAR * ui_add_gadget_scrollbar( UI_DIALOG * dlg, short x, short y
 
 }
 
-int ui_scrollbar_do( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar, d_event *event )
+window_event_result ui_scrollbar_do( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar,const d_event &event )
 {
 	int OnMe, OnSlider, keyfocus;
 	int oldpos, op;
 	int x, y, z;
-	int rval = 0;
+	window_event_result rval = window_event_result::ignored;
 		
-	if (event->type == EVENT_WINDOW_DRAW)
+	if (event.type == EVENT_WINDOW_DRAW)
 	{
 		ui_draw_scrollbar( dlg, scrollbar );
-		return 0;
+		return window_event_result::ignored;
 	}
 
 	keyfocus = 0;
 
-	if (dlg->keyboard_focus_gadget==(UI_GADGET *)scrollbar)
+	if (dlg->keyboard_focus_gadget==scrollbar)
 		keyfocus = 1;
 
 	if (scrollbar->start==scrollbar->stop)
@@ -113,7 +118,7 @@ int ui_scrollbar_do( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar, d_event *e
 		scrollbar->position = 0;
 		scrollbar->fake_position = 0;
 		ui_draw_scrollbar( dlg, scrollbar );
-		return 0;
+		return window_event_result::ignored;
 	}
 
 	op = scrollbar->position;
@@ -123,7 +128,7 @@ int ui_scrollbar_do( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar, d_event *e
 	scrollbar->moved = 0;
 
 
-	if (keyfocus && event->type == EVENT_KEY_COMMAND)
+	if (keyfocus && event.type == EVENT_KEY_COMMAND)
 	{
 		int key;
 		
@@ -132,15 +137,15 @@ int ui_scrollbar_do( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar, d_event *e
 		if (key & KEY_UP)
 		{
 			scrollbar->up_button->position = 2;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 		else if (key & KEY_DOWN)
 		{
 			scrollbar->down_button->position = 2;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 	}
-	else if (keyfocus && event->type == EVENT_KEY_RELEASE)
+	else if (keyfocus && event.type == EVENT_KEY_RELEASE)
 	{
 		int key;
 		
@@ -149,12 +154,12 @@ int ui_scrollbar_do( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar, d_event *e
 		if (key & KEY_UP)
 		{
 			scrollbar->up_button->position = 0;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 		else if (key & KEY_DOWN)
 		{
 			scrollbar->down_button->position = 0;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 	}
 	
@@ -186,7 +191,7 @@ int ui_scrollbar_do( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar, d_event *e
 		}
 	}
 
-	OnMe = ui_mouse_on_gadget( (UI_GADGET *)scrollbar );
+	OnMe = ui_mouse_on_gadget( scrollbar );
 
 	//gr_ubox(0, scrollbar->fake_position, scrollbar->width-1, scrollbar->fake_position+scrollbar->fake_size-1 );
 
@@ -210,12 +215,12 @@ int ui_scrollbar_do( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar, d_event *e
 		scrollbar->drag_x = x;
 		scrollbar->drag_y = y;
 		scrollbar->drag_starting = scrollbar->fake_position;
-		rval = 1;
+		rval = window_event_result::handled;
 	}
 	else if (B1_JUST_PRESSED && OnMe)
 	{
 		scrollbar->dragging = 2;	// outside the slider
-		rval = 1;
+		rval = window_event_result::handled;
 	}
 
 	if  ((scrollbar->dragging == 2) && OnMe && !OnSlider && (timer_query() > scrollbar->last_scrolled + 4))
@@ -240,7 +245,7 @@ int ui_scrollbar_do( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar, d_event *e
 		scrollbar->fake_position /= (scrollbar->stop-scrollbar->start);
 	}
 
-	if ((selected_gadget==(UI_GADGET *)scrollbar) && (scrollbar->dragging == 1))
+	if ((selected_gadget==scrollbar) && (scrollbar->dragging == 1))
 	{
 		//x = scrollbar->drag_x;
 		scrollbar->fake_position = scrollbar->drag_starting + (y - scrollbar->drag_y );
@@ -278,8 +283,8 @@ int ui_scrollbar_do( UI_DIALOG *dlg, UI_GADGET_SCROLLBAR * scrollbar, d_event *e
 		scrollbar->moved = 1;
 	if (scrollbar->moved)
 	{
-		ui_gadget_send_event(dlg, EVENT_UI_GADGET_PRESSED, (UI_GADGET *)scrollbar);
-		rval = 1;
+		ui_gadget_send_event(dlg, EVENT_UI_GADGET_PRESSED, scrollbar);
+		rval = window_event_result::handled;
 	}
 
 	if (oldpos != scrollbar->fake_position)

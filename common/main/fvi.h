@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,15 +23,15 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-
-#ifndef _FVI_H
-#define _FVI_H
+#pragma once
 
 #include "vecmat.h"
-#include "segment.h"
-#include "object.h"
 
 #ifdef __cplusplus
+#include "dxxsconf.h"
+#include "fwdobject.h"
+#include "pack.h"
+#include "countarray.h"
 
 //return values for find_vector_intersection() - what did we hit?
 #define HIT_NONE		0		//we hit nothing
@@ -36,15 +42,15 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define MAX_FVI_SEGS 100
 
 //this data structure gets filled in by find_vector_intersection()
-struct fvi_info
+struct fvi_info : prohibit_void_ptr<fvi_info>
 {
-	struct segment_array_t : public count_array_t<short, MAX_FVI_SEGS> {};
+	struct segment_array_t : public count_array_t<segnum_t, MAX_FVI_SEGS> {};
 	int hit_type;					//what sort of intersection
 	vms_vector hit_pnt;			//where we hit
-	int hit_seg;					//what segment hit_pnt is in
+	segnum_t hit_seg;					//what segment hit_pnt is in
 	int hit_side;					//if hit wall, which side
-	int hit_side_seg;				//what segment the hit side is in
-	int hit_object;				//if object hit, which object
+	segnum_t hit_side_seg;				//what segment the hit side is in
+	objnum_t hit_object;				//if object hit, which object
 	vms_vector hit_wallnorm;	//if hit wall, ptr to its surface normal
 	segment_array_t seglist;
 };
@@ -57,14 +63,19 @@ struct fvi_info
 #define FQ_IGNORE_POWERUPS	16		//ignore powerups
 
 //this data contains the parms to fvi()
-struct fvi_query
+struct fvi_query : prohibit_void_ptr<fvi_query>
 {
 	const vms_vector *p0,*p1;
-	int startseg;
+	segnum_t startseg;
+	objnum_t thisobjnum;
 	fix rad;
-	short thisobjnum;
-	int *ignore_obj_list;
+	std::pair<const objnum_t *, const objnum_t *> ignore_obj_list;
 	int flags;
+};
+
+struct fvi_hitpoint
+{
+	fix u, v;
 };
 
 //Find out if a vector intersects with anything.
@@ -77,17 +88,21 @@ struct fvi_query
 //  ingore_obj_list	NULL, or ptr to a list of objnums to ignore, terminated with -1
 //  check_obj_flag	determines whether collisions with objects are checked
 //Returns the hit_data->hit_type
-int find_vector_intersection(fvi_query *fq,fvi_info *hit_data);
+int find_vector_intersection(const fvi_query &fq, fvi_info &hit_data);
 
 //finds the uv coords of the given point on the given seg & side
 //fills in u & v. if l is non-NULL fills it in also
-void find_hitpoint_uv(fix *u,fix *v,fix *l, const vms_vector *pnt,const segment *seg,int sidenum,int facenum);
+__attribute_warn_unused_result
+fvi_hitpoint find_hitpoint_uv(const vms_vector &pnt, vcsegptridx_t seg, uint_fast32_t sidenum, uint_fast32_t facenum);
+
+struct object_intersects_wall_result_t
+{
+	segnum_t seg;
+	uint8_t side;
+};
 
 //Returns true if the object is through any walls
-int object_intersects_wall(object *objp);
-int object_intersects_wall_d(object *objp,int *hseg,int *hside,int *hface); // same as above but more detailed
+int object_intersects_wall(vobjptr_t objp);
+int object_intersects_wall_d(vcobjptr_t objp, object_intersects_wall_result_t &); // same as above but more detailed
 
 #endif
-
-#endif
-

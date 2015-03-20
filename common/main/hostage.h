@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -23,19 +29,17 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #ifdef __cplusplus
 
-struct object;
 
 #define HOSTAGE_SIZE        i2f(5)  // 3d size of a hostage
 
 #define MAX_HOSTAGE_TYPES   1       //only one hostage bitmap
 #if defined(DXX_BUILD_DESCENT_I)
 #define MAX_HOSTAGES				10		//max per any one level
-#define HOSTAGE_MESSAGE_LEN	30
 
 // 1 per hostage
 struct hostage_data
 {
-	short		objnum;
+	objnum_t		objnum;
 	int		objsig;
 };
 
@@ -48,13 +52,13 @@ int do_hostage_effects();
 void hostage_init_all();
 void hostage_compress_all();
 int hostage_is_valid( int hostage_num );
-int hostage_object_is_valid( int objnum  );
-void hostage_init_info( int objnum );
+int hostage_object_is_valid(vobjptridx_t objnum);
+void hostage_init_info(vobjptridx_t objnum);
 #endif
 #elif defined(DXX_BUILD_DESCENT_II)
 #ifdef EDITOR
 static inline void hostage_init_all() {}
-static inline void hostage_init_info( int objnum ) {(void)objnum;}
+static inline void hostage_init_info(const objnum_t &) {}
 #endif
 #endif
 
@@ -62,8 +66,8 @@ extern int N_hostage_types;
 
 extern int Hostage_vclip_num[MAX_HOSTAGE_TYPES];    // for each type of hostage
 
-void draw_hostage(object *obj);
-void hostage_rescue( int hostage_number );
+void draw_hostage(vobjptridx_t obj);
+void hostage_rescue();
 
 #endif
 

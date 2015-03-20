@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -48,7 +54,7 @@ void ui_draw_icon( UI_GADGET_ICON * icon )
 		icon->status = 0;
 
 		gr_set_current_canvas( icon->canvas );
-		gr_get_string_size(icon->text, &width, &height, &avg );
+		gr_get_string_size(icon->text.get(), &width, &height, &avg);
 	
 		x = ((icon->width-1)/2)-((width-1)/2);
 		y = ((icon->height-1)/2)-((height-1)/2);
@@ -72,28 +78,26 @@ void ui_draw_icon( UI_GADGET_ICON * icon )
 		}
 	
 		gr_set_fontcolor( CBLACK, -1 );		
-		gr_ustring( x, y, icon->text );
+		gr_ustring(x, y, icon->text.get());
 	}
 }
 
 
-UI_GADGET_ICON * ui_add_gadget_icon( UI_DIALOG * dlg, const char * text, short x, short y, short w, short h, int k,int (*f)(void) )
+std::unique_ptr<UI_GADGET_ICON> ui_add_gadget_icon(UI_DIALOG * dlg, const char * text, short x, short y, short w, short h, int k,int (*f)())
 {
-	UI_GADGET_ICON * icon;
-
-	icon = (UI_GADGET_ICON *)ui_gadget_add( dlg, 9, x, y, x+w-1, y+h-1 );
+	std::unique_ptr<UI_GADGET_ICON> icon{ui_gadget_add<UI_GADGET_ICON>(dlg, x, y, x+w-1, y+h-1)};
 
 	icon->width = w;
 	icon->height = h;
-	MALLOC( icon->text, char, strlen( text )+2);//Hack by KRB
-	strcpy( icon->text, text );
+	auto ltext = strlen(text) + 1;
+	MALLOC( icon->text, char[], ltext + 1);//Hack by KRB
+	memcpy(icon->text.get(), text, ltext);
 	icon->trap_key = k;
 	icon->user_function = f;
 	icon->oldposition = 0;
 	icon->position = 0;
 	icon->pressed = 0;
-	icon->canvas->cv_font = ui_small_font;
-
+	icon->canvas->cv_font = ui_small_font.get();
 	// Call twice to get original;
 	if (f)
 	{
@@ -102,29 +106,25 @@ UI_GADGET_ICON * ui_add_gadget_icon( UI_DIALOG * dlg, const char * text, short x
 	} else {
 		icon->flag = 0;
 	}
-
-
 	return icon;
-
 }
 
-int ui_icon_do( UI_DIALOG *dlg, UI_GADGET_ICON * icon, d_event *event )
+window_event_result ui_icon_do( UI_DIALOG *dlg, UI_GADGET_ICON * icon,const d_event &event )
 {
-	int rval = 0;
-	
 	icon->oldposition = icon->position;
 	icon->pressed = 0;
 
-	if (event->type == EVENT_MOUSE_BUTTON_DOWN || event->type == EVENT_MOUSE_BUTTON_UP)
+	window_event_result rval = window_event_result::ignored;
+	if (event.type == EVENT_MOUSE_BUTTON_DOWN || event.type == EVENT_MOUSE_BUTTON_UP)
 	{
 		int OnMe;
 		
-		OnMe = ui_mouse_on_gadget( (UI_GADGET *)icon );
+		OnMe = ui_mouse_on_gadget( icon );
 
 		if (B1_JUST_PRESSED && OnMe)
 		{
 			icon->position = 1;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 		else if (B1_JUST_RELEASED)
 		{
@@ -136,7 +136,7 @@ int ui_icon_do( UI_DIALOG *dlg, UI_GADGET_ICON * icon, d_event *event )
 	}
 
 
-	if (event->type == EVENT_KEY_COMMAND)
+	if (event.type == EVENT_KEY_COMMAND)
 	{
 		int key;
 		
@@ -145,10 +145,10 @@ int ui_icon_do( UI_DIALOG *dlg, UI_GADGET_ICON * icon, d_event *event )
 		if (key == icon->trap_key)
 		{
 			icon->position = 1;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 	}
-	else if (event->type == EVENT_KEY_RELEASE)
+	else if (event.type == EVENT_KEY_RELEASE)
 	{
 		int key;
 		
@@ -164,11 +164,11 @@ int ui_icon_do( UI_DIALOG *dlg, UI_GADGET_ICON * icon, d_event *event )
 	{
 		icon->status = 1;
 		icon->flag = (sbyte)icon->user_function();
-		ui_gadget_send_event(dlg, EVENT_UI_GADGET_PRESSED, (UI_GADGET *)icon);
-		rval = 1;
+		ui_gadget_send_event(dlg, EVENT_UI_GADGET_PRESSED, icon);
+		rval = window_event_result::handled;
 	}
 
-	if (event->type == EVENT_WINDOW_DRAW)
+	if (event.type == EVENT_WINDOW_DRAW)
 		ui_draw_icon( icon );
 
 	return rval;

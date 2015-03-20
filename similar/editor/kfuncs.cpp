@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -215,8 +221,6 @@ const FUNCTION med_functions[] = {
 {   "med-segment-delete",               0,      medlisp_delete_segment },
 {   "med-segment-scale",                3,      medlisp_scale_segment },
 {   "med-segment-rotate",               3,      medlisp_rotate_segment },
-{   "med-dos-shell",                    0,      DosShell },
-//{   "med-lisp-call",                    0,      CallLisp },
 {   "med-editor-exit",                  0,      ExitEditor },
 {   "med-segment-exchange",             0,      ExchangeMarkandCurseg },
 {   "med-segment-mark",                 0,      CopySegToMarked },

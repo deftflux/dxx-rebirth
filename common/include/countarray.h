@@ -1,7 +1,14 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 #pragma once
 
 #include <algorithm>
 #include <cstddef>
+#include <memory>
 #include <stdexcept>
 #include "dxxsconf.h"
 #include "compiler-array.h"
@@ -53,7 +60,8 @@ public:
 	{
 		if (m_count >= S)
 			throw std::length_error("too many elements");
-		new(reinterpret_cast<void *>(&arrayref()[m_count])) T(std::forward<Args>(args)...);
+		T *uninitialized = static_cast<T *>(&arrayref()[m_count]);
+		new(static_cast<void *>(uninitialized)) T(std::forward<Args>(args)...);
 		++ m_count;
 	}
 	void clear()

@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,18 +23,18 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-
-#ifndef _POLYOBJ_H
-#define _POLYOBJ_H
+#pragma once
 
 #include "vecmat.h"
-#include "gr.h"
 #include "3d.h"
 
 #include "robot.h"
-#include "piggy.h"
+
+struct bitmap_index;
 
 #ifdef __cplusplus
+#include <cstddef>
+#include "pack.h"
 
 struct glow_values_t;
 
@@ -49,51 +55,76 @@ extern int Dead_modelnums[MAX_POLYGON_MODELS];
 #define MAX_SUBMODELS 10
 
 //used to describe a polygon model
-struct polymodel
+struct polymodel : prohibit_void_ptr<polymodel>
 {
-	int     n_models;
+	unsigned n_models;
 	int     model_data_size;
-	ubyte   *model_data;
-	int     submodel_ptrs[MAX_SUBMODELS];
-	vms_vector submodel_offsets[MAX_SUBMODELS];
-	vms_vector submodel_norms[MAX_SUBMODELS];   // norm for sep plane
-	vms_vector submodel_pnts[MAX_SUBMODELS];    // point on sep plane
-	fix     submodel_rads[MAX_SUBMODELS];       // radius for each submodel
-	ubyte   submodel_parents[MAX_SUBMODELS];    // what is parent for each submodel
-	vms_vector submodel_mins[MAX_SUBMODELS];
-	vms_vector submodel_maxs[MAX_SUBMODELS];
+	std::unique_ptr<ubyte[]>   model_data;
+	array<int, MAX_SUBMODELS> submodel_ptrs;
+	array<vms_vector, MAX_SUBMODELS> submodel_offsets;
+	array<vms_vector, MAX_SUBMODELS> submodel_norms;   // norm for sep plane
+	array<vms_vector, MAX_SUBMODELS> submodel_pnts;    // point on sep plane
+	array<fix, MAX_SUBMODELS> submodel_rads;       // radius for each submodel
+	array<ubyte, MAX_SUBMODELS> submodel_parents;    // what is parent for each submodel
+	array<vms_vector, MAX_SUBMODELS> submodel_mins;
+	array<vms_vector, MAX_SUBMODELS> submodel_maxs;
 	vms_vector mins,maxs;                       // min,max for whole model
 	fix     rad;
-	ubyte   n_textures;
 	ushort  first_texture;
+	ubyte   n_textures;
 	ubyte   simpler_model;                      // alternate model with less detail (0 if none, model_num+1 else)
 	//vms_vector min,max;
-} __pack__;
+};
+
+class submodel_angles
+{
+	typedef const array<vms_angvec, MAX_SUBMODELS> array_type;
+	array_type *p;
+public:
+	submodel_angles(std::nullptr_t) : p(nullptr) {}
+	submodel_angles(array_type &a) : p(&a) {}
+	explicit operator bool() const { return p != nullptr; }
+	typename array_type::const_reference operator[](std::size_t i) const
+	{
+		array_type &a = *p;
+		return a[i];
+	}
+};
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 // array of pointers to polygon objects
-extern polymodel Polygon_models[MAX_POLYGON_MODELS];
+extern array<polymodel, MAX_POLYGON_MODELS> Polygon_models;
 #endif
 
 // how many polygon objects there are
-extern int N_polygon_models;
+extern unsigned N_polygon_models;
 
 void free_polygon_models();
 void init_polygon_models();
 
 int load_polygon_model(const char *filename,int n_textures,int first_texture,robot_info *r);
 
-// draw a polygon model
-void draw_polygon_model(vms_vector *pos,vms_matrix *orient,vms_angvec *anim_angles,int model_num,int flags,g3s_lrgb lrgb,glow_values_t *glow_values,bitmap_index alt_textures[]);
+class alternate_textures
+{
+	const bitmap_index *p;
+public:
+	alternate_textures() : p(nullptr) {}
+	alternate_textures(std::nullptr_t) : p(nullptr) {}
+	template <std::size_t N>
+		alternate_textures(const std::array<bitmap_index, N> &a) : p(a.data())
+	{
+	}
+	operator const bitmap_index *() const { return p; }
+};
 
-// fills in arrays gun_points & gun_dirs, returns the number of guns read
-int read_model_guns(const char *filename,vms_vector *gun_points, vms_vector *gun_dirs, int *gun_submodels);
+// draw a polygon model
+void draw_polygon_model(const vms_vector &pos,const vms_matrix *orient,submodel_angles anim_angles,int model_num,int flags,g3s_lrgb lrgb,glow_values_t *glow_values, alternate_textures);
 
 // draws the given model in the current canvas.  The distance is set to
 // more-or-less fill the canvas.  Note that this routine actually renders
 // into an off-screen canvas that it creates, then copies to the current
 // canvas.
-void draw_model_picture(int mn,vms_angvec *orient_angles);
+void draw_model_picture(uint_fast32_t mn,vms_angvec *orient_angles);
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 #if defined(DXX_BUILD_DESCENT_I)
@@ -103,24 +134,17 @@ void draw_model_picture(int mn,vms_angvec *orient_angles);
 void free_model(polymodel *po);
 
 #define MAX_POLYOBJ_TEXTURES 100
+static const unsigned N_D2_POLYGON_MODELS = 166;
 #endif
-extern grs_bitmap *texture_list[MAX_POLYOBJ_TEXTURES];
-extern bitmap_index texture_list_index[MAX_POLYOBJ_TEXTURES];
+extern array<grs_bitmap *, MAX_POLYOBJ_TEXTURES> texture_list;
+extern array<bitmap_index, MAX_POLYOBJ_TEXTURES> texture_list_index;
 #endif
-#define MAX_POLYGON_VECS 1000
-extern g3s_point robot_points[MAX_POLYGON_VECS];
 
-#if defined(DXX_BUILD_DESCENT_II)
 /*
  * reads a polymodel structure from a PHYSFS_file
  */
 extern void polymodel_read(polymodel *pm, PHYSFS_file *fp);
-#endif
-
-/*
- * reads n polymodel structs from a PHYSFS_file
- */
-extern int polymodel_read_n(polymodel *pm, int n, PHYSFS_file *fp);
+void polymodel_write(PHYSFS_file *fp, const polymodel &pm);
 
 /*
  * routine which allocates, reads, and inits a polymodel's model_data
@@ -129,5 +153,3 @@ void polygon_model_data_read(polymodel *pm, PHYSFS_file *fp);
 void robot_set_angles(robot_info *r,polymodel *pm,vms_angvec angs[N_ANIM_STATES][MAX_SUBMODELS]);
 
 #endif
-
-#endif /* _POLYOBJ_H */

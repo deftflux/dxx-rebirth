@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -164,8 +170,12 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 //#define SOUND_PLAYER_SCRAPE_WALL                72
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
-extern ubyte Sounds[MAX_SOUNDS];
-extern ubyte AltSounds[MAX_SOUNDS];
+#include "dxxsconf.h"
+#include "compiler-array.h"
+
+extern array<ubyte, MAX_SOUNDS> Sounds, AltSounds;
+
+const int sound_none = -1;
 #endif
 
 #endif /* _SOUNDS_H */

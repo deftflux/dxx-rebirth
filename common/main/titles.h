@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -24,9 +30,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #ifdef __cplusplus
 
+struct d_fname;
+
 extern void show_titles(void);
-extern void do_briefing_screens(const char *filename, int level_num);
-extern void do_end_briefing_screens(const char *filename);
+void do_briefing_screens(const d_fname &filename, int level_num);
+void do_end_briefing_screens(const d_fname &filename);
 extern char * get_briefing_screen( int level_num );
 #if defined(DXX_BUILD_DESCENT_II)
 extern void show_loading_screen(ubyte *title_pal);

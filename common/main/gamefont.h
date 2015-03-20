@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,11 +23,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-
-#ifndef _GAMEFONT_H
-#define _GAMEFONT_H
-
-#include "gr.h"
+#pragma once
 
 #ifdef __cplusplus
 
@@ -56,12 +58,10 @@ extern float FNTScaleX, FNTScaleY;
 #define FSPACY(y)	((float)((y)*(FNTScaleY*(GAME_FONT->ft_h/5))))
 #define LINE_SPACING    ((float)(FNTScaleY*(grd_curcanv->cv_font->ft_h+(GAME_FONT->ft_h/5))))
 
-extern grs_font *Gamefonts[MAX_FONTS];
+extern array<grs_font_ptr, MAX_FONTS> Gamefonts;
 
 void gamefont_init();
 void gamefont_close();
 void gamefont_choose_game_font(int scrx,int scry);
 
 #endif
-
-#endif /* _GAMEFONT_H */

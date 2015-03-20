@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -20,6 +26,9 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #ifndef _INFERNO_H
 #define _INFERNO_H
 
+#include <algorithm>
+#include "ntstring.h"
+
 struct d_event;
 
 #if defined(__APPLE__) || defined(macintosh)
@@ -37,10 +46,20 @@ struct d_event;
 #define	FIX_EPSILON	10
 
 // the maximum length of a filename
-#define FILENAME_LEN 13
+static const std::size_t FILENAME_LEN = 13;
 
 // a filename, useful for declaring arrays of filenames
-typedef char d_fname[FILENAME_LEN];
+struct d_fname : ntstring<FILENAME_LEN - 1>
+{
+	d_fname &operator=(const d_fname &) = default;
+	template <std::size_t N>
+		void operator=(char (&i)[N]) const = delete;
+	template <std::size_t N>
+		void operator=(const char (&i)[N])
+		{
+			copy_if(i);
+		}
+};
 
 /**
  **	Global variables
@@ -53,6 +72,6 @@ extern int MacHog;
 #endif
 
 // Default event handler for everything except the editor
-int standard_handler(struct d_event *event);
+int standard_handler(const d_event &event);
 
 #endif

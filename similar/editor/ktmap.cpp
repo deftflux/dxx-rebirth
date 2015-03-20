@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -130,7 +136,7 @@ int PropagateTexturesMoveUVs(void)
 
 
 //	-------------------------------------------------------------------------------------
-static int is_selected_segment(int segnum)
+static int is_selected_segment(segnum_t segnum)
 {
 	return Selected_segs.contains(segnum);
 }
@@ -140,11 +146,9 @@ static int is_selected_segment(int segnum)
 //	Recursive parse.
 static void pts_aux(segment *sp, visited_segment_bitarray_t &visited)
 {
-	int		side;
-
 	visited[sp-Segments] = true;
 
-	for (side=0; side<MAX_SIDES_PER_SEGMENT; side++) {
+	for (int side=0; side<MAX_SIDES_PER_SEGMENT; side++) {
 		if (IS_CHILD(sp->children[side])) {
 			while ((!visited[sp->children[side]]) && is_selected_segment(sp->children[side])) {
 				med_propagate_tmaps_to_segments(sp,&Segments[sp->children[side]],0);

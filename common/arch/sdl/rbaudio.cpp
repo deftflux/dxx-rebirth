@@ -1,10 +1,17 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * SDL CD Audio functions
  *
  *
  */
 
+#include <algorithm>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -21,6 +28,8 @@
 #include "rbaudio.h"
 #include "console.h"
 #include "timer.h"
+#include "partial_range.h"
+#include "compiler-range_for.h"
 
 #define REDBOOK_VOLUME_SCALE 255
 
@@ -39,8 +48,6 @@ void RBAExit()
 void RBAInit()
 {
 	int num_cds;
-	int i,j;
-	
 	if (initialised) return;
 
 	if (SDL_Init(SDL_INIT_CDROM) < 0)
@@ -59,7 +66,7 @@ void RBAInit()
 		return;
 	}
 	
-	for (i = 0; i < num_cds; i++)
+	for (int i = 0; i < num_cds; i++)
 	{
 		if (s_cd)
 			SDL_CDClose(s_cd);
@@ -67,20 +74,18 @@ void RBAInit()
 		
 		if (s_cd && CD_INDRIVE(SDL_CDStatus(s_cd)))
 		{
-			for (j = 0; j < s_cd->numtracks; j++)
+			auto r = partial_range(s_cd->track, static_cast<unsigned>(s_cd->numtracks));
+			if (std::find_if(r.begin(), r.end(), [](const SDL_CDtrack &t){ return t.type == SDL_AUDIO_TRACK; }) != r.end())
 			{
-				if (s_cd->track[j].type == SDL_AUDIO_TRACK)
-					break;
+				initialised = 1;
+				RBAList();
+				return;	// we've found an audio CD
 			}
-			
-			if (j != s_cd->numtracks)
-				break;	// we've found an audio CD
 		}
 		else if (s_cd == NULL)
 			Warning("RBAudio: Could not open cdrom %i for redbook audio:%s\n", i, SDL_GetError());
 	}
 	
-	if (i == num_cds)
 	{
 		con_printf(CON_NORMAL, "RBAudio: No audio CDs found");
 		if (s_cd)	// if there's no audio CD, say that there's no redbook and hence play MIDI instead
@@ -93,10 +98,6 @@ void RBAInit()
 #endif
 		return;
 	}
-	
-	initialised = 1;
-
-	RBAList();
 }
 
 int RBAEnabled()
@@ -311,11 +312,10 @@ unsigned long RBAGetDiscID()
 
 void RBAList(void)
 {
-	int i;
 
 	if (!s_cd)
 		return;
 
-	for (i = 0; i < s_cd->numtracks; i++)
-		con_printf(CON_VERBOSE, "RBAudio: CD track %d, type %s, length %d, offset %d", s_cd->track[i].id, (s_cd->track[i].type == SDL_AUDIO_TRACK) ? "audio" : "data", s_cd->track[i].length, s_cd->track[i].offset);
+	range_for (auto &i, partial_range(s_cd->track, static_cast<unsigned>(s_cd->numtracks)))
+		con_printf(CON_VERBOSE, "RBAudio: CD track %d, type %s, length %d, offset %d", i.id, (i.type == SDL_AUDIO_TRACK) ? "audio" : "data", i.length, i.offset);
 }

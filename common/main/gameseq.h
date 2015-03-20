@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -23,26 +29,23 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 
 #include "player.h"
 #include "mission.h"
-#include "object.h"
 
 #ifdef __cplusplus
+#include "fwdobject.h"
 
 struct player;
 
-#define SUPER_MISSILE       0
-#define SUPER_SEEKER        1
-#define SUPER_SMARTBOMB     2
-#define SUPER_SHOCKWAVE     3
+template <std::size_t>
+struct PHYSFSX_gets_line_t;
 
-#define LEVEL_NAME_LEN 36       //make sure this is multiple of 4!
+const unsigned LEVEL_NAME_LEN = 36;       //make sure this is multiple of 4!
 
 // Current_level_num starts at 1 for the first level
 // -1,-2,-3 are secret levels
 // 0 means not a real level loaded
 extern int Current_level_num, Next_level_num;
-extern char Current_level_name[LEVEL_NAME_LEN];
+extern PHYSFSX_gets_line_t<LEVEL_NAME_LEN> Current_level_name;
 extern obj_position Player_init[MAX_PLAYERS];
-
 
 // This is the highest level the player has ever reached
 extern int Player_highest_level;
@@ -102,7 +105,7 @@ void open_message_window(void);
 void close_message_window(void);
 
 // create flash for player appearance
-void create_player_appearance_effect(objptridx_t player_obj);
+void create_player_appearance_effect(vobjptridx_t player_obj);
 
 // reset stuff so game is semi-normal when playing from editor
 void editor_reset_stuff_on_level();
@@ -111,17 +114,17 @@ void editor_reset_stuff_on_level();
 extern void DoEndLevelScoreGlitz(int network);
 
 // stuff for multiplayer
-extern int NumNetPlayerPositions;
+extern unsigned NumNetPlayerPositions;
 extern fix StartingShields;
 extern int	Do_appearance_effect;
 
-void bash_to_shield(int, const char *);
+void bash_to_shield(const vobjptr_t i);
 
 int p_secret_level_destroyed(void);
 void ExitSecretLevel(void);
 void do_cloak_invul_secret_stuff(fix64 old_gametime);
 void EnterSecretLevel(void);
-void copy_defaults_to_robot(struct object *objp);
+void copy_defaults_to_robot(vobjptr_t objp);
 void init_player_stats_new_ship(ubyte pnum);
 
 #endif

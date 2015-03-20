@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -24,6 +30,9 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "vecmat.h"
 
 #ifdef __cplusplus
+#include "objnum.h"
+#include "segnum.h"
+#include "fwdvalptridx.h"
 
 enum weapon_type_t
 {
@@ -149,25 +158,22 @@ enum laser_level_t
 // Constants governing homing missile behavior.
 #define HOMING_MAX_TRACKABLE_DOT        (3*F1_0/4) // was (7*F1_0/8) in original Descent 2
 #define HOMING_MIN_TRACKABLE_DOT        (3*(F1_0 - HOMING_MAX_TRACKABLE_DOT)/4 + HOMING_MAX_TRACKABLE_DOT)
-#define HOMING_MAX_TRACKABLE_DIST       (F1_0*250)
 #define HOMING_FLY_STRAIGHT_TIME        (F1_0/8)
 #define HOMING_TURN_TIME                (DESIGNATED_GAME_FRAMETIME)
 
-struct object;
-struct objptridx_t;
 
-void Laser_render(struct object *obj);
-int Laser_player_fire(struct object * obj, enum weapon_type_t type, int gun_num, int make_sound, vms_vector shot_orientation);
-void Laser_do_weapon_sequence(objptridx_t obj);
-void Flare_create(struct object *obj);
+void Laser_render(vobjptr_t obj);
+objptridx_t Laser_player_fire(vobjptridx_t obj, enum weapon_type_t laser_type, int gun_num, int make_sound, vms_vector shot_orientation);
+void Laser_do_weapon_sequence(vobjptridx_t obj);
+void Flare_create(vobjptridx_t obj);
 int laser_are_related(int o1, int o2);
 
 extern int do_laser_firing_player(void);
 extern void do_missile_firing(int drop_bomb);
 extern void net_missile_firing(int player, int weapon, int flags);
-extern short Network_laser_track;
+extern objnum_t Network_laser_track;
 
-int Laser_create_new(vms_vector * direction, vms_vector * position, int segnum, int parent, enum weapon_type_t type, int make_sound);
+objptridx_t Laser_create_new(const vms_vector &direction, const vms_vector &position, segnum_t segnum, vobjptridx_t parent, enum weapon_type_t type, int make_sound);
 
 // Fires a laser-type weapon (a Primary weapon)
 // Fires from object objnum, weapon type weapon_id.
@@ -176,7 +182,7 @@ int Laser_create_new(vms_vector * direction, vms_vector * position, int segnum, 
 // Returns the number of shots actually fired, which will typically be
 // 1, but could be higher for low frame rates when rapidfire weapons,
 // such as vulcan or plasma are fired.
-extern int do_laser_firing(int objnum, int weapon_id, int level, int flags, int nfires, vms_vector shot_orientation);
+int do_laser_firing(vobjptridx_t objnum, int weapon_id, int level, int flags, int nfires, vms_vector shot_orientation);
 
 // Easier to call than Laser_create_new because it determines the
 // segment containing the firing point and deals with it being stuck
@@ -185,7 +191,7 @@ extern int do_laser_firing(int objnum, int weapon_id, int level, int flags, int 
 // direction "direction" from the position "position"
 // Returns object number of laser fired or -1 if not possible to fire
 // laser.
-int Laser_create_new_easy(vms_vector * direction, vms_vector * position, objptridx_t parent, enum weapon_type_t weapon_type, int make_sound);
+objptridx_t Laser_create_new_easy(const vms_vector &direction, const vms_vector &position, vobjptridx_t parent, enum weapon_type_t weapon_type, int make_sound);
 
 #if defined(DXX_BUILD_DESCENT_II)
 // give up control of the guided missile
@@ -196,11 +202,11 @@ void release_guided_missile(int player_num);
 extern fix Omega_charge;
 extern int Smartmines_dropped;
 // NOTE: OMEGA_CHARGE_SCALE moved to laser.c to avoid long rebuilds if changed
-extern int ok_to_do_omega_damage(struct object *weapon);
+int ok_to_do_omega_damage(vcobjptr_t weapon);
 #endif
 
-void create_smart_children(objptridx_t objp, int count);
-int object_to_object_visibility(objptridx_t obj1, struct object *obj2, int trans_type);
+void create_smart_children(vobjptridx_t objp, int count);
+int object_to_object_visibility(vcobjptridx_t obj1, vcobjptr_t obj2, int trans_type);
 
 extern int Muzzle_queue_index;
 extern int Missile_gun;
@@ -209,7 +215,7 @@ extern int Proximity_dropped;
 struct muzzle_info
 {
 	fix64       create_time;
-	short       segnum;
+	segnum_t       segnum;
 	vms_vector  pos;
 };
 

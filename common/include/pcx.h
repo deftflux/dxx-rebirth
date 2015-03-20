@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -45,7 +51,7 @@ extern int bald_guy_load( const char * filename, grs_bitmap * bmp,int bitmap_typ
 // then bmp->bm_data is allocated and the w,h are filled.
 // If palette==NULL the palette isn't read in.  Returns error code.
 
-int pcx_read_bitmap(const char * filename, grs_bitmap * bmp,int bitmap_type ,palette_array_t &palette );
+int pcx_read_bitmap(const char * filename, grs_bitmap &bmp,int bitmap_type, palette_array_t &palette );
 
 // Writes the bitmap bmp to filename, using palette. Returns error code.
 

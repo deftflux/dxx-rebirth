@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * SDL mouse driver
  *
@@ -13,6 +19,7 @@
 #include "window.h"
 #include "mouse.h"
 #include "playsave.h"
+#include "dxxerror.h"
 #include "args.h"
 
 static struct mouseinfo {
@@ -24,21 +31,19 @@ static struct mouseinfo {
 	fix64  cursor_time;
 } Mouse;
 
-struct d_event_mousebutton
+struct d_event_mousebutton : d_event
 {
-	event_type type;
 	int button;
 };
 
-struct d_event_mouse_moved
+struct d_event_mouse_moved : d_event
 {
-	event_type	type;	// EVENT_MOUSE_MOVED
 	short		dx, dy, dz;
 };
 
 void mouse_init(void)
 {
-	memset(&Mouse,0,sizeof(Mouse));
+	Mouse = {};
 }
 
 void mouse_close(void)
@@ -50,7 +55,7 @@ void mouse_button_handler(SDL_MouseButtonEvent *mbe)
 {
 	// to bad, SDL buttons use a different mapping as descent expects,
 	// this is at least true and tested for the first three buttons 
-	int button_remap[17] = {
+	static const array<int, 17> button_remap{{
 		MBTN_LEFT,
 		MBTN_MIDDLE,
 		MBTN_RIGHT,
@@ -68,7 +73,7 @@ void mouse_button_handler(SDL_MouseButtonEvent *mbe)
 		MBTN_14,
 		MBTN_15,
 		MBTN_16
-	};
+	}};
 
 	int button = button_remap[mbe->button - 1]; // -1 since SDL seems to start counting at 1
 	d_event_mousebutton event;
@@ -79,7 +84,8 @@ void mouse_button_handler(SDL_MouseButtonEvent *mbe)
 	Mouse.cursor_time = timer_query();
 
 	if (mbe->state == SDL_PRESSED) {
-		d_event_mouse_moved event2 = { EVENT_MOUSE_MOVED, 0, 0, 0 };
+		d_event_mouse_moved event2{};
+		event2.type = EVENT_MOUSE_MOVED;
 
 		Mouse.button_state[button] = 1;
 
@@ -97,7 +103,7 @@ void mouse_button_handler(SDL_MouseButtonEvent *mbe)
 		{
 			//con_printf(CON_DEBUG, "Sending event EVENT_MOUSE_MOVED, relative motion %d,%d,%d",
 			//		   event2.dx, event2.dy, event2.dz);
-			event_send((d_event *)&event2);
+			event_send(event2);
 		}
 	} else {
 		Mouse.button_state[button] = 0;
@@ -108,7 +114,7 @@ void mouse_button_handler(SDL_MouseButtonEvent *mbe)
 	
 	con_printf(CON_DEBUG, "Sending event %s, button %d, coords %d,%d,%d",
 			   (mbe->state == SDL_PRESSED) ? "EVENT_MOUSE_BUTTON_DOWN" : "EVENT_MOUSE_BUTTON_UP", event.button, Mouse.x, Mouse.y, Mouse.z);
-	event_send((d_event *)&event);
+	event_send(event);
 	
 	//Double-click support
 	if (Mouse.button_state[button])
@@ -119,7 +125,7 @@ void mouse_button_handler(SDL_MouseButtonEvent *mbe)
 			//event.button = button; // already set the button
 			con_printf(CON_DEBUG, "Sending event EVENT_MOUSE_DOUBLE_CLICKED, button %d, coords %d,%d",
 					   event.button, Mouse.x, Mouse.y);
-			event_send((d_event *)&event);
+			event_send(event);
 		}
 
 		Mouse.time_lastpressed[button] = Mouse.cursor_time;
@@ -147,16 +153,14 @@ void mouse_motion_handler(SDL_MouseMotionEvent *mme)
 	
 	//con_printf(CON_DEBUG, "Sending event EVENT_MOUSE_MOVED, relative motion %d,%d,%d",
 	//		   event.dx, event.dy, event.dz);
-	event_send((d_event *)&event);
+	event_send(event);
 }
 
 void mouse_flush()	// clears all mice events...
 {
-	int i;
-
 //	event_poll();
 
-	for (i=0; i<MOUSE_MAX_BUTTONS; i++)
+	for (int i=0; i<MOUSE_MAX_BUTTONS; i++)
 		Mouse.button_state[i]=0;
 	Mouse.delta_x = 0;
 	Mouse.delta_y = 0;
@@ -178,15 +182,13 @@ void mouse_get_pos( int *x, int *y, int *z )
 	*z=Mouse.z;
 }
 
-int mouse_in_window(window *wind)
+window_event_result mouse_in_window(window *wind)
 {
-	grs_canvas *canv;
-	
-	canv = window_get_canvas(wind);
-	return	(Mouse.x >= canv->cv_bitmap.bm_x) &&
-			(Mouse.x <= canv->cv_bitmap.bm_x + canv->cv_bitmap.bm_w) && 
-			(Mouse.y >= canv->cv_bitmap.bm_y) && 
-			(Mouse.y <= canv->cv_bitmap.bm_y + canv->cv_bitmap.bm_h);
+	auto &canv = window_get_canvas(*wind);
+	return	(Mouse.x >= canv.cv_bitmap.bm_x) &&
+			(Mouse.x <= canv.cv_bitmap.bm_x + canv.cv_bitmap.bm_w) && 
+			(Mouse.y >= canv.cv_bitmap.bm_y) && 
+			(Mouse.y <= canv.cv_bitmap.bm_y + canv.cv_bitmap.bm_h) ? window_event_result::handled : window_event_result::ignored;
 }
 
 void mouse_get_delta( int *dx, int *dy, int *dz )
@@ -204,30 +206,30 @@ void mouse_get_delta( int *dx, int *dy, int *dz )
 	Mouse.delta_z = 0;
 }
 
-void event_mouse_get_delta(d_event *event, int *dx, int *dy, int *dz)
+void event_mouse_get_delta(const d_event &event, int *dx, int *dy, int *dz)
 {
-	Assert(event->type == EVENT_MOUSE_MOVED);
-
-	*dx = ((d_event_mouse_moved *)event)->dx;
-	*dy = ((d_event_mouse_moved *)event)->dy;
-	*dz = ((d_event_mouse_moved *)event)->dz;
+	auto &e = static_cast<const d_event_mouse_moved &>(event);
+	Assert(e.type == EVENT_MOUSE_MOVED);
+	*dx = e.dx;
+	*dy = e.dy;
+	*dz = e.dz;
 }
 
-int event_mouse_get_button(d_event *event)
+int event_mouse_get_button(const d_event &event)
 {
-	Assert((event->type == EVENT_MOUSE_BUTTON_DOWN) || (event->type == EVENT_MOUSE_BUTTON_UP));
-	return ((d_event_mousebutton *)event)->button;
+	auto &e = static_cast<const d_event_mousebutton &>(event);
+	Assert(e.type == EVENT_MOUSE_BUTTON_DOWN || e.type == EVENT_MOUSE_BUTTON_UP);
+	return e.button;
 }
 
 int mouse_get_btns()
 {
-	int i;
 	uint flag=1;
 	int status = 0;
 
 //	event_poll();
 
-	for (i=0; i<MOUSE_MAX_BUTTONS; i++ ) {
+	for (int i=0; i<MOUSE_MAX_BUTTONS; i++ ) {
 		if (Mouse.button_state[i])
 			status |= flag;
 		flag <<= 1;

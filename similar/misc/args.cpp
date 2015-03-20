@@ -1,15 +1,9 @@
 /*
-THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
-SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
-END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
-ROYALTY-FREE, PERPETUAL LICENSE TO SUCH END-USERS FOR USE BY SUCH END-USERS
-IN USING, DISPLAYING,  AND CREATING DERIVATIVE WORKS THEREOF, SO LONG AS
-SUCH USE, DISPLAY OR CREATION IS FOR NON-COMMERCIAL, ROYALTY OR REVENUE
-FREE PURPOSES.  IN NO EVENT SHALL THE END-USER USE THE COMPUTER CODE
-CONTAINED HEREIN FOR REVENUE-BEARING PURPOSES.  THE END-USER UNDERSTANDS
-AND AGREES TO THE TERMS HEREIN AND ACCEPTS THE SAME BY USE OF THIS FILE.
-COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
-*/
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 
 /*
  *
@@ -74,18 +68,19 @@ struct Arg GameArg;
 
 static void AppendIniArgs(void)
 {
-	PHYSFS_file *f;
-	f = PHYSFSX_openReadBuffered(INI_FILENAME);
-
-	if(f) {
-		char line[1024];
+	if (auto f = PHYSFSX_openReadBuffered(INI_FILENAME))
+	{
+		PHYSFSX_gets_line_t<1024> line;
 		while(!PHYSFS_eof(f) && Args.size() < MAX_ARGS && PHYSFSX_fgets(line, f))
 		{
 			static const char separator[] = " ";
 			for(char *token = strtok(line, separator); token != NULL; token = strtok(NULL, separator))
+			{
+				if (*token == ';')
+					break;
 				Args.push_back(token);
+			}
 		}
-		PHYSFS_close(f);
 	}
 }
 
@@ -106,6 +101,13 @@ static long arg_integer(Arglist::const_iterator &pp, Arglist::const_iterator end
 	if (*p)
 		throw conversion_failure(arg->c_str(), value);
 	return i;
+}
+
+static void arg_port_number(Arglist::const_iterator &pp, Arglist::const_iterator end, uint16_t &out, bool allow_privileged)
+{
+	auto port = arg_integer(pp, end);
+	if (static_cast<uint16_t>(port) == port && (allow_privileged || port >= 1024))
+		out = port;
 }
 
 static void ReadCmdArgs(void)
@@ -150,6 +152,10 @@ static void ReadCmdArgs(void)
 			GameArg.SysLowMem 		= 1;
 		else if (!d_stricmp(p, "-pilot"))
 			GameArg.SysPilot = arg_string(pp, end);
+		else if (!d_stricmp(p, "-record-demo-format"))
+			GameArg.SysRecordDemoNameTemplate = arg_string(pp, end);
+		else if (!d_stricmp(p, "-auto-record-demo"))
+			GameArg.SysAutoRecordDemo = 1;
 		else if (!d_stricmp(p, "-window"))
 			GameArg.SysWindow 		= 1;
 		else if (!d_stricmp(p, "-noborders"))
@@ -185,10 +191,12 @@ static void ReadCmdArgs(void)
 		else if (!d_stricmp(p, "-sound11k"))
 			GameArg.SndDigiSampleRate 		= SAMPLE_RATE_11K;
 #endif
-#ifdef USE_SDLMIXER
 		else if (!d_stricmp(p, "-nosdlmixer"))
-			GameArg.SndDisableSdlMixer 	= 1;
+		{
+#ifdef USE_SDLMIXER
+			GameArg.SndDisableSdlMixer = true;
 #endif
+		}
 
 	// Graphics Options
 
@@ -213,9 +221,22 @@ static void ReadCmdArgs(void)
 		else if (!d_stricmp(p, "-udp_hostaddr"))
 			GameArg.MplUdpHostAddr = arg_string(pp, end);
 		else if (!d_stricmp(p, "-udp_hostport"))
-			GameArg.MplUdpHostPort = arg_integer(pp, end);
+			/* Peers use -udp_myport to change, so peer cannot set a
+			 * privileged port.
+			 */
+			arg_port_number(pp, end, GameArg.MplUdpHostPort, false);
 		else if (!d_stricmp(p, "-udp_myport"))
-			GameArg.MplUdpMyPort = arg_integer(pp, end);
+		{
+			arg_port_number(pp, end, GameArg.MplUdpMyPort, false);
+		}
+		else if (!d_stricmp(p, "-no-tracker"))
+		{
+			/* Always recognized.  No-op if tracker support compiled
+			 * out. */
+#ifdef USE_TRACKER
+			GameArg.MplTrackerHost = nullptr;
+#endif
+		}
 #ifdef USE_TRACKER
 		else if (!d_stricmp(p, "-tracker_host"))
 			GameArg.MplTrackerHost = arg_string(pp, end);
@@ -305,21 +326,21 @@ void args_exit(void)
 	Args.clear();
 }
 
-void InitArgs( int argc,char **argv )
+bool InitArgs( int argc,char **argv )
 {
-	int i;
-
-	for (i=1; i < argc; i++ )
+	for (int i=1; i < argc; i++ )
 		Args.push_back(argv[i]);
 
 	AppendIniArgs();
 	try {
 		ReadCmdArgs();
+		return true;
 	} catch(const missing_parameter& e) {
-		Error("Missing parameter for argument \"%s\"", e.arg);
+		Warning("Missing parameter for argument \"%s\"", e.arg);
 	} catch(const unhandled_argument& e) {
-		Error("Unhandled argument \"%s\"", e.arg);
+		Warning("Unhandled argument \"%s\"", e.arg);
 	} catch(const conversion_failure& e) {
-		Error("Failed to convert parameter \"%s\" for argument \"%s\"", e.value, e.arg);
+		Warning("Failed to convert parameter \"%s\" for argument \"%s\"", e.value, e.arg);
 	}
+	return false;
 }

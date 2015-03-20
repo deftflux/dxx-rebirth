@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -26,6 +32,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #ifdef __cplusplus
 #include "dxxsconf.h"
 #include "compiler-array.h"
+#include "pack.h"
 
 #if defined(DXX_BUILD_DESCENT_I)
 #define MAX_EFFECTS 60
@@ -45,11 +52,11 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define ECLIP_NUM_FORCE_FIELD 78
 #endif
 
-struct eclip
+struct eclip : public prohibit_void_ptr<eclip>
 {
 	vclip   vc;             //imbedded vclip
 	fix     time_left;      //for sequencing
-	int     frame_count;    //for sequencing
+	uint32_t frame_count;    //for sequencing
 	short   changing_wall_texture;      //Which element of Textures array to replace.
 	short   changing_object_texture;    //Which element of ObjBitmapPtrs array to replace.
 	int     flags;          //see above
@@ -59,8 +66,11 @@ struct eclip
 	int     dest_eclip;     //what eclip to play when exploding
 	fix     dest_size;      //3d size of explosion
 	int     sound_num;      //what sound this makes
-	int     segnum,sidenum; //what seg & side, for one-shot clips
+	segnum_t     segnum;
+	int sidenum; //what seg & side, for one-shot clips
 };
+
+const int eclip_none = -1;
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 extern unsigned Num_effects;

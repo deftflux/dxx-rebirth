@@ -1,10 +1,17 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * SDL keyboard input support
  *
  *
  */
 
+#include <algorithm>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -18,6 +25,9 @@
 #include "console.h"
 #include "args.h"
 
+#include "dxxsconf.h"
+#include "compiler-array.h"
+
 static unsigned char Installed = 0;
 
 //-------- Variable accessed by outside functions ---------
@@ -26,7 +36,7 @@ volatile unsigned char 	keyd_last_pressed;
 volatile unsigned char 	keyd_last_released;
 volatile unsigned char	keyd_pressed[256];
 fix64			keyd_time_when_last_pressed;
-unsigned char		unicode_frame_buffer[KEY_BUFFER_SIZE] = { '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0' };
+array<unsigned char, KEY_BUFFER_SIZE>		unicode_frame_buffer;
 
 struct keyboard
 {
@@ -35,7 +45,7 @@ struct keyboard
 
 static keyboard key_data;
 
-const key_props key_properties[256] = {
+const array<key_props, 256> key_properties = {{
 { "",       255,    SDLK_UNKNOWN                 }, // 0
 { "ESC",    255,    SDLK_ESCAPE        },
 { "1",      '1',    SDLK_1             },
@@ -292,11 +302,10 @@ const key_props key_properties[256] = {
 { "W93",    255,    SDLK_WORLD_93      },
 { "W94",    255,    SDLK_WORLD_94      },
 { "W95",    255,    SDLK_WORLD_95      }, // 255
-};
+}};
 
-struct d_event_keycommand
+struct d_event_keycommand : d_event
 {
-	event_type	type;	// EVENT_KEY_COMMAND/RELEASE
 	int			keycode;
 };
 
@@ -324,28 +333,26 @@ static int key_ismodlck(int keycode)
 
 unsigned char key_ascii()
 {
-	static unsigned char unibuffer[KEY_BUFFER_SIZE] = { '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0' };
-	int i=0, offset=0, count=0;
+	using std::move;
+	using std::next;
+	static array<unsigned char, KEY_BUFFER_SIZE> unibuffer;
+	auto src = begin(unicode_frame_buffer);
+	auto dst = next(begin(unibuffer), strlen(reinterpret_cast<const char *>(&unibuffer[0])));
 	
-	offset=strlen((const char*)unibuffer);
-
 	// move temporal chars from unicode_frame_buffer to empty space behind last unibuffer char (if any)
-	for (i=offset; i < KEY_BUFFER_SIZE; i++)
-		if (unicode_frame_buffer[count] != '\0')
+	for (; dst != end(unibuffer); ++dst)
+		if (*src != '\0')
 		{
-			unibuffer[i]=unicode_frame_buffer[count];
-			unicode_frame_buffer[count]='\0';
-			count++;
+			*dst = *src;
+			*src = '\0';
+			++src;
 		}
 
 	// unibuffer is not empty. store first char, remove it, shift all chars one step left and then print our char
 	if (unibuffer[0] != '\0')
 	{
 		unsigned char retval = unibuffer[0];
-		unsigned char unibuffer_shift[KEY_BUFFER_SIZE];
-		memset(unibuffer_shift,'\0',sizeof(unsigned char)*KEY_BUFFER_SIZE);
-		memcpy(unibuffer_shift,unibuffer+1,sizeof(unsigned char)*(KEY_BUFFER_SIZE-1));
-		memcpy(unibuffer,unibuffer_shift,sizeof(unsigned char)*KEY_BUFFER_SIZE);
+		*move(next(unibuffer.begin()), unibuffer.end(), unibuffer.begin()) = 0;
 		return retval;
 	}
 	else
@@ -354,7 +361,7 @@ unsigned char key_ascii()
 
 void key_handler(SDL_KeyboardEvent *kevent)
 {
-	int keycode, event_keysym=-1, key_state;
+	int event_keysym=-1, key_state;
 
 	// Read SDLK symbol and state
         event_keysym = kevent->keysym.sym;
@@ -365,8 +372,7 @@ void key_handler(SDL_KeyboardEvent *kevent)
 	// fill the unicode frame-related unicode buffer 
 	if (key_state && kevent->keysym.unicode > 31 && kevent->keysym.unicode < 255)
 	{
-		int i = 0;
-		for (i = 0; i < KEY_BUFFER_SIZE; i++)
+		for (int i = 0; i < KEY_BUFFER_SIZE; i++)
 			if (unicode_frame_buffer[i] == '\0')
 			{
 				unicode_frame_buffer[i] = kevent->keysym.unicode;
@@ -375,10 +381,11 @@ void key_handler(SDL_KeyboardEvent *kevent)
 	}
 
 	//=====================================================
-	for (keycode = 255; keycode > 0; keycode--)
-		if (key_properties[keycode].sym == event_keysym)
-			break;
-
+	auto re = key_properties.rend();
+	auto fi = std::find_if(key_properties.rbegin(), re, [event_keysym](const key_props &k) { return k.sym == event_keysym; });
+	if (fi == re)
+		return;
+	unsigned keycode = std::distance(key_properties.begin(), std::next(fi).base());
 	if (keycode == 0)
 		return;
 
@@ -424,7 +431,7 @@ void key_handler(SDL_KeyboardEvent *kevent)
 				(keycode & KEY_SHIFTED)	? "SHIFT" : "",
 				key_properties[keycode & 0xff].key_text
 				);
-		event_send((d_event *)&event);
+		event_send(event);
 	}
 }
 
@@ -448,17 +455,15 @@ void key_init()
 
 void key_flush()
 {
- 	int i;
 	Uint8 *keystate = SDL_GetKeyState(NULL);
 
 	if (!Installed)
 		key_init();
 
 	//Clear the unicode buffer
-	for (i=0; i<KEY_BUFFER_SIZE; i++ )
-		unicode_frame_buffer[i] = '\0';
+	unicode_frame_buffer = {};
 
-	for (i=0; i<256; i++ )	{
+	for (int i=0; i<256; i++ ) {
 		if (key_ismodlck(i) == KEY_ISLCK && keystate[key_properties[i].sym] && !GameArg.CtlNoStickyKeys) // do not flush status of sticky keys
 		{
 			keyd_pressed[i] = 1;
@@ -472,17 +477,19 @@ void key_flush()
 	}
 }
 
-int event_key_get(d_event *event)
+int event_key_get(const d_event &event)
 {
-	Assert(event->type == EVENT_KEY_COMMAND || event->type == EVENT_KEY_RELEASE);
-	return ((d_event_keycommand *)event)->keycode;
+	auto &e = static_cast<const d_event_keycommand &>(event);
+	Assert(e.type == EVENT_KEY_COMMAND || e.type == EVENT_KEY_RELEASE);
+	return e.keycode;
 }
 
 // same as above but without mod states
-int event_key_get_raw(d_event *event)
+int event_key_get_raw(const d_event &event)
 {
-	int keycode = ((d_event_keycommand *)event)->keycode;
-	Assert(event->type == EVENT_KEY_COMMAND || event->type == EVENT_KEY_RELEASE);
+	auto &e = static_cast<const d_event_keycommand &>(event);
+	Assert(e.type == EVENT_KEY_COMMAND || e.type == EVENT_KEY_RELEASE);
+	auto keycode = e.keycode;
 	if ( keycode & KEY_SHIFTED ) keycode &= ~KEY_SHIFTED;
 	if ( keycode & KEY_ALTED ) keycode &= ~KEY_ALTED;
 	if ( keycode & KEY_CTRLED ) keycode &= ~KEY_CTRLED;

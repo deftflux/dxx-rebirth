@@ -1,3 +1,9 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 /** \file ignorecase.c */
 
 #include <stdio.h>
@@ -44,42 +50,41 @@ static int caseInsensitiveStringCompare(const char *x, const char *y)
     return(0);
 } /* caseInsensitiveStringCompare */
 
+namespace {
 
-static int locateOneElement(char *buf)
+class search_result_t : public PHYSFS_list_t
 {
-    char *ptr;
-    char **rc;
+	typedef PHYSFS_list_t base_ptr;
+public:
+	search_result_t(char *ptr, const char *buf) :
+		base_ptr(PHYSFS_enumerateFiles(ptr ? (*ptr = 0, buf) : "/"))
+	{
+		if (ptr)
+			*ptr = '/';
+	}
+};
+
+}
+
+static int locateOneElement(char *const sptr, char *const ptr, const char *buf)
+{
     char **i;
 
-    if (PHYSFSX_exists(buf,0))
+    if (PHYSFS_exists(buf))
         return(1);  /* quick rejection: exists in current case. */
 
-    ptr = strrchr(buf, '/');  /* find entry at end of path. */
-    if (ptr == NULL)
-    {
-        rc = PHYSFS_enumerateFiles("/");
-        ptr = buf;
-    } /* if */
-    else
-    {
-        *ptr = '\0';
-        rc = PHYSFS_enumerateFiles(buf);
-        *ptr = '/';
-        ptr++;  /* point past dirsep to entry itself. */
-    } /* else */
+	search_result_t rc{ptr, buf};
 
-    for (i = rc; *i != NULL; i++)
+    for (i = rc.get(); *i != NULL; i++)
     {
-        if (caseInsensitiveStringCompare(*i, ptr) == 0)
+		if (caseInsensitiveStringCompare(*i, sptr) == 0)
         {
-            strcpy(ptr, *i); /* found a match. Overwrite with this case. */
-            PHYSFS_freeList(rc);
+			strcpy(sptr, *i); /* found a match. Overwrite with this case. */
             return(1);
         } /* if */
     } /* for */
 
     /* no match at all... */
-    PHYSFS_freeList(rc);
     return(0);
 } /* locateOneElement */
 
@@ -87,31 +92,32 @@ static int locateOneElement(char *buf)
 int PHYSFSEXT_locateCorrectCase(char *buf)
 {
     int rc;
-    char *ptr;
-    char *prevptr;
 
     while (*buf == '/')  /* skip any '/' at start of string... */
         buf++;
-
-    ptr = prevptr = buf;
-    if (*ptr == '\0')
+	if (!*buf)
         return(0);  /* Uh...I guess that's success. */
 
-    while ((ptr = strchr(ptr + 1, '/')))
+	char *prevptr = nullptr;
+	const auto a = [&]{
+		return locateOneElement(prevptr ? prevptr + 1 : buf, prevptr, buf);
+	};
+	for (auto ptr = buf; (ptr = strchr(ptr + 1, '/')); prevptr = ptr)
     {
         *ptr = '\0';  /* block this path section off */
-        rc = locateOneElement(buf);
+        rc = a();
         *ptr = '/'; /* restore path separator */
         if (!rc)
             return(-2);  /* missing element in path. */
     } /* while */
 
     /* check final element... */
-    return(locateOneElement(buf) ? 0 : -1);
+    return a() ? 0 : -1;
 } /* PHYSFSEXT_locateCorrectCase */
 
 
 #ifdef TEST_PHYSFSEXT_LOCATECORRECTCASE
+#define con_printf(A,B,...)	printf(B "\n", ##__VA_ARGS__)
 int main(int argc, char **argv)
 {
     int rc;

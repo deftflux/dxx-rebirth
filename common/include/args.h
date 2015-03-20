@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,13 +23,12 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-
-#ifndef _ARGS_H
-#define _ARGS_H
+#pragma once
 
 #ifdef __cplusplus
+#include <cstdint>
 
-extern void InitArgs(int argc, char **argv);
+bool InitArgs(int argc, char **argv);
 extern void args_exit();
 
 // Struct that keeps all variables used by FindArg
@@ -38,6 +43,7 @@ extern void args_exit();
 //   Dbg - Debugging/Undocumented Options
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 #include "dxxsconf.h"
+#include "compiler-type_traits.h"
 
 struct Arg
 {
@@ -49,6 +55,8 @@ struct Arg
 	int SysUsePlayersDir;
 	int SysLowMem;
 	const char *SysPilot;
+	const char *SysRecordDemoNameTemplate;
+	bool SysAutoRecordDemo;
 	int SysWindow;
 	int SysNoBorders;
 	int SysAutoDemo;
@@ -65,7 +73,9 @@ struct Arg
 	int SndNoSound;
 	int SndNoMusic;
 #ifdef USE_SDLMIXER
-	int SndDisableSdlMixer;
+	bool SndDisableSdlMixer;
+#else
+	static constexpr tt::true_type SndDisableSdlMixer{};
 #endif
 #ifdef DXX_BUILD_DESCENT_II
 	int SndDigiSampleRate;
@@ -77,8 +87,8 @@ struct Arg
 	int OglFixedFont;
 #endif
 	const char *MplUdpHostAddr;
-	int MplUdpHostPort;
-	int MplUdpMyPort;
+	uint16_t MplUdpHostPort;
+	uint16_t MplUdpMyPort;
 #ifdef USE_TRACKER
 	const char *MplTrackerHost;
 #endif
@@ -117,13 +127,11 @@ struct Arg
 extern struct Arg GameArg;
 
 static inline const char *PLAYER_DIRECTORY_STRING(const char *s, const char *f) __attribute_format_arg(2);
-static inline const char *PLAYER_DIRECTORY_STRING(const char *s, const char *f)
+static inline const char *PLAYER_DIRECTORY_STRING(const char *s, const char *)
 {
 	return (GameArg.SysUsePlayersDir) ? s : (s + sizeof("Players/") - 1);
 }
 #define PLAYER_DIRECTORY_STRING(S)	((PLAYER_DIRECTORY_STRING)("Players/" S, S))
-#endif
-
 #endif
 
 #endif

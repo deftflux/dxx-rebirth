@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -82,12 +88,12 @@ struct control_info {
 #endif
 
 extern control_info Controls;
-extern void kconfig_read_controls(d_event *event, int automap_flag);
+extern void kconfig_read_controls(const d_event &event, int automap_flag);
 extern void kconfig(int n, const char *title);
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
-extern const ubyte DefaultKeySettingsRebirth[MAX_DXX_REBIRTH_CONTROLS];
-extern const ubyte DefaultKeySettings[3][MAX_CONTROLS];
+extern const array<array<ubyte, MAX_CONTROLS>, 3> DefaultKeySettings;
+extern const array<ubyte, MAX_DXX_REBIRTH_CONTROLS> DefaultKeySettingsRebirth;
 #endif
 
 extern void kc_set_controls();

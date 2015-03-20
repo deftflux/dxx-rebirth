@@ -1,4 +1,10 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * SDL video functions.
  *
@@ -19,6 +25,8 @@
 #include "args.h"
 #include "config.h"
 #include "palette.h"
+
+#include "compiler-make_unique.h"
 
 int sdl_video_flags = SDL_SWSURFACE | SDL_HWPALETTE | SDL_DOUBLEBUF;
 SDL_Surface *screen,*canvas;
@@ -44,10 +52,10 @@ void gr_set_draw_buffer(int buf)
 }
 
 // returns possible (fullscreen) resolutions if any.
-int gr_list_modes( u_int32_t gsmodes[] )
+int gr_list_modes( array<uint32_t, 50> &gsmodes )
 {
 	SDL_Rect** modes;
-	int i = 0, modesnum = 0;
+	int modesnum = 0;
 	int sdl_check_flags = sdl_video_flags;
 
 	sdl_check_flags |= SDL_FULLSCREEN; // always use Fullscreen as lead.
@@ -64,7 +72,7 @@ int gr_list_modes( u_int32_t gsmodes[] )
 	}
 	else
 	{
-		for (i = 0; modes[i]; ++i)
+		for (int i = 0; modes[i]; ++i)
 		{
 			if (modes[i]->w > 0xFFF0 || modes[i]->h > 0xFFF0 // resolutions saved in 32bits. so skip bigger ones (unrealistic in 2010) (kreatordxx - made 0xFFF0 to kill warning)
 				|| modes[i]->w < 320 || modes[i]->h < 200) // also skip everything smaller than 320x200
@@ -128,12 +136,12 @@ int gr_set_mode(u_int32_t mode)
 		exit(1);
 	}
 
-	memset(grd_curscreen, 0, sizeof(grs_screen));
+	*grd_curscreen = {};
 	grd_curscreen->sc_mode = mode;
 	grd_curscreen->sc_w = w;
 	grd_curscreen->sc_h = h;
 	grd_curscreen->sc_aspect = fixdiv(grd_curscreen->sc_w*GameCfg.AspectX,grd_curscreen->sc_h*GameCfg.AspectY);
-	gr_init_canvas(&grd_curscreen->sc_canvas, reinterpret_cast<unsigned char *>(canvas->pixels), BM_LINEAR, w, h);
+	gr_init_canvas(grd_curscreen->sc_canvas, reinterpret_cast<unsigned char *>(canvas->pixels), BM_LINEAR, w, h);
 	window_update_canvases();
 	gr_set_current_canvas(NULL);
 
@@ -178,7 +186,7 @@ int gr_init(int mode)
 		Error("SDL library video initialisation failed: %s.",SDL_GetError());
 	}
 
-	CALLOC( grd_curscreen,grs_screen,1 );
+	grd_curscreen = make_unique<grs_screen, grs_screen>({});
 
 	if (!GameCfg.WindowMode && !GameArg.SysWindow)
 		sdl_video_flags|=SDL_FULLSCREEN;
@@ -215,7 +223,7 @@ void gr_close()
 	if (gr_installed==1)
 	{
 		gr_installed = 0;
-		d_free(grd_curscreen);
+		grd_curscreen.reset();
 		SDL_ShowCursor(1);
 		SDL_FreeSurface(canvas);
 	}
@@ -226,7 +234,6 @@ static int last_r=0, last_g=0, last_b=0;
 
 void gr_palette_step_up( int r, int g, int b )
 {
-	int i;
 	palette_array_t &p = gr_palette;
 	int temp;
 	SDL_Palette *palette;
@@ -244,7 +251,7 @@ void gr_palette_step_up( int r, int g, int b )
 	if (palette == NULL)
 		return; // Display is not palettised
 
-	for (i=0; i<256; i++)
+	for (int i=0; i<256; i++)
 	{
 		temp = (int)(p[i].r) + r + gr_palette_gamma;
 
@@ -280,7 +287,6 @@ static inline int min(int x, int y) { return x < y ? x : y; }
 
 void gr_palette_load( palette_array_t &pal )
 {
-	int i, j;
 	SDL_Palette *palette;
 	SDL_Color colors[256];
 	ubyte gamma[64];
@@ -298,14 +304,14 @@ void gr_palette_load( palette_array_t &pal )
 	if (palette == NULL)
 		return; // Display is not palettised
 
-	for (i=0;i<64;i++)
+	for (int i=0;i<64;i++)
 		gamma[i] = (int)((pow(((double)(14)/(double)(32)), 1.0)*i) + 0.5);
 
-	for (i = 0, j = 0; j < 256; j++)
+	for (int i = 0, j = 0; j < 256; j++)
 	{
 		int c;
 		c = gr_find_closest_color(gamma[gr_palette[j].r],gamma[gr_palette[j].g],gamma[gr_palette[j].b]);
-		gr_fade_table[14*256+j] = c;
+		gr_fade_table[14][j] = c;
 		colors[j].r = (min(gr_current_pal[i].r + gr_palette_gamma, 63)) * 4;
 		colors[j].g = (min(gr_current_pal[i].g + gr_palette_gamma, 63)) * 4;
 		colors[j].b = (min(gr_current_pal[i].b + gr_palette_gamma, 63)) * 4;

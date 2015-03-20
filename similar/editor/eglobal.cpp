@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -26,9 +32,6 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "editor/esegment.h"
 
 // Global pointer to current vertices, right now always Vertices.  Set in create_new_mine.
-#if defined(DXX_BUILD_DESCENT_I)
-segment	New_segment;				// The segment which can be added to the mine.
-#endif
 segment *Cursegp = NULL;        // Pointer to current segment in mine.
 int Curside;             // Side index in 0..MAX_SIDES_PER_SEGMENT of active side.
 int Curedge;             // Current edge on current side, in 0..3
@@ -39,7 +42,7 @@ int Markedside;          // Marked side on Markedsegp.
 
 int Draw_all_segments;   // Set to 1 means draw_world draws all segments in Segments, else draw only connected segments
 
-sbyte Vertex_active[MAX_VERTICES]; // !0 means vertex is in use, 0 means not in use.
+array<uint8_t, MAX_VERTICES> Vertex_active; // !0 means vertex is in use, 0 means not in use.
 
 selected_segment_array_t Selected_segs; // List of segment numbers currently selected
 
@@ -53,7 +56,7 @@ int Show_axes_flag = 0; // 0 = don't show, !0 = do show coordinate axes in *Curs
 uint        Update_flags = UF_ALL;  //force total redraw
 int         Funky_chase_mode = 0;
 vms_angvec  Seg_orientation = {0,0,0};
-vms_vector  Seg_scale = {{{F1_0*20,F1_0*20,F1_0*20}}};
+vms_vector  Seg_scale{F1_0*20,F1_0*20,F1_0*20};
 int         mine_changed = 0;
 int         ModeFlag;
 editor_view *current_view;
@@ -81,7 +84,7 @@ int	Lock_view_to_cursegp = 1;		// !0 means whenever cursegp changes, view it
 
 int	Num_tilings = 1;					// Number of tilings per wall
 
-short Cur_object_index = object_none;
+objnum_t Cur_object_index = object_none;
 
 // The current object type and id
 short Cur_object_type = 4;	// OBJ_PLAYER

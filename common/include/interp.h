@@ -1,20 +1,29 @@
 /*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
+/*
  *
  * took out functions declarations from include/3d.h
  * which are implemented in 3d/interp.c
  *
  */
 
-#ifndef _INTERP_H
-#define _INTERP_H
+#pragma once
 
 #include "maths.h"
-#include "gr.h"
 #include "3d.h"
 
 #ifdef __cplusplus
 #include "dxxsconf.h"
 #include "compiler-array.h"
+
+class submodel_angles;
+
+const std::size_t MAX_POLYGON_VECS = 1000;
+struct polygon_model_points : array<g3s_point, MAX_POLYGON_VECS> {};
 
 #if defined(DXX_BUILD_DESCENT_I) || defined(DXX_BUILD_DESCENT_II)
 #if defined(DXX_BUILD_DESCENT_I)
@@ -29,15 +38,12 @@ struct glow_values_t;
 
 //Object functions:
 
-//gives the interpreter an array of points to use
-void g3_set_interp_points(g3s_point *pointlist);
-
 //calls the object interpreter to render an object.  The object renderer
 //is really a seperate pipeline. returns true if drew
-bool g3_draw_polygon_model(ubyte *model_ptr,grs_bitmap **model_bitmaps,vms_angvec *anim_angles,g3s_lrgb light,glow_values_t *glow_values);
+void g3_draw_polygon_model(const uint8_t *model_ptr,grs_bitmap **model_bitmaps,submodel_angles anim_angles,g3s_lrgb light,const glow_values_t *glow_values, polygon_model_points &Interp_point_list);
 
 //init code for bitmap models
-void g3_init_polygon_model(void *model_ptr);
+int16_t g3_init_polygon_model(void *model_ptr);
 
 //un-initialize, i.e., convert color entries back to RGB15
 static inline void g3_uninit_polygon_model(void *model_ptr)
@@ -46,21 +52,20 @@ static inline void g3_uninit_polygon_model(void *model_ptr)
 }
 
 //alternate interpreter for morphing object
-bool g3_draw_morphing_model(ubyte *model_ptr,grs_bitmap **model_bitmaps,vms_angvec *anim_angles,g3s_lrgb light,vms_vector *new_points);
+void g3_draw_morphing_model(const uint8_t *model_ptr,grs_bitmap **model_bitmaps,submodel_angles anim_angles,g3s_lrgb light,const vms_vector *new_points, polygon_model_points &Interp_point_list);
 
 //this remaps the 15bpp colors for the models into a new palette.  It should
 //be called whenever the palette changes
 void g3_remap_interp_colors(void);
 
 // check a polymodel for it's color and return it
-int g3_poly_get_color(ubyte *model_ptr);
+int g3_poly_get_color(const uint8_t *model_ptr);
 
 #ifdef WORDS_BIGENDIAN
 // routine to convert little to big endian in polygon model data
 void swap_polygon_model_data(ubyte *data);
 //routines to convert little to big endian in vectors
-void vms_vector_swap(vms_vector *v);
-void vms_angvec_swap(vms_angvec *v);
+void vms_vector_swap(vms_vector &v);
 #endif
 
 #ifdef WORDS_NEED_ALIGNMENT
@@ -74,7 +79,7 @@ void vms_angvec_swap(vms_angvec *v);
  */
 struct chunk
 {
-	ubyte *old_base; // where the offset sets off from (relative to beginning of model_data)
+	const uint8_t *old_base; // where the offset sets off from (relative to beginning of model_data)
 	ubyte *new_base; // where the base is in the aligned structure
 	short offset; // how much to add to base to get the address of the offset
 	short correction; // how much the value of the offset must be shifted for alignment
@@ -84,9 +89,7 @@ struct chunk
  * finds what chunks the data points to, adds them to the chunk_list, 
  * and returns the length of the current chunk
  */
-int get_chunks(ubyte *data, ubyte *new_data, chunk *list, int *no);
+int get_chunks(const uint8_t *data, uint8_t *new_data, chunk *list, int *no);
 #endif //def WORDS_NEED_ALIGNMENT
 
 #endif
-
-#endif //_INTERP_H

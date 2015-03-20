@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -36,7 +42,7 @@ unsigned 					Num_vclips = 0;
 array<vclip, VCLIP_MAXNUM> 				Vclip;		// General purpose vclips.
 
 //draw an object which renders as a vclip
-void draw_vclip_object(object *obj,fix timeleft,int lighted, int vclip_num)
+void draw_vclip_object(const vobjptridx_t obj,fix timeleft,int lighted, int vclip_num)
 {
 	int nf,bitmapnum;
 
@@ -61,7 +67,7 @@ void draw_vclip_object(object *obj,fix timeleft,int lighted, int vclip_num)
 }
 
 
-void draw_weapon_vclip(objptridx_t obj)
+void draw_weapon_vclip(const vobjptridx_t obj)
 {
 	int	vclip_num;
 	fix	modtime,play_time;

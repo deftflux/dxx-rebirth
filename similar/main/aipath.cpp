@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -41,6 +47,9 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "fireball.h"
 #include "game.h"
 
+#include "compiler-range_for.h"
+#include "highest_valid.h"
+
 //	Length in segments of avoidance path
 #define	AVOID_SEG_LENGTH	7
 
@@ -53,9 +62,9 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #if PATH_VALIDATION
 static void validate_all_paths(void);
 #endif
-static void ai_path_set_orient_and_vel(object *objp, vms_vector* goal_point
+static void ai_path_set_orient_and_vel(const vobjptr_t objp, const vms_vector &goal_point
 #if defined(DXX_BUILD_DESCENT_II)
-								, int player_visibility, vms_vector *vec_to_player
+								, int player_visibility, const vms_vector *vec_to_player
 #endif
 								);
 static void maybe_ai_path_garbage_collect(void);
@@ -65,56 +74,49 @@ static int validate_path(int debug_flag, point_seg* psegs, int num_points);
 #endif
 
 //	------------------------------------------------------------------------
-static void create_random_xlate(sbyte *xt)
+static void create_random_xlate(array<uint8_t, MAX_SIDES_PER_SEGMENT> &xt)
 {
 	int	i;
 
 	for (i=0; i<MAX_SIDES_PER_SEGMENT; i++)
 		xt[i] = i;
 
-	for (i=0; i<MAX_SIDES_PER_SEGMENT; i++) {
-		int	j = (d_rand()*MAX_SIDES_PER_SEGMENT)/(D_RAND_MAX+1);
-		sbyte temp_byte;
-		Assert((j >= 0) && (j < MAX_SIDES_PER_SEGMENT));
-
-		temp_byte = xt[j];
-		xt[j] = xt[i];
-		xt[i] = temp_byte;
+	range_for (auto &i, xt)
+	{
+		uint_fast32_t j = (d_rand()*MAX_SIDES_PER_SEGMENT)/(D_RAND_MAX+1);
+		Assert(j < xt.size());
+		using std::swap;
+		swap(i, xt[j]);
 	}
-
 }
 
 //	-----------------------------------------------------------------------------------------------------------
 //	Insert the point at the center of the side connecting two segments between the two points.
 // This is messy because we must insert into the list.  The simplest (and not too slow) way to do this is to start
 // at the end of the list and go backwards.
-static void insert_center_points(point_seg *psegs, int *num_points)
+static uint_fast32_t insert_center_points(point_seg *psegs, uint_fast32_t count)
 {
-	int	i, last_point;
-	int	count=*num_points;
-
-	last_point = *num_points-1;
-
-	for (i=last_point; i>0; i--) {
-		int			connect_side;
-		vms_vector	center_point, new_point;
-
+	if (count < 2)
+		return count;
+	uint_fast32_t last_point = count - 1;
+	for (uint_fast32_t i = last_point; i; --i)
+	{
 		psegs[2*i] = psegs[i];
-		connect_side = find_connect_side(&Segments[psegs[i].segnum], &Segments[psegs[i-1].segnum]);
+		auto connect_side = find_connect_side(&Segments[psegs[i].segnum], &Segments[psegs[i-1].segnum]);
 		Assert(connect_side != -1);	//	Impossible!  These two segments must be connected, they were created by create_path_points (which was created by mk!)
 		if (connect_side == -1)			//	Try to blow past the assert, this should at least prevent a hang.
 			connect_side = 0;
-		compute_center_point_on_side(&center_point, &Segments[psegs[i-1].segnum], connect_side);
-		vm_vec_sub(&new_point, &psegs[i-1].point, &center_point);
+		const auto center_point = compute_center_point_on_side(&Segments[psegs[i-1].segnum], connect_side);
+		auto new_point = vm_vec_sub(psegs[i-1].point, center_point);
 		new_point.x /= 16;
 		new_point.y /= 16;
 		new_point.z /= 16;
-		vm_vec_sub(&psegs[2*i-1].point, &center_point, &new_point);
+		vm_vec_sub(psegs[2*i-1].point, center_point, new_point);
 #if defined(DXX_BUILD_DESCENT_II)
-		int temp_segnum = find_point_seg(&psegs[2*i-1].point, psegs[2*i].segnum);
+		auto temp_segnum = find_point_seg(psegs[2*i-1].point, psegs[2*i].segnum);
 		if (temp_segnum == segment_none) {
 			psegs[2*i-1].point = center_point;
-			find_point_seg(&psegs[2*i-1].point, psegs[2*i].segnum);
+			find_point_seg(psegs[2*i-1].point, psegs[2*i].segnum);
 		}
 #endif
 
@@ -122,36 +124,33 @@ static void insert_center_points(point_seg *psegs, int *num_points)
 		count++;
 	}
 
-#if defined(DXX_BUILD_DESCENT_I)
-	*num_points = count;
-#elif defined(DXX_BUILD_DESCENT_II)
+#if defined(DXX_BUILD_DESCENT_II)
 	//	Now, remove unnecessary center points.
 	//	A center point is unnecessary if it is close to the line between the two adjacent points.
 	//	MK, OPTIMIZE!  Can get away with about half the math since every vector gets computed twice.
-	for (i=1; i<count-1; i+=2) {
+	for (uint_fast32_t i = 1; i < count - 1; i += 2)
+	{
 		vms_vector	temp1, temp2;
 		fix			dot;
 
-		dot = vm_vec_dot(vm_vec_sub(&temp1, &psegs[i].point, &psegs[i-1].point), vm_vec_sub(&temp2, &psegs[i+1].point, &psegs[i].point));
+		dot = vm_vec_dot(vm_vec_sub(temp1, psegs[i].point, psegs[i-1].point), vm_vec_sub(temp2, psegs[i+1].point, psegs[i].point));
 
-		if (dot * 9/8 > fixmul(vm_vec_mag(&temp1), vm_vec_mag(&temp2)))
+		if (dot * 9/8 > fixmul(vm_vec_mag(temp1), vm_vec_mag(temp2)))
 			psegs[i].segnum = segment_none;
 
 	}
 
 	//	Now, scan for points with segnum == -1
-	int j = 0;
-	for (i=0; i<count; i++)
-		if (psegs[i].segnum != segment_none)
-			psegs[j++] = psegs[i];
-	*num_points = j;
+	auto predicate = [](const point_seg &p) { return p.segnum == segment_none; };
+	count = std::distance(psegs, std::remove_if(psegs, psegs + count, predicate));
 #endif
+	return count;
 }
 
 #if defined(DXX_BUILD_DESCENT_II)
 //	-----------------------------------------------------------------------------------------------------------
 //	Move points halfway to outside of segment.
-static void move_towards_outside(point_seg *psegs, int *num_points, objptridx_t objp, int rand_flag)
+static void move_towards_outside(point_seg *psegs, int *num_points, const vobjptridx_t objp, int rand_flag)
 {
 	int	i;
 	point_seg	new_psegs[200];
@@ -159,33 +158,26 @@ static void move_towards_outside(point_seg *psegs, int *num_points, objptridx_t 
 	Assert(*num_points < 200);
 
 	for (i=1; i<*num_points-1; i++) {
-		int			new_segnum;
 		fix			segment_size;
-		int			segnum;
-		vms_vector	a, b, c, d, e;
-		vms_vector	goal_pos;
+		segnum_t			segnum;
+		vms_vector	e;
 		int			count;
-		int			temp_segnum;
-
-		// -- psegs[i].segnum = find_point_seg(&psegs[i].point, psegs[i].segnum);
-		temp_segnum = find_point_seg(&psegs[i].point, psegs[i].segnum);
+		auto temp_segnum = find_point_seg(psegs[i].point, psegs[i].segnum);
 		Assert(temp_segnum != segment_none);
 		psegs[i].segnum = temp_segnum;
 		segnum = psegs[i].segnum;
 
-		vm_vec_sub(&a, &psegs[i].point, &psegs[i-1].point);
-		vm_vec_sub(&b, &psegs[i+1].point, &psegs[i].point);
-		vm_vec_sub(&c, &psegs[i+1].point, &psegs[i-1].point);
 		//	I don't think we can use quick version here and this is _very_ rarely called. --MK, 07/03/95
-		vm_vec_normalize_quick(&a);
-		vm_vec_normalize_quick(&b);
-		if (abs(vm_vec_dot(&a, &b)) > 3*F1_0/4 ) {
+		const auto a = vm_vec_normalized_quick(vm_vec_sub(psegs[i].point, psegs[i-1].point));
+		const auto b = vm_vec_normalized_quick(vm_vec_sub(psegs[i+1].point, psegs[i].point));
+		const auto c = vm_vec_sub(psegs[i+1].point, psegs[i-1].point);
+		if (abs(vm_vec_dot(a, b)) > 3*F1_0/4 ) {
 			if (abs(a.z) < F1_0/2) {
 				if (rand_flag) {
 					e.x = (d_rand()-16384)/2;
 					e.y = (d_rand()-16384)/2;
 					e.z = abs(e.x) + abs(e.y) + 1;
-					vm_vec_normalize_quick(&e);
+					vm_vec_normalize_quick(e);
 				} else {
 					e.x = 0;
 					e.y = 0;
@@ -196,7 +188,7 @@ static void move_towards_outside(point_seg *psegs, int *num_points, objptridx_t 
 					e.y = (d_rand()-16384)/2;
 					e.z = (d_rand()-16384)/2;
 					e.x = abs(e.y) + abs(e.z) + 1;
-					vm_vec_normalize_quick(&e);
+					vm_vec_normalize_quick(e);
 				} else {
 					e.x = F1_0;
 					e.y = 0;
@@ -204,19 +196,19 @@ static void move_towards_outside(point_seg *psegs, int *num_points, objptridx_t 
 				}
 			}
 		} else {
-			vm_vec_cross(&d, &a, &b);
-			vm_vec_cross(&e, &c, &d);
-			vm_vec_normalize_quick(&e);
+			const auto d = vm_vec_cross(a, b);
+			vm_vec_cross(e, c, d);
+			vm_vec_normalize_quick(e);
 		}
 
-if (vm_vec_mag_quick(&e) < F1_0/2)
+		if (vm_vec_mag_quick(e) < F1_0/2)
 	Int3();
 
-		segment_size = vm_vec_dist_quick(&Vertices[Segments[segnum].verts[0]], &Vertices[Segments[segnum].verts[6]]);
+		segment_size = vm_vec_dist_quick(Vertices[Segments[segnum].verts[0]], Vertices[Segments[segnum].verts[6]]);
 		if (segment_size > F1_0*40)
 			segment_size = F1_0*40;
 
-		vm_vec_scale_add(&goal_pos, &psegs[i].point, &e, segment_size/4);
+		auto goal_pos = vm_vec_scale_add(psegs[i].point, e, segment_size/4);
 
 		count = 3;
 		while (count) {
@@ -229,10 +221,10 @@ if (vm_vec_mag_quick(&e) < F1_0/2)
 			fq.p1						= &goal_pos;
 			fq.rad					= objp->size;
 			fq.thisobjnum			= objp;
-			fq.ignore_obj_list	= NULL;
+			fq.ignore_obj_list.first = nullptr;
 			fq.flags					= 0;
 	
-			hit_type = find_vector_intersection(&fq, &hit_data);
+			hit_type = find_vector_intersection(fq, hit_data);
 	
 			if (hit_type == HIT_NONE)
 				count = 0;
@@ -250,7 +242,7 @@ if (vm_vec_mag_quick(&e) < F1_0/2)
 		}
 
 		//	Only move towards outside if remained inside segment.
-		new_segnum = find_point_seg(&goal_pos, psegs[i].segnum);
+		auto new_segnum = find_point_seg(goal_pos, psegs[i].segnum);
 		if (new_segnum == psegs[i].segnum) {
 			new_psegs[i].point = goal_pos;
 			new_psegs[i].segnum = new_segnum;
@@ -279,17 +271,17 @@ if (vm_vec_mag_quick(&e) < F1_0/2)
 //	like to say that it ensures that the object can move between the points, but that would require knowing what
 //	the object is (which isn't passed, right?) and making fvi calls (slow, right?).  So, consider it the more_or_less_safe_flag.
 //	If end_seg == -2, then end seg will never be found and this routine will drop out due to depth (probably called by create_n_segment_path).
-int create_path_points(objptridx_t objp, int start_seg, int end_seg, point_seg *psegs, short *num_points, int max_depth, int random_flag, int safety_flag, int avoid_seg)
+int create_path_points(const vobjptridx_t objp, segnum_t start_seg, segnum_t end_seg, point_seg_array_t::iterator psegs, short *num_points, int max_depth, int random_flag, int safety_flag, segnum_t avoid_seg)
 {
-	int		cur_seg;
+	segnum_t		cur_seg;
 	int		sidenum;
 	int		qtail = 0, qhead = 0;
 	int		i;
 	seg_seg	seg_queue[MAX_SEGMENTS];
 	short		depth[MAX_SEGMENTS];
 	int		cur_depth;
-	sbyte   random_xlate[MAX_SIDES_PER_SEGMENT];
-	point_seg	*original_psegs = psegs;
+	array<uint8_t, MAX_SIDES_PER_SEGMENT> random_xlate;
+	point_seg_array_t::iterator	original_psegs = psegs;
 	int		l_num_points;
 
 #if PATH_VALIDATION
@@ -351,27 +343,25 @@ if ((objp->type == OBJ_ROBOT) && (objp->ctype.ai_info.behavior == AIB_RUN_FROM))
 			if (IS_CHILD(segp->children[snum]) && ((WALL_IS_DOORWAY(segp, snum) & WID_FLY_FLAG) || (ai_door_is_openable(objp, segp, snum))))
 #endif
 			{
-				int			this_seg = segp->children[snum];
+				auto this_seg = segp->children[snum];
 #if defined(DXX_BUILD_DESCENT_II)
 				Assert(this_seg != segment_none);
 				if (((cur_seg == avoid_seg) || (this_seg == avoid_seg)) && (ConsoleObject->segnum == avoid_seg)) {
-					vms_vector	center_point;
-
 					fvi_query	fq;
 					fvi_info		hit_data;
 					int			hit_type;
 	
-					compute_center_point_on_side(&center_point, segp, snum);
+					const auto center_point = compute_center_point_on_side(segp, snum);
 
 					fq.p0						= &objp->pos;
 					fq.startseg				= objp->segnum;
 					fq.p1						= &center_point;
 					fq.rad					= objp->size;
 					fq.thisobjnum			= objp;
-					fq.ignore_obj_list	= NULL;
+					fq.ignore_obj_list.first = nullptr;
 					fq.flags					= 0;
 
-					hit_type = find_vector_intersection(&fq, &hit_data);
+					hit_type = find_vector_intersection(fq, hit_data);
 					if (hit_type != HIT_NONE) {
 						goto dont_add;
 					}
@@ -429,13 +419,13 @@ cpp_done1: ;
 #endif
 
 	while (qtail >= 0) {
-		int	parent_seg, this_seg;
+		segnum_t	parent_seg, this_seg;
 
 		this_seg = seg_queue[qtail].end;
 		parent_seg = seg_queue[qtail].start;
 		Assert((this_seg >= 0) && (this_seg <= Highest_segment_index));
 		psegs->segnum = this_seg;
-		compute_segment_center(&psegs->point,&Segments[this_seg]);
+		compute_segment_center(psegs->point,&Segments[this_seg]);
 		psegs++;
 		l_num_points++;
 #if defined(DXX_BUILD_DESCENT_I)
@@ -453,7 +443,7 @@ cpp_done1: ;
 
 	Assert((start_seg >= 0) && (start_seg <= Highest_segment_index));
 	psegs->segnum = start_seg;
-	compute_segment_center(&psegs->point,&Segments[start_seg]);
+	compute_segment_center(psegs->point,&Segments[start_seg]);
 	psegs++;
 	l_num_points++;
 
@@ -481,7 +471,7 @@ cpp_done1: ;
 			*num_points = l_num_points;
 			return -1;
 		} else {
-			insert_center_points(original_psegs, &l_num_points);
+			l_num_points = insert_center_points(original_psegs, l_num_points);
 		}
 	}
 
@@ -519,7 +509,7 @@ int	Last_buddy_polish_path_tick;
 //	Starting position in psegs doesn't change.
 //	Changed, MK, 10/18/95.  I think this was causing robots to get hung up on walls.
 //				Only drop up to the first three points.
-int polish_path(objptridx_t objp, point_seg *psegs, int num_points)
+int polish_path(const vobjptridx_t objp, point_seg *psegs, int num_points)
 {
 	int	i, first_point=0;
 
@@ -546,10 +536,10 @@ int polish_path(objptridx_t objp, point_seg *psegs, int num_points)
 		fq.p1						= &psegs[i].point;
 		fq.rad					= objp->size;
 		fq.thisobjnum			= objp;
-		fq.ignore_obj_list	= NULL;
+		fq.ignore_obj_list.first = nullptr;
 		fq.flags					= 0;
 
-		hit_type = find_vector_intersection(&fq, &hit_data);
+		hit_type = find_vector_intersection(fq, hit_data);
 	
 		if (hit_type == HIT_NONE)
 			first_point = i+1;
@@ -572,7 +562,7 @@ int polish_path(objptridx_t objp, point_seg *psegs, int num_points)
 //	Make sure that there are connections between all segments on path.
 //	Note that if path has been optimized, connections may not be direct, so this function is useless, or worse.
 //	Return true if valid, else return false.
-int validate_path(int debug_flag, point_seg *psegs, int num_points)
+int validate_path(int, point_seg *psegs, int num_points)
 {
 #if PATH_VALIDATION
 	int		i, curseg;
@@ -588,12 +578,7 @@ if (num_points == 0)
 
 	for (i=1; i<num_points; i++) {
 		int	sidenum;
-		int	nextseg = psegs[i].segnum;
-
-		if ((nextseg < 0) || (nextseg > Highest_segment_index)) {
-			Int3();		//	Contact Mike: Debug trap for elusive, nasty bug.
-			return 0;
-		}
+		auto nextseg = psegs[i].segnum;
 
 		if (curseg != nextseg) {
 			for (sidenum=0; sidenum<MAX_SIDES_PER_SEGMENT; sidenum++)
@@ -620,9 +605,8 @@ void validate_all_paths(void)
 {
 
 #if PATH_VALIDATION
-	int	i;
-
-	for (i=0; i<=Highest_object_index; i++) {
+	range_for (const auto i, highest_valid(Objects))
+	{
 		if (Objects[i].type == OBJ_ROBOT) {
 			object		*objp = &Objects[i];
 			ai_static	*aip = &objp->ctype.ai_info;
@@ -650,11 +634,10 @@ void validate_all_paths(void)
 //			objp->ctype.ai_info.path_length,		length of path
 //			Point_segs_free_ptr				global pointer into Point_segs array
 //	Change, 10/07/95: Used to create path to ConsoleObject->pos.  Now creates path to Believed_player_pos.
-void create_path_to_player(object *objp, int max_length, int safety_flag)
+void create_path_to_player(const vobjptridx_t objp, int max_length, int safety_flag)
 {
 	ai_static	*aip = &objp->ctype.ai_info;
 	ai_local		*ailp = &objp->ctype.ai_info.ail;
-	int			start_seg, end_seg;
 
 	if (max_length == -1)
 		max_length = MAX_DEPTH_TO_SEARCH_FOR_PLAYER;
@@ -666,6 +649,7 @@ void create_path_to_player(object *objp, int max_length, int safety_flag)
 	ailp->goal_segment = Believed_player_seg;
 #endif
 
+	segnum_t			start_seg, end_seg;
 	start_seg = objp->segnum;
 	end_seg = ailp->goal_segment;
 
@@ -706,11 +690,10 @@ void create_path_to_player(object *objp, int max_length, int safety_flag)
 #if defined(DXX_BUILD_DESCENT_II)
 //	-------------------------------------------------------------------------------------------------------
 //	Creates a path from the object's current segment (objp->segnum) to segment goalseg.
-void create_path_to_segment(object *objp, int goalseg, int max_length, int safety_flag)
+void create_path_to_segment(const vobjptridx_t objp, segnum_t goalseg, int max_length, int safety_flag)
 {
 	ai_static	*aip = &objp->ctype.ai_info;
 	ai_local		*ailp = &objp->ctype.ai_info.ail;
-	int			start_seg, end_seg;
 
 	if (max_length == -1)
 		max_length = MAX_DEPTH_TO_SEARCH_FOR_PLAYER;
@@ -718,6 +701,7 @@ void create_path_to_segment(object *objp, int goalseg, int max_length, int safet
 	ailp->time_player_seen = GameTime64;			//	Prevent from resetting path quickly.
 	ailp->goal_segment = goalseg;
 
+	segnum_t			start_seg, end_seg;
 	start_seg = objp->segnum;
 	end_seg = ailp->goal_segment;
 
@@ -749,17 +733,17 @@ void create_path_to_segment(object *objp, int goalseg, int max_length, int safet
 //	Sets	objp->ctype.ai_info.hide_index,		a pointer into Point_segs, the first point_seg of the path.
 //			objp->ctype.ai_info.path_length,		length of path
 //			Point_segs_free_ptr				global pointer into Point_segs array
-void create_path_to_station(object *objp, int max_length)
+void create_path_to_station(const vobjptridx_t objp, int max_length)
 {
 	ai_static	*aip = &objp->ctype.ai_info;
 	ai_local		*ailp = &objp->ctype.ai_info.ail;
-	int			start_seg, end_seg;
 
 	if (max_length == -1)
 		max_length = MAX_DEPTH_TO_SEARCH_FOR_PLAYER;
 
 	ailp->time_player_seen = GameTime64;			//	Prevent from resetting path quickly.
 
+	segnum_t			start_seg, end_seg;
 	start_seg = objp->segnum;
 	end_seg = aip->hide_segment;
 
@@ -799,7 +783,7 @@ void create_path_to_station(object *objp, int max_length)
 
 //	-------------------------------------------------------------------------------------------------------
 //	Create a path of length path_length for an object, stuffing info in ai_info field.
-void create_n_segment_path(object *objp, int path_length, int avoid_seg)
+void create_n_segment_path(const vobjptridx_t objp, int path_length, segnum_t avoid_seg)
 {
 	ai_static	*aip=&objp->ctype.ai_info;
 	ai_local		*ailp = &objp->ctype.ai_info.ail;
@@ -846,7 +830,7 @@ void create_n_segment_path(object *objp, int path_length, int avoid_seg)
 }
 
 //	-------------------------------------------------------------------------------------------------------
-void create_n_segment_path_to_door(object *objp, int path_length, int avoid_seg)
+void create_n_segment_path_to_door(const vobjptridx_t objp, int path_length, segnum_t avoid_seg)
 {
 	create_n_segment_path(objp, path_length, avoid_seg);
 }
@@ -890,11 +874,11 @@ void create_n_segment_path_to_door(object *objp, int path_length, int avoid_seg)
 //			objp->ctype.ai_info.path_length,		length of path
 //			Point_segs_free_ptr				global pointer into Point_segs array
 #if defined(DXX_BUILD_DESCENT_I)
-static void create_path(object *objp)
+static void create_path(const vobjptridx_t objp)
 {
 	ai_static	*aip = &objp->ctype.ai_info;
 	ai_local		*ailp = &objp->ctype.ai_info.ail;
-	int			start_seg, end_seg;
+	segnum_t			start_seg, end_seg;
 
 	start_seg = objp->segnum;
 	end_seg = ailp->goal_segment;
@@ -929,18 +913,19 @@ static void create_path(object *objp)
 
 //	----------------------------------------------------------------------------------------------------------
 //	Optimization: If current velocity will take robot near goal, don't change velocity
-void ai_follow_path(objptridx_t objp, int player_visibility, vms_vector *vec_to_player)
+void ai_follow_path(const vobjptridx_t objp, int player_visibility, const vms_vector *vec_to_player)
 {
+#if defined(DXX_BUILD_DESCENT_I)
+	(void)vec_to_player;
+#endif
 	ai_static		*aip = &objp->ctype.ai_info;
 
 	vms_vector	goal_point, new_goal_point;
-	fix			dist_to_goal;
 #if defined(DXX_BUILD_DESCENT_II)
 	robot_info	*robptr = &Robot_info[get_robot_id(objp)];
 #endif
 	int			forced_break, original_dir, original_index;
 	ai_local		*ailp = &objp->ctype.ai_info.ail;
-	fix			threshold_distance;
 
 
 	if ((aip->hide_index == -1) || (aip->path_length == 0))
@@ -1017,7 +1002,7 @@ void ai_follow_path(objptridx_t objp, int player_visibility, vms_vector *vec_to_
 #endif
 
 	goal_point = Point_segs[aip->hide_index + aip->cur_path_index].point;
-	dist_to_goal = vm_vec_dist_quick(&goal_point, &objp->pos);
+	auto dist_to_goal = vm_vec_dist_quick(goal_point, objp->pos);
 
 	//	If running from player, only run until can't be seen.
 	if (ailp->mode == AIM_RUN_FROM_OBJECT) {
@@ -1028,7 +1013,7 @@ void ai_follow_path(objptridx_t objp, int player_visibility, vms_vector *vec_to_
 			if (vel_scale < F1_0/2)
 				vel_scale = F1_0/2;
 
-			vm_vec_scale(&objp->mtype.phys_info.velocity, vel_scale);
+			vm_vec_scale(objp->mtype.phys_info.velocity, vel_scale);
 
 			return;
 		} else
@@ -1038,7 +1023,7 @@ void ai_follow_path(objptridx_t objp, int player_visibility, vms_vector *vec_to_
 			{		//	Done 1/8 ticks.
 			//	If player on path (beyond point robot is now at), then create a new path.
 			point_seg	*curpsp = &Point_segs[aip->hide_index];
-			int			player_segnum = ConsoleObject->segnum;
+			auto player_segnum = ConsoleObject->segnum;
 			int			i;
 
 			//	This is probably being done every frame, which is wasteful.
@@ -1083,7 +1068,7 @@ void ai_follow_path(objptridx_t objp, int player_visibility, vms_vector *vec_to_
 	forced_break = 0;		//	Gets set for short paths.
 	original_dir = aip->PATH_DIR;
 	original_index = aip->cur_path_index;
-	threshold_distance = fixmul(vm_vec_mag_quick(&objp->mtype.phys_info.velocity), FrameTime)*2 + F1_0*2;
+	const vm_distance threshold_distance{fixmul(vm_vec_mag_quick(objp->mtype.phys_info.velocity), FrameTime)*2 + F1_0*2};
 
 #if defined(DXX_BUILD_DESCENT_II)
 	new_goal_point = Point_segs[aip->hide_index + aip->cur_path_index].point;
@@ -1113,8 +1098,8 @@ void ai_follow_path(objptridx_t objp, int player_visibility, vms_vector *vec_to_
 						return;
 					} else {
 						ailp->mode = AIM_WANDER;	//	Special buddy mode.
-						vm_vec_zero(&objp->mtype.phys_info.velocity);
-						vm_vec_zero(&objp->mtype.phys_info.rotvel);
+						vm_vec_zero(objp->mtype.phys_info.velocity);
+						vm_vec_zero(objp->mtype.phys_info.rotvel);
 						//!!Assert((aip->cur_path_index >= 0) && (aip->cur_path_index < aip->path_length));
 						return;
 					}
@@ -1195,10 +1180,10 @@ void ai_follow_path(objptridx_t objp, int player_visibility, vms_vector *vec_to_
 				fq.p1						= opposite_end_point;
 				fq.rad					= objp->size;
 				fq.thisobjnum			= objp;
-				fq.ignore_obj_list	= NULL;
+				fq.ignore_obj_list.first = nullptr;
 				fq.flags					= 0; 				//what about trans walls???
 
-				fate = find_vector_intersection(&fq,&hit_data);
+				fate = find_vector_intersection(fq, hit_data);
 
 				if (fate != HIT_WALL) {
 					//	We can be circular!  Do it!
@@ -1215,7 +1200,7 @@ void ai_follow_path(objptridx_t objp, int player_visibility, vms_vector *vec_to_
 		} else {
 			new_goal_point = Point_segs[aip->hide_index + aip->cur_path_index].point;
 			goal_point = new_goal_point;
-			dist_to_goal = vm_vec_dist_quick(&goal_point, &objp->pos);
+			dist_to_goal = vm_vec_dist_quick(goal_point, objp->pos);
 		}
 
 		//	If went all the way around to original point, in same direction, then get out of here!
@@ -1226,7 +1211,7 @@ void ai_follow_path(objptridx_t objp, int player_visibility, vms_vector *vec_to_
 	}	//	end while
 
 	//	Set velocity (objp->mtype.phys_info.velocity) and orientation (objp->orient) for this object.
-	ai_path_set_orient_and_vel(objp, &goal_point
+	ai_path_set_orient_and_vel(objp, goal_point
 #if defined(DXX_BUILD_DESCENT_II)
 							   , player_visibility, vec_to_player
 #endif
@@ -1250,17 +1235,14 @@ static int path_index_compare(obj_path *i1, obj_path *i2)
 
 //	----------------------------------------------------------------------------------------------------------
 //	Set orientation matrix and velocity for objp based on its desire to get to a point.
-void ai_path_set_orient_and_vel(object *objp, vms_vector *goal_point
+void ai_path_set_orient_and_vel(const vobjptr_t objp, const vms_vector &goal_point
 #if defined(DXX_BUILD_DESCENT_II)
-								, int player_visibility, vms_vector *vec_to_player
+								, int player_visibility, const vms_vector *vec_to_player
 #endif
 								)
 {
 	vms_vector	cur_vel = objp->mtype.phys_info.velocity;
-	vms_vector	norm_cur_vel;
-	vms_vector	norm_vec_to_goal;
 	vms_vector	cur_pos = objp->pos;
-	vms_vector	norm_fvec;
 	fix			speed_scale;
 	fix			dot;
 	robot_info	*robptr = &Robot_info[get_robot_id(objp)];
@@ -1276,16 +1258,11 @@ void ai_path_set_orient_and_vel(object *objp, vms_vector *goal_point
 		)
 		max_speed = max_speed*3/2;
 
-	vm_vec_sub(&norm_vec_to_goal, goal_point, &cur_pos);
-	vm_vec_normalize_quick(&norm_vec_to_goal);
+	auto norm_vec_to_goal = vm_vec_normalized_quick(vm_vec_sub(goal_point, cur_pos));
+	auto norm_cur_vel = vm_vec_normalized_quick(cur_vel);
+	const auto norm_fvec = vm_vec_normalized_quick(objp->orient.fvec);
 
-	norm_cur_vel = cur_vel;
-	vm_vec_normalize_quick(&norm_cur_vel);
-
-	norm_fvec = objp->orient.fvec;
-	vm_vec_normalize_quick(&norm_fvec);
-
-	dot = vm_vec_dot(&norm_vec_to_goal, &norm_fvec);
+	dot = vm_vec_dot(norm_vec_to_goal, norm_fvec);
 
 	//	If very close to facing opposite desired vector, perturb vector
 	if (dot < -15*F1_0/16) {
@@ -1296,7 +1273,7 @@ void ai_path_set_orient_and_vel(object *objp, vms_vector *goal_point
 		norm_cur_vel.z += norm_vec_to_goal.z/2/((float)DESIGNATED_GAME_FRAMETIME/FrameTime);
 	}
 
-	vm_vec_normalize_quick(&norm_cur_vel);
+	vm_vec_normalize_quick(norm_cur_vel);
 
 	//	Set speed based on this robot type's maximum allowed speed and how hard it is turning.
 	//	How hard it is turning is based on the dot product of (vector to goal) and (current velocity vector)
@@ -1314,7 +1291,7 @@ void ai_path_set_orient_and_vel(object *objp, vms_vector *goal_point
 #endif
 
 	speed_scale = fixmul(max_speed, dot);
-	vm_vec_scale(&norm_cur_vel, speed_scale);
+	vm_vec_scale(norm_cur_vel, speed_scale);
 	objp->mtype.phys_info.velocity = norm_cur_vel;
 
 	if ((ailp->mode == AIM_RUN_FROM_OBJECT)
@@ -1327,12 +1304,12 @@ void ai_path_set_orient_and_vel(object *objp, vms_vector *goal_point
 			if ((player_visibility) && (vec_to_player != NULL))
 				norm_vec_to_goal = *vec_to_player;
 			else
-				vm_vec_negate(&norm_vec_to_goal);
+				vm_vec_negate(norm_vec_to_goal);
 		}
 #endif
-		ai_turn_towards_vector(&norm_vec_to_goal, objp, robptr->turn_time[NDL-1]/2);
+		ai_turn_towards_vector(norm_vec_to_goal, objp, robptr->turn_time[NDL-1]/2);
 	} else
-		ai_turn_towards_vector(&norm_vec_to_goal, objp, robptr->turn_time[Difficulty_level]);
+		ai_turn_towards_vector(norm_vec_to_goal, objp, robptr->turn_time[Difficulty_level]);
 
 }
 
@@ -1344,7 +1321,6 @@ void ai_path_garbage_collect(void)
 {
 	int	free_path_index = 0;
 	int	num_path_objects = 0;
-	int	objnum;
 	int	objind;
 	obj_path		object_list[MAX_OBJECTS];
 
@@ -1358,7 +1334,8 @@ void ai_path_garbage_collect(void)
 	validate_all_paths();
 #endif
 	//	Create a list of objects which have paths of length 1 or more.
-	for (objnum=0; objnum <= Highest_object_index; objnum++) {
+	range_for (const auto objnum, highest_valid(Objects))
+	{
 		object	*objp = &Objects[objnum];
 
 		if ((objp->type == OBJ_ROBOT) && ((objp->control_type == CT_AI)
@@ -1379,13 +1356,12 @@ void ai_path_garbage_collect(void)
 			(int (*)(void const *,void const *))path_index_compare);
 
 	for (objind=0; objind < num_path_objects; objind++) {
-		object		*objp;
 		ai_static	*aip;
 		int			i;
 		int			old_index;
 
-		objnum = object_list[objind].objnum;
-		objp = &Objects[objnum];
+		auto objnum = object_list[objind].objnum;
+		auto objp = vobjptridx(objnum);
 		aip = &objp->ctype.ai_info;
 		old_index = aip->hide_index;
 
@@ -1394,15 +1370,14 @@ void ai_path_garbage_collect(void)
 			Point_segs[free_path_index++] = Point_segs[old_index++];
 	}
 
-	Point_segs_free_ptr = &Point_segs[free_path_index];
+	Point_segs_free_ptr = Point_segs.begin() + free_path_index;
 
 #ifndef NDEBUG
 	{
-	int i;
-
 	force_dump_ai_objects_all("***** Finish ai_path_garbage_collect *****");
 
-	for (i=0; i<=Highest_object_index; i++) {
+	range_for (const auto i, highest_valid(Objects))
+	{
 		ai_static	*aip = &Objects[i].ctype.ai_info;
 
 		if ((Objects[i].type == OBJ_ROBOT) && (Objects[i].control_type == CT_AI))
@@ -1445,13 +1420,15 @@ void maybe_ai_path_garbage_collect(void)
 //	Should be called at the start of each level.
 void ai_reset_all_paths(void)
 {
-	int	i;
-
-	for (i=0; i<=Highest_object_index; i++)
-		if (Objects[i].control_type == CT_AI) {
+	range_for (const auto i, highest_valid(Objects))
+	{
+		auto objp = vobjptridx(i);
+		if (objp->type == OBJ_ROBOT && objp->control_type == CT_AI)
+		{
 			Objects[i].ctype.ai_info.hide_index = -1;
 			Objects[i].ctype.ai_info.path_length = 0;
 		}
+	}
 
 	ai_path_garbage_collect();
 
@@ -1460,7 +1437,7 @@ void ai_reset_all_paths(void)
 //	---------------------------------------------------------------------------------------------------------
 //	Probably called because a robot bashed a wall, getting a bunch of retries.
 //	Try to resume path.
-void attempt_to_resume_path(object *objp)
+void attempt_to_resume_path(const vobjptridx_t objp)
 {
 	ai_static *aip = &objp->ctype.ai_info;
 	int new_path_index;
@@ -1506,7 +1483,7 @@ static void test_create_path_many(void)
 	for (i=0; i<Test_size; i++) {
 		Cursegp = &Segments[(d_rand() * (Highest_segment_index + 1)) / D_RAND_MAX];
 		Markedsegp = &Segments[(d_rand() * (Highest_segment_index + 1)) / D_RAND_MAX];
-		create_path_points(&Objects[0], Cursegp-Segments, Markedsegp-Segments, point_segs, &num_points, -1, 0, 0, segment_none);
+		create_path_points(object_first, Cursegp-Segments, Markedsegp-Segments, point_segs, &num_points, -1, 0, 0, segment_none);
 	}
 
 }
@@ -1517,7 +1494,7 @@ static void test_create_path(void)
 	point_seg	point_segs[200];
 	short			num_points;
 
-	create_path_points(&Objects[0], Cursegp-Segments, Markedsegp-Segments, point_segs, &num_points, -1, 0, 0, segment_none);
+	create_path_points(object_first, Cursegp-Segments, Markedsegp-Segments, point_segs, &num_points, -1, 0, 0, segment_none);
 
 }
 
@@ -1525,16 +1502,17 @@ static void test_create_path(void)
 static void test_create_all_paths(void) __attribute_used;
 static void test_create_all_paths(void)
 {
-	int	start_seg, end_seg;
 	short	resultant_length;
 
-	Point_segs_free_ptr = Point_segs;
+	Point_segs_free_ptr = Point_segs.begin();
 
-	for (start_seg=0; start_seg<=Highest_segment_index-1; start_seg++) {
+	range_for (const auto start_seg, highest_valid(Segments))
+	{
 		if (Segments[start_seg].segnum != segment_none) {
-			for (end_seg=start_seg+1; end_seg<=Highest_segment_index; end_seg++) {
+			range_for (const auto end_seg, highest_valid(Segments, start_seg))
+			{
 				if (Segments[end_seg].segnum != segment_none) {
-					create_path_points(&Objects[0], start_seg, end_seg, Point_segs_free_ptr, &resultant_length, -1, 0, 0, segment_none);
+					create_path_points(object_first, start_seg, end_seg, Point_segs_free_ptr, &resultant_length, -1, 0, 0, segment_none);
 				}
 			}
 		}
@@ -1548,13 +1526,10 @@ int	Player_following_path_flag=0;
 
 //	------------------------------------------------------------------------------------------------------------------
 //	Set orientation matrix and velocity for objp based on its desire to get to a point.
-static void player_path_set_orient_and_vel(object *objp, vms_vector *goal_point)
+static void player_path_set_orient_and_vel(const vobjptr_t objp, const vms_vector &goal_point)
 {
 	vms_vector	cur_vel = objp->mtype.phys_info.velocity;
-	vms_vector	norm_cur_vel;
-	vms_vector	norm_vec_to_goal;
 	vms_vector	cur_pos = objp->pos;
-	vms_vector	norm_fvec;
 	fix			speed_scale;
 	fix			dot;
 	fix			max_speed;
@@ -1565,16 +1540,11 @@ static void player_path_set_orient_and_vel(object *objp, vms_vector *goal_point)
 	max_speed = Robot_info[get_robot_id(objp)].max_speed[Difficulty_level];
 #endif
 
-	vm_vec_sub(&norm_vec_to_goal, goal_point, &cur_pos);
-	vm_vec_normalize_quick(&norm_vec_to_goal);
+	const auto norm_vec_to_goal = vm_vec_normalized_quick(vm_vec_sub(goal_point, cur_pos));
+	auto norm_cur_vel = vm_vec_normalized_quick(cur_vel);
+	const auto norm_fvec = vm_vec_normalized_quick(objp->orient.fvec);
 
-	norm_cur_vel = cur_vel;
-	vm_vec_normalize_quick(&norm_cur_vel);
-
-	norm_fvec = objp->orient.fvec;
-	vm_vec_normalize_quick(&norm_fvec);
-
-	dot = vm_vec_dot(&norm_vec_to_goal, &norm_fvec);
+	dot = vm_vec_dot(norm_vec_to_goal, norm_fvec);
 #if defined(DXX_BUILD_DESCENT_II)
 	ai_local		*ailp = &objp->ctype.ai_info.ail;
 	if (ailp->mode == AIM_SNIPE_RETREAT_BACKWARDS) {
@@ -1591,7 +1561,7 @@ static void player_path_set_orient_and_vel(object *objp, vms_vector *goal_point)
 		norm_cur_vel.z += norm_vec_to_goal.z/2/((float)DESIGNATED_GAME_FRAMETIME/FrameTime);
 	}
 
-	vm_vec_normalize_quick(&norm_cur_vel);
+	vm_vec_normalize_quick(norm_cur_vel);
 
 	//	Set speed based on this robot type's maximum allowed speed and how hard it is turning.
 	//	How hard it is turning is based on the dot product of (vector to goal) and (current velocity vector)
@@ -1602,21 +1572,18 @@ static void player_path_set_orient_and_vel(object *objp, vms_vector *goal_point)
 		dot /= 4;
 
 	speed_scale = fixmul(max_speed, dot);
-	vm_vec_scale(&norm_cur_vel, speed_scale);
+	vm_vec_scale(norm_cur_vel, speed_scale);
 	objp->mtype.phys_info.velocity = norm_cur_vel;
-	ai_turn_towards_vector(&norm_vec_to_goal, objp, F1_0);
-
+	ai_turn_towards_vector(norm_vec_to_goal, objp, F1_0);
 }
 
 //	----------------------------------------------------------------------------------------------------------
 //	Optimization: If current velocity will take robot near goal, don't change velocity
-void player_follow_path(object *objp)
+void player_follow_path(const vobjptr_t objp)
 {
 	vms_vector	goal_point;
-	fix			dist_to_goal;
 	int			count, forced_break, original_index;
 	int			goal_seg;
-	fix			threshold_distance;
 
 	if (!Player_following_path_flag)
 		return;
@@ -1631,7 +1598,7 @@ void player_follow_path(object *objp)
 	goal_seg = Point_segs[Player_hide_index + Player_cur_path_index].segnum;
 	Assert((goal_seg >= 0) && (goal_seg <= Highest_segment_index));
 	(void)goal_seg;
-	dist_to_goal = vm_vec_dist_quick(&goal_point, &objp->pos);
+	auto dist_to_goal = vm_vec_dist_quick(goal_point, objp->pos);
 
 	if (Player_cur_path_index < 0)
 		Player_cur_path_index = 0;
@@ -1646,7 +1613,7 @@ void player_follow_path(object *objp)
 	forced_break = 0;		//	Gets set for short paths.
 	//original_dir = 1;
 	original_index = Player_cur_path_index;
-	threshold_distance = fixmul(vm_vec_mag_quick(&objp->mtype.phys_info.velocity), FrameTime)*2 + F1_0*2;
+	const vm_distance threshold_distance{fixmul(vm_vec_mag_quick(objp->mtype.phys_info.velocity), FrameTime)*2 + F1_0*2};
 
 	while ((dist_to_goal < threshold_distance) && !forced_break) {
 
@@ -1671,22 +1638,20 @@ void player_follow_path(object *objp)
 		}
 
 		goal_point = Point_segs[Player_hide_index + Player_cur_path_index].point;
-		dist_to_goal = vm_vec_dist_quick(&goal_point, &objp->pos);
+		dist_to_goal = vm_vec_dist_quick(goal_point, objp->pos);
 
 	}	//	end while
 
 	//	Set velocity (objp->mtype.phys_info.velocity) and orientation (objp->orient) for this object.
-	player_path_set_orient_and_vel(objp, &goal_point);
-
+	player_path_set_orient_and_vel(objp, goal_point);
 }
 
 
 //	------------------------------------------------------------------------------------------------------------------
 //	Create path for player from current segment to goal segment.
-static void create_player_path_to_segment(int segnum)
+static void create_player_path_to_segment(segnum_t segnum)
 {
-	object		*objp = ConsoleObject;
-
+	const auto objp = vobjptridx(ConsoleObject);
 	Player_path_length=0;
 	Player_hide_index=-1;
 	Player_cur_path_index=0;
@@ -1706,7 +1671,7 @@ static void create_player_path_to_segment(int segnum)
 	}
 
 }
-short	Player_goal_segment = segment_none;
+segnum_t	Player_goal_segment = segment_none;
 
 void check_create_player_path(void)
 {

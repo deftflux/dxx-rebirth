@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -25,6 +31,7 @@ COPYRIGHT 1993-1998 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include <string.h>
 #include "strutil.h"
 #include "args.h"
+#include "physfsx.h"
 #include "gamefont.h"
 #include "mission.h"
 #include "config.h"
@@ -45,7 +52,7 @@ static const char Gamefont_filenames_h[][16] = {
 	"font3-1h.fnt"  // Font 4
 };
 
-grs_font *Gamefonts[MAX_FONTS];
+array<grs_font_ptr, MAX_FONTS> Gamefonts;
 
 int Gamefont_installed=0;
 float FNTScaleX = 1, FNTScaleY = 1;
@@ -74,8 +81,7 @@ static void gamefont_unloadfont(int gf)
 {
 	if (Gamefonts[gf]){
 		font_conf[gf].cur=-1;
-		gr_close_font(Gamefonts[gf]);
-		Gamefonts[gf]=NULL;
+		Gamefonts[gf].reset();
 	}
 }
 
@@ -85,7 +91,7 @@ static void gamefont_loadfont(int gf,int fi)
 		gamefont_unloadfont(gf);
 		Gamefonts[gf]=gr_init_font(font_conf[gf].font[fi].f.name);
 	}else {
-		if (Gamefonts[gf]==NULL){
+		if (!Gamefonts[gf]){
 			Gamefonts[gf]=gr_init_font(Gamefont_filenames_l[gf]);
 			font_conf[gf].cur=-1;
 		}
@@ -95,11 +101,11 @@ static void gamefont_loadfont(int gf,int fi)
 }
 
 void gamefont_choose_game_font(int scrx,int scry){
-	int gf,i,close=-1,m=-1;
+	int close=-1,m=-1;
 	if (!Gamefont_installed) return;
 
-	for (gf=0;gf<MAX_FONTS;gf++){
-		for (i=0;i<font_conf[gf].num;i++)
+	for (int gf=0;gf<MAX_FONTS;gf++){
+		for (int i=0;i<font_conf[gf].num;i++)
 			if ((scrx>=font_conf[gf].font[i].x && close<font_conf[gf].font[i].x)&&(scry>=font_conf[gf].font[i].y && close<font_conf[gf].font[i].y)){
 				close=font_conf[gf].font[i].x;
 				m=i;
@@ -140,12 +146,10 @@ void gamefont_choose_game_font(int scrx,int scry){
 	
 static void addfontconf(int gf, int x, int y, const char *const fn)
 {
-	int i;
-
 	if (!PHYSFSX_exists(fn,1))
 		return;
 
-	for (i=0;i<font_conf[gf].num;i++){
+	for (int i=0;i<font_conf[gf].num;i++){
 		if (font_conf[gf].font[i].x==x && font_conf[gf].font[i].y==y){
 			if (i==font_conf[gf].cur)
 				gamefont_unloadfont(gf);
@@ -163,14 +167,12 @@ static void addfontconf(int gf, int x, int y, const char *const fn)
 
 void gamefont_init()
 {
-	int i;
-
 	if (Gamefont_installed)
 		return;
 
 	Gamefont_installed = 1;
 
-	for (i=0;i<MAX_FONTS;i++){
+	for (int i=0;i<MAX_FONTS;i++){
 		Gamefonts[i]=NULL;
 
 		if (!GameArg.GfxSkipHiresFNT)
@@ -189,12 +191,10 @@ void gamefont_init()
 
 void gamefont_close()
 {
-	int i;
-
 	if (!Gamefont_installed) return;
 	Gamefont_installed = 0;
 
-	for (i=0; i<MAX_FONTS; i++ )	{
+	for (int i=0; i<MAX_FONTS; i++ ) {
 		gamefont_unloadfont(i);
 	}
 

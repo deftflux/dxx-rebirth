@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -53,7 +59,7 @@ fix Afterburner_charge=f1_0;
 using std::min;
 using std::max;
 
-void read_flying_controls( object * obj )
+void read_flying_controls(const vobjptr_t obj)
 {
 	fix	forward_thrust_time;
 
@@ -64,27 +70,23 @@ void read_flying_controls( object * obj )
 
 	if (Guided_missile[Player_num] && Guided_missile[Player_num]->signature==Guided_missile_sig[Player_num]) {
 		vms_angvec rotangs;
-		vms_matrix rotmat,tempm;
 		fix speed;
 
 		//this is a horrible hack.  guided missile stuff should not be
 		//handled in the middle of a routine that is dealing with the player
 
-		vm_vec_zero(&obj->mtype.phys_info.rotthrust);
+		vm_vec_zero(obj->mtype.phys_info.rotthrust);
 
 		rotangs.p = Controls.pitch_time / 2 + Seismic_tremor_magnitude/64;
 		rotangs.b = Controls.bank_time / 2 + Seismic_tremor_magnitude/16;
 		rotangs.h = Controls.heading_time / 2 + Seismic_tremor_magnitude/64;
 
-		vm_angles_2_matrix(&rotmat,&rotangs);
-
-		vm_matrix_x_matrix(&tempm,&Guided_missile[Player_num]->orient,&rotmat);
-
-		Guided_missile[Player_num]->orient = tempm;
+		const auto &&rotmat = vm_angles_2_matrix(rotangs);
+		Guided_missile[Player_num]->orient = vm_matrix_x_matrix(Guided_missile[Player_num]->orient, rotmat);
 
 		speed = Weapon_info[Guided_missile[Player_num]->id].speed[Difficulty_level];
 
-		vm_vec_copy_scale(&Guided_missile[Player_num]->mtype.phys_info.velocity,&Guided_missile[Player_num]->orient.fvec,speed);
+		vm_vec_copy_scale(Guided_missile[Player_num]->mtype.phys_info.velocity,Guided_missile[Player_num]->orient.fvec,speed);
 		if (Game_mode & GM_MULTI)
 			multi_send_guided_info (Guided_missile[Player_num],0);
 
@@ -144,21 +146,20 @@ void read_flying_controls( object * obj )
 #endif
 
 	// Set object's thrust vector for forward/backward
-	vm_vec_copy_scale(&obj->mtype.phys_info.thrust,&obj->orient.fvec, forward_thrust_time );
+	vm_vec_copy_scale(obj->mtype.phys_info.thrust,obj->orient.fvec, forward_thrust_time );
 	
 	// slide left/right
-	vm_vec_scale_add2(&obj->mtype.phys_info.thrust,&obj->orient.rvec, Controls.sideways_thrust_time );
+	vm_vec_scale_add2(obj->mtype.phys_info.thrust,obj->orient.rvec, Controls.sideways_thrust_time );
 
 	// slide up/down
-	vm_vec_scale_add2(&obj->mtype.phys_info.thrust,&obj->orient.uvec, Controls.vertical_thrust_time );
+	vm_vec_scale_add2(obj->mtype.phys_info.thrust,obj->orient.uvec, Controls.vertical_thrust_time );
 
 	if (obj->mtype.phys_info.flags & PF_WIGGLE)
 	{
-		fix swiggle;
-		fix_fastsincos(((fix)GameTime64), &swiggle, NULL);
+		auto swiggle = fix_fastsin(static_cast<fix>(GameTime64));
 		if (FrameTime < F1_0) // Only scale wiggle if getting at least 1 FPS, to avoid causing the opposite problem.
 			swiggle = fixmul(swiggle*DESIGNATED_GAME_FPS, FrameTime); //make wiggle fps-independent (based on pre-scaled amount of wiggle at DESIGNATED_GAME_FPS)
-		vm_vec_scale_add2(&obj->mtype.phys_info.velocity,&obj->orient.uvec,fixmul(swiggle,Player_ship->wiggle));
+		vm_vec_scale_add2(obj->mtype.phys_info.velocity,obj->orient.uvec,fixmul(swiggle,Player_ship->wiggle));
 	}
 
 	// As of now, obj->mtype.phys_info.thrust & obj->mtype.phys_info.rotthrust are 
@@ -177,20 +178,20 @@ void read_flying_controls( object * obj )
 			ft = (Player_ship->max_thrust >> 15) + 1;
 		}
 
-		vm_vec_scale( &obj->mtype.phys_info.thrust, fixdiv(Player_ship->max_thrust,ft) );
+		vm_vec_scale(obj->mtype.phys_info.thrust, fixdiv(Player_ship->max_thrust,ft) );
 
 		if ((ft < F1_0/2) && (ft << 15 <= Player_ship->max_rotthrust)) {
 			ft = (Player_ship->max_thrust >> 15) + 1;
 		}
 
-		vm_vec_scale( &obj->mtype.phys_info.rotthrust, fixdiv(Player_ship->max_rotthrust,ft) );
+		vm_vec_scale(obj->mtype.phys_info.rotthrust, fixdiv(Player_ship->max_rotthrust,ft) );
 	}
 
 	// moved here by WraithX
 	if (Player_is_dead)
 	{
 		//vm_vec_zero(&obj->mtype.phys_info.rotthrust); // let dead players rotate, changed by WraithX
-		vm_vec_zero(&obj->mtype.phys_info.thrust);  // don't let dead players move, changed by WraithX
+		vm_vec_zero(obj->mtype.phys_info.thrust);  // don't let dead players move, changed by WraithX
 		return;
 	}// end if
 

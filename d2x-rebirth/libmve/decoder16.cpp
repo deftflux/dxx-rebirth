@@ -1,32 +1,35 @@
+/*
+ * This file is part of the DXX-Rebirth project <http://www.dxx-rebirth.com/>.
+ * It is copyright by its individual contributors, as recorded in the
+ * project's Git history.  See COPYING.txt at the top level for license
+ * terms and a link to the Git history.
+ */
 /* 16 bit decoding routines */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <cstdint>
 
 #include "decoders.h"
 #include "console.h"
 
+#include "dxxsconf.h"
+#include "compiler-array.h"
+#include "compiler-integer_sequence.h"
+
 static unsigned short *backBuf1, *backBuf2;
-static int lookup_initialized;
 
-static void dispatchDecoder16(unsigned short **pFrame, unsigned char codeType, unsigned char **pData, unsigned char **pOffData, int *pDataRemain, int *curXb, int *curYb);
-static void genLoopkupTable();
+static void dispatchDecoder16(unsigned short **pFrame, unsigned char codeType, const unsigned char **pData, const unsigned char **pOffData, int *pDataRemain, int *curXb, int *curYb);
 
-void decodeFrame16(unsigned char *pFrame, unsigned char *pMap, int mapRemain, unsigned char *pData, int dataRemain)
+void decodeFrame16(unsigned char *pFrame, const unsigned char *pMap, int mapRemain, const unsigned char *pData, int dataRemain)
 {
-    unsigned char *pOrig;
-    unsigned char *pOffData;
     unsigned short offset;
     unsigned short *FramePtr = (unsigned short *)pFrame;
     int length;
     int op;
     int i, j;
     int xb, yb;
-
-	if (!lookup_initialized) {
-		genLoopkupTable();
-	}
 
     backBuf1 = (unsigned short *)g_vBackBuf1;
     backBuf2 = (unsigned short *)g_vBackBuf2;
@@ -36,11 +39,11 @@ void decodeFrame16(unsigned char *pFrame, unsigned char *pMap, int mapRemain, un
 
     offset = pData[0]|(pData[1]<<8);
 
-    pOffData = pData + offset;
+	auto pOffData = pData + offset;
 
     pData += 2;
 
-    pOrig = pData;
+	auto pOrig = pData;
     length = offset - 2; /*dataRemain-2;*/
 
     for (j=0; j<yb; j++)
@@ -79,72 +82,66 @@ void decodeFrame16(unsigned char *pFrame, unsigned char *pMap, int mapRemain, un
     }
 }
 
-static unsigned short GETPIXEL(unsigned char **buf, int off)
+static uint16_t GETPIXEL(const unsigned char **buf, int off)
 {
 	unsigned short val = (*buf)[0+off] | ((*buf)[1+off] << 8);
 	return val;
 }
 
-static unsigned short GETPIXELI(unsigned char **buf, int off)
+static uint16_t GETPIXELI(const unsigned char **buf, int off)
 {
 	unsigned short val = (*buf)[0+off] | ((*buf)[1+off] << 8);
 	(*buf) += 2;
 	return val;
 }
 
-static void relClose(int i, int *x, int *y)
+struct position_t
 {
-    int ma, mi;
-
-    ma = i >> 4;
-    mi = i & 0xf;
-
-    *x = mi - 8;
-    *y = ma - 8;
-}
-
-static void relFar(int i, int sign, int *x, int *y)
-{
-    if (i < 56)
-    {
-        *x = sign * (8 + (i % 7));
-        *y = sign *      (i / 7);
-    }
-    else
-    {
-        *x = sign * (-14 + (i - 56) % 29);
-        *y = sign *   (8 + (i - 56) / 29);
-    }
-}
-
-static int close_table[512];
-static int far_p_table[512];
-static int far_n_table[512];
-
-static void genLoopkupTable()
-{
-	int i;
 	int x, y;
+};
 
-	for (i = 0; i < 256; i++) {
-		relClose(i, &x, &y);
-
-		close_table[i*2+0] = x;
-		close_table[i*2+1] = y;
-
-		relFar(i, 1, &x, &y);
-
-		far_p_table[i*2+0] = x;
-		far_p_table[i*2+1] = y;
-
-		relFar(i, -1, &x, &y);
-
-		far_n_table[i*2+0] = x;
-		far_n_table[i*2+1] = y;
-	}
-
-	lookup_initialized = 1;
+static inline constexpr position_t relClose(int i)
+{
+	return {(i & 0xf) - 8, (i >> 4) - 8};
 }
+
+static inline constexpr position_t relFar0(int i, int sign)
+{
+	return {
+		sign * (8 + (i % 7)),
+		sign *      (i / 7)
+	};
+}
+
+static inline constexpr position_t relFar56(int i, int sign)
+{
+	return {
+		sign * (-14 + (i - 56) % 29),
+		sign *   (8 + (i - 56) / 29)
+	};
+}
+
+static inline constexpr position_t relFar(int i, int sign)
+{
+	return (i < 56) ? relFar0(i, sign) : relFar56(i, sign);
+}
+
+struct lookup_table_t
+{
+	array<position_t, 256> close, far_p, far_n;
+};
+
+template <std::size_t... N>
+static inline constexpr lookup_table_t genLoopkupTable(index_sequence<N...>)
+{
+	return lookup_table_t{
+		{{relClose(N)...}},
+		{{relFar(N, 1)...}},
+		{{relFar(N, -1)...}}
+	};
+}
+
+static const lookup_table_t lookup_table = genLoopkupTable(make_tree_index_sequence<256>());
 
 static void copyFrame(unsigned short *pDest, unsigned short *pSrc)
 {
@@ -313,7 +310,7 @@ static void patternQuadrant2Pixels(unsigned short *pFrame, unsigned char pat0,
     }
 }
 
-static void dispatchDecoder16(unsigned short **pFrame, unsigned char codeType, unsigned char **pData, unsigned char **pOffData, int *pDataRemain, int *curXb, int *curYb)
+static void dispatchDecoder16(unsigned short **pFrame, unsigned char codeType, const unsigned char **pData, const unsigned char **pOffData, int *pDataRemain, int *curXb, int *curYb)
 {
     unsigned short p[4];
     unsigned char pat[16];
@@ -334,8 +331,8 @@ static void dispatchDecoder16(unsigned short **pFrame, unsigned char codeType, u
 			  */
 
 		k = *(*pOffData)++;
-		x = far_p_table[k*2+0];
-		y = far_p_table[k*2+1];
+		x = lookup_table.far_p[k].x;
+		y = lookup_table.far_p[k].y;
 
 		copyFrame(*pFrame, *pFrame + x + y*g_width);
 		--*pDataRemain;
@@ -345,8 +342,8 @@ static void dispatchDecoder16(unsigned short **pFrame, unsigned char codeType, u
 			  */
 
 		k = *(*pOffData)++;
-		x = far_n_table[k*2+0];
-		y = far_n_table[k*2+1];
+		x = lookup_table.far_n[k].x;
+		y = lookup_table.far_n[k].y;
 
 		copyFrame(*pFrame, *pFrame + x + y*g_width);
 		--*pDataRemain;
@@ -356,8 +353,8 @@ static void dispatchDecoder16(unsigned short **pFrame, unsigned char codeType, u
 			  */
 
 		k = *(*pOffData)++;
-		x = close_table[k*2+0];
-		y = close_table[k*2+1];
+		x = lookup_table.close[k].x;
+		y = lookup_table.close[k].y;
 
 		copyFrame(*pFrame, *pFrame + (backBuf2 - backBuf1) + x + y*g_width);
 		--*pDataRemain;

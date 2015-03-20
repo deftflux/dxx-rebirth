@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -17,16 +23,14 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
  *
  */
 
-#ifndef _MULTI_H
-#define _MULTI_H
+#pragma once
 
 #include "player.h"
 #include "mission.h"
 #include "newmenu.h"
 #include "powerup.h"
-#include "object.h"
+#include "fwdobject.h"
 
-#ifdef USE_UDP
 #ifdef _WIN32
 #ifdef _WIN32_WINNT
 #undef _WIN32_WINNT
@@ -46,24 +50,44 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #endif
 
 #ifdef __cplusplus
+#include <stdexcept>
+#include "pack.h"
+#include "compiler-array.h"
+#include "ntstring.h"
 
+struct _sockaddr
+{
+	union {
+		sockaddr sa;
+		sockaddr_in sin;
 #ifdef IPv6
-#define _sockaddr sockaddr_in6
-#define _af AF_INET6
-#define _pf PF_INET6
+		sockaddr_in6 sin6;
+#define DXX_IPv6(v4,v6) v6
 #else
-#define _sockaddr sockaddr_in
-#define _af AF_INET
-#define _pf PF_INET
+#define DXX_IPv6(v4,v6) v4
 #endif
-#endif
+	};
+	static int address_family()
+	{
+		return DXX_IPv6(AF_INET, AF_INET6);
+	}
+	static int resolve_address_family()
+	{
+		return DXX_IPv6(address_family(), AF_UNSPEC);
+	}
+	static int protocol_family()
+	{
+		return DXX_IPv6(PF_INET, PF_INET6);
+	}
+#undef DXX_IPv6
+};
 
 // PROTOCOL VARIABLES AND DEFINES
 extern int multi_protocol; // set and determinate used protocol
 #define MULTI_PROTO_UDP 1 // UDP protocol
 
 // What version of the multiplayer protocol is this? Increment each time something drastic changes in Multiplayer without the version number changes. Reset to 0 each time the version of the game changes
-#define MULTI_PROTO_VERSION 13
+#define MULTI_PROTO_VERSION 16
 // PROTOCOL VARIABLES AND DEFINES - END
 
 // limits for Packets (i.e. positional updates) per sec
@@ -179,11 +203,10 @@ extern const char GMNames[MULTI_GAME_TYPE_COUNT][MULTI_GAME_NAME_LENGTH];
 extern const char GMNamesShrt[MULTI_GAME_TYPE_COUNT][8];
 
 extern ubyte multibuf[MAX_MULTI_MESSAGE_LEN+4];
-extern int Net_create_objnums[MAX_NET_CREATE_OBJECTS];
-extern int Net_create_loc;
+extern array<objnum_t, MAX_NET_CREATE_OBJECTS> Net_create_objnums;
+extern unsigned Net_create_loc;
 
-extern char PowerupsInMine[MAX_POWERUP_TYPES],
-	MaxPowerupsAllowed[MAX_POWERUP_TYPES];
+extern array<uint8_t, MAX_POWERUP_TYPES> PowerupsInMine, MaxPowerupsAllowed;
 #endif
 
 enum msgsend_state_t {
@@ -199,14 +222,21 @@ enum deres_type_t {
 
 // Exported functions
 
+struct owned_remote_objnum
+{
+	int8_t owner;
+	int16_t objnum;
+};
+
 extern int GetMyNetRanking();
 extern void ClipRank (ubyte *rank);
-int objnum_remote_to_local(int remote_obj, int owner);
-int objnum_local_to_remote(int local_obj, sbyte *owner);
+objnum_t objnum_remote_to_local(int remote_obj, int owner);
+short objnum_local_to_remote(objnum_t local_obj, sbyte *owner);
+owned_remote_objnum objnum_local_to_remote(objnum_t local);
 void map_objnum_local_to_remote(int local, int remote, int owner);
-void map_objnum_local_to_local(int objnum);
+void map_objnum_local_to_local(objnum_t objnum);
 void reset_network_objects();
-int multi_objnum_is_past(int objnum);
+int multi_objnum_is_past(objnum_t objnum);
 void multi_do_ping_frame();
 
 void multi_init_objects(void);
@@ -214,35 +244,36 @@ void multi_show_player_list(void);
 void multi_do_protocol_frame(int force, int listen);
 void multi_do_frame(void);
 
-void multi_send_fire(int laser_gun, int laser_level, int laser_flags, int laser_fired, short laser_track, int is_bomb_objnum);
-void multi_send_destroy_controlcen(int objnum, int player);
+void multi_send_fire(int laser_gun, int laser_level, int laser_flags, int laser_fired, objnum_t laser_track, objptridx_t is_bomb_objnum);
+void multi_send_destroy_controlcen(objnum_t objnum, int player);
 void multi_send_endlevel_start(int);
 void multi_send_player_deres(deres_type_t type);
 void multi_send_message(void);
 void multi_send_position(int objnum);
 void multi_send_reappear();
-void multi_send_kill(objptridx_t objnum);
-void multi_send_remobj(objptridx_t objnum);
-void multi_send_door_open(int segnum, int side,ubyte flag);
-void multi_send_create_explosion(int player_num);
-void multi_send_controlcen_fire(vms_vector *to_target, int gun_num, int objnum);
+void multi_send_kill(vobjptridx_t objnum);
+void multi_send_remobj(vobjptridx_t objnum);
+void multi_send_door_open(segnum_t segnum, int side,ubyte flag);
+void multi_send_create_explosion(playernum_t);
+void multi_send_controlcen_fire(const vms_vector &to_target, int gun_num, objnum_t objnum);
 void multi_send_cloak(void);
 void multi_send_decloak(void);
-void multi_send_create_powerup(int powerup_type, int segnum, int objnum, vms_vector *pos);
+void multi_send_create_powerup(int powerup_type, segnum_t segnum, objnum_t objnum, const vms_vector &pos);
 void multi_send_play_sound(int sound_num, fix volume);
 void multi_send_score(void);
 void multi_send_trigger(int trigger);
-void multi_send_hostage_door_status(int wallnum);
+void multi_send_hostage_door_status(uint16_t wallnum);
 #if defined(DXX_BUILD_DESCENT_II)
 extern char Multi_is_guided;
-void multi_send_flags(char);
-void multi_send_drop_weapon (int objnum,int seed);
-void multi_send_drop_marker (int player,vms_vector position,char messagenum,char text[]);
+void multi_send_flags(playernum_t);
+void multi_send_drop_weapon(objnum_t objnum,int seed);
+struct marker_message_text_t;
+void multi_send_drop_marker (int player,const vms_vector &position,char messagenum,const marker_message_text_t &text);
 void multi_send_markers();
-void multi_send_guided_info (object *miss,char);
-void multi_send_orb_bonus( char pnum );
-void multi_send_got_orb( char pnum );
-void multi_send_effect_blowup(short segnum, int side, vms_vector *pnt);
+void multi_send_guided_info (vobjptr_t miss,char);
+void multi_send_orb_bonus(playernum_t pnum);
+void multi_send_got_orb(playernum_t pnum);
+void multi_send_effect_blowup(segnum_t segnum, int side, const vms_vector &pnt);
 #endif
 void multi_add_lifetime_kills(void);
 void multi_send_bounty( void );
@@ -252,42 +283,40 @@ void multi_consistency_error(int reset);
 void multi_prep_level(void);
 int multi_level_sync(void);
 int multi_endlevel(int *secret);
-int multi_endlevel_poll1(newmenu *menu, d_event *event, unused_newmenu_userdata_t *userdata);
-int multi_endlevel_poll2( newmenu *menu, d_event *event, unused_newmenu_userdata_t *userdata );
+int multi_endlevel_poll1(newmenu *menu,const d_event &event, const unused_newmenu_userdata_t *);
+int multi_endlevel_poll2( newmenu *menu,const d_event &event, const unused_newmenu_userdata_t *);
 void multi_send_endlevel_packet();
 void multi_leave_game(void);
-void multi_process_data(const ubyte *dat, int len);
-void multi_process_bigdata(const ubyte *buf, unsigned len);
+void multi_process_bigdata(playernum_t pnum, const ubyte *buf, uint_fast32_t len);
 void multi_do_death(int objnum);
-void multi_send_message_dialog(void);
 int multi_delete_extra_objects(void);
-void multi_make_ghost_player(int objnum);
-void multi_make_player_ghost(int objnum);
-void multi_reset_player_object(objptridx_t objp);
+void multi_make_ghost_player(playernum_t);
+void multi_make_player_ghost(playernum_t);
+void multi_reset_player_object(vobjptridx_t objp);
 void multi_define_macro(int key);
 void multi_send_macro(int key);
-int multi_get_kill_list(int *plist);
+int multi_get_kill_list(playernum_array_t &sorted_kills);
 void multi_new_game(void);
 void multi_sort_kill_list(void);
 void multi_reset_stuff(void);
-int get_team(int pnum);
-int multi_maybe_disable_friendly_fire(object *killer);
+int get_team(playernum_t pnum);
+int multi_maybe_disable_friendly_fire(cobjptridx_t killer);
 void multi_initiate_save_game();
 void multi_initiate_restore_game();
-void multi_disconnect_player(int pnum);
-void multi_object_to_object_rw(object *obj, object_rw *obj_rw);
-void multi_object_rw_to_object(object_rw *obj_rw, object *obj);
+void multi_disconnect_player(playernum_t);
+void multi_object_to_object_rw(vobjptr_t obj, object_rw *obj_rw);
+void multi_object_rw_to_object(object_rw *obj_rw, vobjptr_t obj);
 
 #if defined(DXX_BUILD_DESCENT_I)
-static inline void multi_send_got_flag (char a) { (void)a; }
+static inline void multi_send_got_flag (playernum_t a) { (void)a; }
 #elif defined(DXX_BUILD_DESCENT_II)
-void multi_send_got_flag (char);
+void multi_send_got_flag (playernum_t);
 #endif
 
 // Exported variables
 
 extern int Network_status;
-extern grs_bitmap Orb_icons[2];
+extern array<grs_bitmap, 2> Orb_icons;
 
 // IMPORTANT: These variables needed for player rejoining done by protocol-specific code
 extern int Network_send_objects;
@@ -299,8 +328,8 @@ extern int VerifyPlayerJoined;
 extern int Player_joining_extras;
 extern int Network_player_added;
 
-extern short kill_matrix[MAX_PLAYERS][MAX_PLAYERS];
-extern short team_kills[2];
+extern array<array<uint16_t, MAX_PLAYERS>, MAX_PLAYERS> kill_matrix;
+extern array<uint16_t, 2> team_kills;
 
 extern int multi_goto_secret;
 
@@ -313,7 +342,7 @@ extern fix Show_kill_list_timer;
 
 // Used to send network messages
 
-extern char Network_message[MAX_MESSAGE_LEN];
+extern ntstring<MAX_MESSAGE_LEN - 1> Network_message;
 extern int Network_message_reciever;
 
 // Which player 'owns' each local object for network purposes
@@ -323,7 +352,7 @@ extern int multi_quit_game;
 
 extern msgsend_state_t multi_sending_message[MAX_PLAYERS];
 extern int multi_defining_message;
-extern int multi_message_input_sub(int key);
+window_event_result multi_message_input_sub(int key);
 extern void multi_send_message_start();
 void multi_send_msgsend_state(msgsend_state_t state);
 extern int multi_powerup_is_4pack(int);
@@ -331,7 +360,7 @@ extern int multi_powerup_is_4pack(int);
 extern int PhallicLimit,PhallicMan;
 extern int Bounty_target;
 
-extern bitmap_index multi_player_textures[MAX_PLAYERS][N_PLAYER_SHIP_TEXTURES];
+extern array<array<bitmap_index, N_PLAYER_SHIP_TEXTURES>, MAX_PLAYERS> multi_player_textures;
 
 extern const char RankStrings[10][14];
 
@@ -404,7 +433,7 @@ static inline packed_game_flags pack_game_flags(const bit_game_flags *flags)
 extern struct netgame_info Netgame;
 
 int multi_i_am_master(void);
-int multi_who_is_master(void);
+playernum_t multi_who_is_master();
 void change_playernum_to(int new_pnum);
 
 // Multiplayer powerup capping
@@ -416,14 +445,14 @@ extern void multi_send_kill_goal_counts();
 void multi_check_for_killgoal_winner();
 #if defined(DXX_BUILD_DESCENT_II)
 extern void multi_send_stolen_items();
-extern void multi_send_trigger_specific(char pnum,char trig);
-extern void multi_send_door_open_specific(int pnum,int segnum, int side,ubyte flag);
-extern void multi_send_wall_status_specific (int pnum,int wallnum,ubyte type,ubyte flags,ubyte state);
-extern void multi_send_light_specific (int pnum,int segnum,ubyte val);
-void multi_send_capture_bonus (char pnum);
+void multi_send_trigger_specific(playernum_t pnum,char trig);
+void multi_send_door_open_specific(playernum_t pnum,segnum_t segnum, int side,ubyte flag);
+void multi_send_wall_status_specific (playernum_t pnum,int wallnum,ubyte type,ubyte flags,ubyte state);
+void multi_send_light_specific (playernum_t pnum,segnum_t segnum,ubyte val);
+void multi_send_capture_bonus (playernum_t pnum);
 int multi_all_players_alive();
-void multi_send_seismic (fix64,fix64);
-void multi_send_drop_blobs(char);
+void multi_send_seismic(fix);
+void multi_send_drop_blobs(playernum_t);
 void multi_send_sound_function (char,char);
 void DropFlag();
 int multi_powerup_is_allowed (int);
@@ -446,7 +475,7 @@ void save_hoard_data(void);
  * Contains protocol-specific data with designated prefixes and general player-related data.
  * Note that not all of these infos will be sent to other users - some are used and/or set locally, only.
  */
-struct netplayer_info
+struct netplayer_info : prohibit_void_ptr<netplayer_info>
 {
 #if defined(USE_UDP)
 	union
@@ -455,24 +484,23 @@ struct netplayer_info
 		struct
 		{
 			struct _sockaddr	addr; // IP address of this peer
-			ubyte				isyou; // This flag is set true while sending info to tell player his designated (re)join position
 		} udp;
 #endif
 	} protocol;	
 #endif
-	char						callsign[CALLSIGN_LEN+1];
+	callsign_t					callsign;
 	sbyte						connected;
 	ubyte						rank;
 	fix							ping;
 	fix64							LastPacketTime;
-} __pack__;
+};
 
 /*
  * The Network Game structure
  * Contains protocol-specific data with designated prefixes and general game-related data.
  * Note that not all of these infos will be sent to clients - some are used and/or set locally, only.
  */
-struct netgame_info
+struct netgame_info : prohibit_void_ptr<netgame_info>, ignore_window_pointer_t
 {
 #if defined(USE_UDP)
 	union
@@ -483,15 +511,16 @@ struct netgame_info
 			struct _sockaddr		addr; // IP address of this netgame's host
 			short				program_iver[4]; // IVER of program for version checking
 			sbyte				valid; // Status of Netgame info: -1 = Failed, Wrong version; 0 = No info, yet; 1 = Success
+			uint8_t				your_index; // Tell player his designated (re)join position in players[]
 			fix				GameID;
 		} udp;
 #endif
 	} protocol;	
 #endif
-	struct netplayer_info 				players[MAX_PLAYERS+4];
-	char    					game_name[NETGAME_NAME_LEN+1];
-	char    					mission_title[MISSION_NAME_LEN+1];
-	char    					mission_name[9];
+	array<netplayer_info, MAX_PLAYERS> 				players;
+	ntstring<NETGAME_NAME_LEN> game_name;
+	ntstring<MISSION_NAME_LEN> mission_title;
+	ntstring<8> mission_name;
 	int     					levelnum;
 	ubyte   					gamemode;
 	ubyte   					RefusePlayers;
@@ -503,6 +532,7 @@ struct netgame_info
 	bit_game_flags game_flag;
 	ubyte   					team_vector;
 	u_int32_t					AllowedItems;
+#if defined(DXX_BUILD_DESCENT_II)
 	/*
 	 * Only used in Descent II, but defined in both for historical
 	 * reasons
@@ -510,31 +540,67 @@ struct netgame_info
 	short						Allow_marker_view;
 	short						AlwaysLighting;
 	/* End Descent II */
+#endif
 	short						ShowEnemyNames;
 	short						BrightPlayers;
 	short						InvulAppear;
-	char						team_name[2][CALLSIGN_LEN+1];
-	int						locations[MAX_PLAYERS];
-	short						kills[MAX_PLAYERS][MAX_PLAYERS];
 	ushort						segments_checksum;
-	short						team_kills[2];
-	short						killed[MAX_PLAYERS];
-	short						player_kills[MAX_PLAYERS];
 	int						KillGoal;
 	fix						PlayTimeAllowed;
 	fix						level_time;
 	int						control_invul_time;
 	int						monitor_vector;
-	int						player_score[MAX_PLAYERS];
-	ubyte						player_flags[MAX_PLAYERS];
 	short						PacketsPerSec;
 	ubyte						PacketLossPrevention;
 	ubyte						NoFriendlyFire;
+	array<callsign_t, 2>					team_name;
+	array<uint32_t, MAX_PLAYERS>						locations;
+	array<array<uint16_t, MAX_PLAYERS>, MAX_PLAYERS>						kills;
+	array<uint16_t, 2>						team_kills;
+	array<uint16_t, MAX_PLAYERS>						killed;
+	array<uint16_t, MAX_PLAYERS>						player_kills;
+	array<uint32_t, MAX_PLAYERS>						player_score;
+	array<uint8_t, MAX_PLAYERS>						player_flags;
 #ifdef USE_TRACKER
 	ubyte						Tracker;
 	int						TrackerGameId;
 #endif
-} __pack__;
+};
+
+namespace multi
+{
+	struct level_checksum_mismatch : std::runtime_error
+	{
+		level_checksum_mismatch() :
+			runtime_error("level checksum mismatch")
+		{
+		}
+	};
+	struct local_player_not_playing : std::runtime_error
+	{
+		local_player_not_playing() :
+			runtime_error("local player not playing")
+		{
+		}
+	};
+}
+
+/* Stub for mods that remap player colors */
+static inline unsigned get_player_color(unsigned pnum)
+{
+	return pnum;
+}
+
+static inline unsigned get_team_color(unsigned tnum)
+{
+	return tnum;
+}
+
+static inline unsigned get_player_or_team_color(unsigned pnum)
+{
+	return Game_mode & GM_TEAM
+		? get_team_color(get_team(pnum))
+		: get_player_color(pnum);
+}
 
 #endif
-#endif /* _MULTI_H */

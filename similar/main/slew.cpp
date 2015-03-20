@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -48,7 +54,7 @@ short old_joy_x,old_joy_y;	//position last time around
 
 // -------------------------------------------------------------------
 //say start slewing with this object
-void slew_init(object *obj)
+void slew_init(const vobjptr_t obj)
 {
 	slew_obj = obj;
 
@@ -63,7 +69,7 @@ int slew_stop()
 {
 	if (!slew_obj || slew_obj->control_type!=CT_SLEW) return 0;
 
-	vm_vec_zero(&slew_obj->mtype.phys_info.velocity);
+	vm_vec_zero(slew_obj->mtype.phys_info.velocity);
 	return 1;
 }
 
@@ -78,11 +84,10 @@ void slew_reset_orient()
 
 }
 
-static int do_slew_movement(object *obj, int check_keys )
+static int do_slew_movement(const vobjptridx_t obj, int check_keys )
 {
 	int moved = 0;
-	vms_vector svel, movement;				//scaled velocity (per this frame)
-	vms_matrix rotmat,new_pm;
+	vms_vector svel;				//scaled velocity (per this frame)
 	vms_angvec rotang;
 
 	if (!slew_obj || slew_obj->control_type!=CT_SLEW) return 0;
@@ -123,19 +128,17 @@ static int do_slew_movement(object *obj, int check_keys )
 
 	moved = rotang.p | rotang.b | rotang.h;
 
-	vm_angles_2_matrix(&rotmat,&rotang);
-	vm_matrix_x_matrix(&new_pm,&obj->orient,&rotmat);
-	obj->orient = new_pm;
-	vm_transpose_matrix(&new_pm);		//make those columns rows
+	const auto &&rotmat = vm_angles_2_matrix(rotang);
+	const auto new_pm = vm_transposed_matrix(obj->orient = vm_matrix_x_matrix(obj->orient,rotmat));		//make those columns rows
 
 	moved |= obj->mtype.phys_info.velocity.x | obj->mtype.phys_info.velocity.y | obj->mtype.phys_info.velocity.z;
 
 	svel = obj->mtype.phys_info.velocity;
-	vm_vec_scale(&svel,FrameTime);		//movement in this frame
-	vm_vec_rotate(&movement,&svel,&new_pm);
+	vm_vec_scale(svel,FrameTime);		//movement in this frame
+	const auto movement = vm_vec_rotate(svel,new_pm);
 
 //	obj->last_pos = obj->pos;
-	vm_vec_add2(&obj->pos,&movement);
+	vm_vec_add2(obj->pos,movement);
 
 	moved |= (movement.x || movement.y || movement.z);
 
@@ -148,7 +151,6 @@ static int do_slew_movement(object *obj, int check_keys )
 //do slew for this frame
 int slew_frame(int check_keys)
 {
-	return do_slew_movement( slew_obj, !check_keys );
-
+	return do_slew_movement(vobjptridx(slew_obj), !check_keys);
 }
 

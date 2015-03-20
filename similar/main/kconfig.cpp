@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -32,6 +38,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #include "window.h"
 #include "console.h"
 #include "palette.h"
+#include "physfsx.h"
 #include "game.h"
 #include "gamefont.h"
 #include "iff.h"
@@ -61,6 +68,7 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #endif
 
 #include "compiler-lengthof.h"
+#include "compiler-range_for.h"
 
 #ifndef RELEASE
 #define TABLE_CREATION 1
@@ -118,9 +126,8 @@ struct kc_mitem {
 	ubyte value;		// what key,button,etc
 };
 
-struct kc_menu
+struct kc_menu : embed_window_pointer_t
 {
-	window	*wind;
 	const char *litems;
 	const kc_item	*items;
 	kc_mitem	*mitems;
@@ -134,18 +141,18 @@ struct kc_menu
 	ubyte	mouse_state;
 };
 
-const ubyte DefaultKeySettings[3][MAX_CONTROLS] = {
+const array<array<ubyte, MAX_CONTROLS>, 3> DefaultKeySettings{{
 #if defined(DXX_BUILD_DESCENT_I)
-{0xc8,0x48,0xd0,0x50,0xcb,0x4b,0xcd,0x4d,0x38,0xff,0xff,0x4f,0xff,0x51,0xff,0x4a,0xff,0x4e,0xff,0xff,0x10,0x47,0x12,0x49,0x1d,0x9d,0x39,0xff,0x21,0xff,0x1e,0xff,0x2c,0xff,0x30,0xff,0x13,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xf,0xff,0x33,0x0,0x34,0x0},
-{0x0,0x1,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x1,0x0,0x0,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x0,0x0},
-{0x0,0x1,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x1,0x0,0x0,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0xff,0xff,0xff,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0},
+	{{0xc8,0x48,0xd0,0x50,0xcb,0x4b,0xcd,0x4d,0x38,0xff,0xff,0x4f,0xff,0x51,0xff,0x4a,0xff,0x4e,0xff,0xff,0x10,0x47,0x12,0x49,0x1d,0x9d,0x39,0xff,0x21,0xff,0x1e,0xff,0x2c,0xff,0x30,0xff,0x13,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xf,0xff,0x33,0x0,0x34,0x0}},
+	{{0x0,0x1,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x1,0x0,0x0,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x0,0x0}},
+	{{0x0,0x1,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x1,0x0,0x0,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0xff,0xff,0xff,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0}},
 #elif defined(DXX_BUILD_DESCENT_II)
-{0xc8,0x48,0xd0,0x50,0xcb,0x4b,0xcd,0x4d,0x38,0xff,0xff,0x4f,0xff,0x51,0xff,0x4a,0xff,0x4e,0xff,0xff,0x10,0x47,0x12,0x49,0x1d,0x9d,0x39,0xff,0x21,0xff,0x1e,0xff,0x2c,0xff,0x30,0xff,0x13,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xf,0xff,0x1f,0xff,0x33,0xff,0x34,0xff,0x23,0xff,0x14,0xff,0xff,0xff,0x0,0x0},
-{0x0,0x1,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x1,0x0,0x0,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x0,0x0,0x0,0x0},
-{0x0,0x1,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x1,0x0,0x0,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x0,0x0,0x0,0x0,0x0},
+	{{0xc8,0x48,0xd0,0x50,0xcb,0x4b,0xcd,0x4d,0x38,0xff,0xff,0x4f,0xff,0x51,0xff,0x4a,0xff,0x4e,0xff,0xff,0x10,0x47,0x12,0x49,0x1d,0x9d,0x39,0xff,0x21,0xff,0x1e,0xff,0x2c,0xff,0x30,0xff,0x13,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xf,0xff,0x1f,0xff,0x33,0xff,0x34,0xff,0x23,0xff,0x14,0xff,0xff,0xff,0x0,0x0}},
+	{{0x0,0x1,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x1,0x0,0x0,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x0,0x0,0x0,0x0}},
+	{{0x0,0x1,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x1,0x0,0x0,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0x0,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x0,0x0,0x0,0x0,0x0}},
 #endif
-};
-const ubyte DefaultKeySettingsRebirth[MAX_DXX_REBIRTH_CONTROLS] = { 0x2,0xff,0xff,0x3,0xff,0xff,0x4,0xff,0xff,0x5,0xff,0xff,0x6,0xff,0xff,0x7,0xff,0xff,0x8,0xff,0xff,0x9,0xff,0xff,0xa,0xff,0xff,0xb,0xff,0xff };
+}};
+const array<ubyte, MAX_DXX_REBIRTH_CONTROLS> DefaultKeySettingsRebirth{{ 0x2,0xff,0xff,0x3,0xff,0xff,0x4,0xff,0xff,0x5,0xff,0xff,0x6,0xff,0xff,0x7,0xff,0xff,0x8,0xff,0xff,0x9,0xff,0xff,0xa,0xff,0xff,0xb,0xff,0xff }};
 
 //	  id,  x,  y, w1, w2,  u,  d,   l, r,     text,   type, value
 static const kc_item kc_keyboard[] = {
@@ -589,134 +596,110 @@ static const char *const kcl_rebirth =
 static kc_mitem kcm_rebirth[lengthof(kc_rebirth)];
 
 static void kc_drawinput( const kc_item &item, kc_mitem& mitem, int is_current, const char *label );
-static void kc_change_key( kc_menu &menu, d_event *event, kc_mitem& mitem );
-static void kc_change_joybutton( kc_menu &menu, d_event *event, kc_mitem& mitem );
-static void kc_change_mousebutton( kc_menu &menu, d_event *event, kc_mitem& mitem );
-static void kc_change_joyaxis( kc_menu &menu, d_event *event, kc_mitem& mitem );
-static void kc_change_mouseaxis( kc_menu &menu, d_event *event, kc_mitem& mitem );
+static void kc_change_key( kc_menu &menu,const d_event &event, kc_mitem& mitem );
+static void kc_change_joybutton( kc_menu &menu,const d_event &event, kc_mitem& mitem );
+static void kc_change_mousebutton( kc_menu &menu,const d_event &event, kc_mitem& mitem );
+static void kc_change_joyaxis( kc_menu &menu,const d_event &event, kc_mitem& mitem );
+static void kc_change_mouseaxis( kc_menu &menu,const d_event &event, kc_mitem& mitem );
 static void kc_change_invert( kc_menu *menu, kc_mitem * item );
 static void kc_drawquestion( kc_menu *menu, const kc_item *item );
 
 #ifdef TABLE_CREATION
-static int find_item_at( const kc_item * items, unsigned nitems, int x, int y )
+static const kc_item *find_item_at(const kc_item *const ib, const kc_item *const ie, int x, int y)
 {
-	for (unsigned i=0; i<nitems; i++ )	{
-		if ( ((items[i].xinput)==x) && (items[i].y==y))
-			return i;
+	const auto predicate = [=](const kc_item &i) {
+		return i.xinput == x && i.y == y;
+	};
+	return std::find_if(ib, ie, predicate);
+}
+
+namespace {
+
+class find_item_single
+{
+	uint_fast32_t current;
+	const uint_fast32_t limit;
+public:
+	find_item_single(uint_fast32_t c, uint_fast32_t l) :
+		current(c), limit(l)
+	{
 	}
-	return -1;
+	uint_fast32_t value() const { return current; }
+	/* Return true on reset, false otherwise */
+	bool decrement()
+	{
+		if (current)
+			return -- current, false;
+		return current = limit - 1, true;
+	}
+	/* Return true on reset, false otherwise */
+	bool increment()
+	{
+		if (current != limit)
+			return ++ current, false;
+		return current = 0, true;
+	}
+};
+
+class find_item_state
+{
+	find_item_single x, y;
+public:
+	find_item_state(const kc_item &citem, const uint_fast32_t xl, const uint_fast32_t yl) :
+		x(citem.xinput, xl), y(citem.y, yl)
+	{
+	}
+	uint_fast32_t x_value() const { return x.value(); }
+	uint_fast32_t y_value() const { return y.value(); }
+	bool x_decrement() { return x.decrement(); }
+	bool y_decrement() { return y.decrement(); }
+	bool x_increment() { return x.increment(); }
+	bool y_increment() { return y.increment(); }
+};
+
 }
 
-static int find_next_item_up( const kc_item * items, unsigned nitems, int citem )
+template <bool (find_item_state::*outer_step)(), bool (find_item_state::*inner_step)()>
+static inline std::ptrdiff_t find_next_item(const kc_item *const ib, const kc_item *const ie, find_item_state state)
 {
-	int x, y, i;
-
-	y = items[citem].y;
-	x = items[citem].xinput;
-	
-	do {	
-		y--;
-		if ( y < 0 ) {
-			y = grd_curcanv->cv_bitmap.bm_h-1;
-			x--;
-			if ( x < 0 ) {
-				x = grd_curcanv->cv_bitmap.bm_w-1;
+	bool looped = false;
+	for (;;)
+	{
+		if (unlikely((state.*outer_step)()))
+			if (unlikely((state.*inner_step)()))
+			{
+				if (unlikely(looped))
+					/* Sanity check.  If looped is true and inner_step
+					 * returned true again, then the entire area has
+					 * already been searched.
+					 */
+					return std::distance(ib, ie);
+				looped = true;
 			}
-		}
-		i = find_item_at( items, nitems, x, y );
-	} while ( i < 0 );
-	
-	return i;
+		auto i = find_item_at(ib, ie, state.x_value(), state.y_value());
+		if (i != ie)
+			return std::distance(ib, i);
+	}
 }
 
-static int find_next_item_down( const kc_item * items, unsigned nitems, int citem )
+static std::ptrdiff_t find_next_item_up(const kc_item *const ib, const kc_item *const ie, const find_item_state &state)
 {
-	int x, y, i;
-
-	y = items[citem].y;
-	x = items[citem].xinput;
-	
-	do {	
-		y++;
-		if ( y > grd_curcanv->cv_bitmap.bm_h-1 ) {
-			y = 0;
-			x++;
-			if ( x > grd_curcanv->cv_bitmap.bm_w-1 ) {
-				x = 0;
-			}
-		}
-		i = find_item_at( items, nitems, x, y );
-	} while ( i < 0 );
-	
-	return i;
+	return find_next_item<&find_item_state::y_decrement, &find_item_state::x_decrement>(ib, ie, state);
 }
 
-static int find_next_item_right( const kc_item * items, unsigned nitems, int citem )
+static std::ptrdiff_t find_next_item_down(const kc_item *const ib, const kc_item *const ie, const find_item_state &state)
 {
-	int x, y, i;
-
-	y = items[citem].y;
-	x = items[citem].xinput;
-	
-	do {	
-		x++;
-		if ( x > grd_curcanv->cv_bitmap.bm_w-1 ) {
-			x = 0;
-			y++;
-			if ( y > grd_curcanv->cv_bitmap.bm_h-1 ) {
-				y = 0;
-			}
-		}
-		i = find_item_at( items, nitems, x, y );
-	} while ( i < 0 );
-	
-	return i;
+	return find_next_item<&find_item_state::y_increment, &find_item_state::x_increment>(ib, ie, state);
 }
 
-static int find_next_item_left( const kc_item * items, unsigned nitems, int citem )
+static std::ptrdiff_t find_next_item_right(const kc_item *const ib, const kc_item *const ie, const find_item_state &state)
 {
-	int x, y, i;
-
-	y = items[citem].y;
-	x = items[citem].xinput;
-	
-	do {	
-		x--;
-		if ( x < 0 ) {
-			x = grd_curcanv->cv_bitmap.bm_w-1;
-			y--;
-			if ( y < 0 ) {
-				y = grd_curcanv->cv_bitmap.bm_h-1;
-			}
-		}
-		i = find_item_at( items, nitems, x, y );
-	} while ( i < 0 );
-	
-	return i;
+	return find_next_item<&find_item_state::x_increment, &find_item_state::y_increment>(ib, ie, state);
 }
 
-template <unsigned nitems>
-static int find_next_item_up( const kc_item (&items)[nitems], int citem )
+static std::ptrdiff_t find_next_item_left(const kc_item *const ib, const kc_item *const ie, const find_item_state &state)
 {
-	return find_next_item_up(items, nitems, citem);
-}
-
-template <unsigned nitems>
-static int find_next_item_down( const kc_item (&items)[nitems], int citem )
-{
-	return find_next_item_down(items, nitems, citem);
-}
-
-template <unsigned nitems>
-static int find_next_item_right( const kc_item (&items)[nitems], int citem )
-{
-	return find_next_item_right(items, nitems, citem);
-}
-
-template <unsigned nitems>
-static int find_next_item_left( const kc_item (&items)[nitems], int citem )
-{
-	return find_next_item_left(items, nitems, citem);
+	return find_next_item<&find_item_state::x_decrement, &find_item_state::y_decrement>(ib, ie, state);
 }
 
 static const char btype_text[][13] = {
@@ -732,16 +715,22 @@ template <std::size_t N>
 static void print_create_table_items(PHYSFS_file *fp, const char *type, const char *litems, const kc_item (&items)[N])
 {
 	PHYSFSX_printf( fp, "\nstatic const kc_item kc_%s[] = {\n", type );
-	for (unsigned i=0; i < N; ++i ) {
+	const grs_bitmap &cv_bitmap = grd_curcanv->cv_bitmap;
+	const uint_fast32_t bm_w = cv_bitmap.bm_w, bm_h = cv_bitmap.bm_h;
+	range_for (auto &i, items)
+	{
 		short u,d,l,r;
-		u = find_next_item_up( items, i);
-		d = find_next_item_down( items, i);
-		l = find_next_item_left( items, i);
-		r = find_next_item_right( items, i);
+		const auto ib = std::begin(items);
+		const auto ie = std::end(items);
+		const find_item_state s{i, bm_w, bm_h};
+		u = find_next_item_up(ib, ie, s);
+		d = find_next_item_down(ib, ie, s);
+		l = find_next_item_left(ib, ie, s);
+		r = find_next_item_right(ib, ie, s);
 		PHYSFSX_printf( fp, "\t{ %3d,%3d,%3d,%3d,%3hd,%3hd,%3hd,%3hd, BT_%s },\n", 
-					   items[i].x, items[i].y, items[i].xinput, items[i].w2,
+					   i.x, i.y, i.xinput, i.w2,
 					   u, d, l, r,
-					   btype_text[items[i].type] );
+					   btype_text[i.type] );
 	}
 	PHYSFSX_printf( fp, "};\n"
 		"static const char *const kcl_%s =\n", type);
@@ -811,21 +800,20 @@ static int get_item_height(const kc_item &item, const kc_mitem &mitem)
 static void kconfig_draw(kc_menu *menu)
 {
 	grs_canvas * save_canvas = grd_curcanv;
-	grs_font * save_font;
 	int w = FSPACX(290), h = FSPACY(170);
 
 	gr_set_current_canvas(NULL);
 	nm_draw_background(((SWIDTH-w)/2)-BORDERX,((SHEIGHT-h)/2)-BORDERY,((SWIDTH-w)/2)+w+BORDERX,((SHEIGHT-h)/2)+h+BORDERY);
 
-	gr_set_current_canvas(window_get_canvas(menu->wind));
+	gr_set_current_canvas(window_get_canvas(*menu->wind));
 
-	save_font = grd_curcanv->cv_font;
-	grd_curcanv->cv_font = MEDIUM3_FONT;
+	const grs_font *save_font = grd_curcanv->cv_font;
+	gr_set_curfont(MEDIUM3_FONT);
 
 	Assert(!strchr( menu->title, '\n' ));
 	gr_string( 0x8000, FSPACY(8), menu->title );
 
-	grd_curcanv->cv_font = GAME_FONT;
+	gr_set_curfont(GAME_FONT);
 	gr_set_fontcolor( BM_XRGB(28,28,28), -1 );
 	gr_string( 0x8000, FSPACY(21), "Enter changes, ctrl-d deletes, ctrl-r resets defaults, ESC exits");
 	gr_set_fontcolor( BM_XRGB(28,28,28), -1 );
@@ -956,13 +944,13 @@ static inline int in_bounds(unsigned mx, unsigned my, unsigned x1, unsigned xw, 
 	return 1;
 }
 
-static int kconfig_mouse(window *wind, d_event *event, kc_menu *menu)
+static window_event_result kconfig_mouse(window *wind,const d_event &event, kc_menu *menu)
 {
 	grs_canvas * save_canvas = grd_curcanv;
 	int mx, my, mz, x1, y1;
-	int rval = 0;
+	window_event_result rval = window_event_result::ignored;
 
-	gr_set_current_canvas(window_get_canvas(wind));
+	gr_set_current_canvas(window_get_canvas(*wind));
 	
 	if (menu->mouse_state)
 	{
@@ -975,12 +963,12 @@ static int kconfig_mouse(window *wind, d_event *event, kc_menu *menu)
 			y1 = grd_curcanv->cv_bitmap.bm_y + FSPACY(menu->items[i].y);
 			if (in_bounds(mx, my, x1, FSPACX(menu->items[i].w2), y1, item_height)) {
 				menu->citem = i;
-				rval = 1;
+				rval = window_event_result::handled;
 				break;
 			}
 		}
 	}
-	else if (event->type == EVENT_MOUSE_BUTTON_UP)
+	else if (event.type == EVENT_MOUSE_BUTTON_UP)
 	{
 		int item_height;
 		
@@ -990,13 +978,13 @@ static int kconfig_mouse(window *wind, d_event *event, kc_menu *menu)
 		y1 = grd_curcanv->cv_bitmap.bm_y + FSPACY(menu->items[menu->citem].y);
 		if (in_bounds(mx, my, x1, FSPACX(menu->items[menu->citem].w2), y1, item_height)) {
 			kconfig_start_changing(menu);
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 		else
 		{
 			// Click out of changing mode - kreatordxx
 			menu->changing = 0;
-			rval = 1;
+			rval = window_event_result::handled;
 		}
 	}
 	
@@ -1006,13 +994,13 @@ static int kconfig_mouse(window *wind, d_event *event, kc_menu *menu)
 }
 
 template <std::size_t M, std::size_t C>
-static void reset_mitem_values(kc_mitem (&m)[M], const ubyte (&c)[C])
+static void reset_mitem_values(kc_mitem (&m)[M], const array<ubyte, C> &c)
 {
-	for (unsigned i=0; i < min(lengthof(m), lengthof(c)); i++)
+	for (unsigned i=0; i < min(lengthof(m), C); i++)
 		m[i].value = c[i];
 }
 
-static int kconfig_key_command(window *wind, d_event *event, kc_menu *menu)
+static window_event_result kconfig_key_command(window *wind,const d_event &event, kc_menu *menu)
 {
 	int k;
 
@@ -1020,13 +1008,12 @@ static int kconfig_key_command(window *wind, d_event *event, kc_menu *menu)
 
 	// when changing, process no keys instead of ESC
 	if (menu->changing && (k != -2 && k != KEY_ESC))
-		return 0;
-
+		return window_event_result::ignored;
 	switch (k)
 	{
 		case KEY_CTRLED+KEY_D:
 			menu->mitems[menu->citem].value = 255;
-			return 1;
+			return window_event_result::handled;
 		case KEY_CTRLED+KEY_R:	
 			if ( menu->items==kc_keyboard )
 				reset_mitem_values(kcm_keyboard, DefaultKeySettings[0]);
@@ -1038,47 +1025,47 @@ static int kconfig_key_command(window *wind, d_event *event, kc_menu *menu)
 				reset_mitem_values(kcm_mouse, DefaultKeySettings[2]);
 			if ( menu->items==kc_rebirth )
 				reset_mitem_values(kcm_rebirth, DefaultKeySettingsRebirth);
-			return 1;
+			return window_event_result::handled;
 		case KEY_DELETE:
 			menu->mitems[menu->citem].value=255;
-			return 1;
+			return window_event_result::handled;
 		case KEY_UP: 		
 		case KEY_PAD8:
 			menu->citem = menu->items[menu->citem].u; 
-			return 1;
+			return window_event_result::handled;
 		case KEY_DOWN:
 		case KEY_PAD2:
 			menu->citem = menu->items[menu->citem].d; 
-			return 1;
+			return window_event_result::handled;
 		case KEY_LEFT:
 		case KEY_PAD4:
 			menu->citem = menu->items[menu->citem].l; 
-			return 1;
+			return window_event_result::handled;
 		case KEY_RIGHT:
 		case KEY_PAD6:
 			menu->citem = menu->items[menu->citem].r; 
-			return 1;
+			return window_event_result::handled;
 		case KEY_ENTER:
 		case KEY_PADENTER:
 			kconfig_start_changing(menu);
-			return 1;
+			return window_event_result::handled;
 		case -2:	
 		case KEY_ESC:
 			if (menu->changing)
 				menu->changing = 0;
 			else
-				window_close(wind);
-			return 1;
+			{
+				return window_event_result::close;
+			}
+			return window_event_result::handled;
 #ifdef TABLE_CREATION
-		case KEY_F12:	{
-				PHYSFS_file * fp;
-				fp = PHYSFSX_openWriteBuffered( "kconfig.cod" );
-				
+		case KEY_F12:
+			if (auto fp = PHYSFSX_openWriteBuffered("kconfig.cod"))
+			{
 				PHYSFSX_printf( fp, "const ubyte DefaultKeySettings[3][MAX_CONTROLS] = {\n" );
 				for (unsigned i=0; i<3; i++ )	{
-					int j;
 					PHYSFSX_printf( fp, "{0x%2x", PlayerCfg.KeySettings[i][0] );
-					for (j=1; j<MAX_CONTROLS; j++ )
+					for (int j=1; j<MAX_CONTROLS; j++ )
 						PHYSFSX_printf( fp, ",0x%2x", PlayerCfg.KeySettings[i][j] );
 					PHYSFSX_printf( fp, "},\n" );
 				}
@@ -1088,10 +1075,8 @@ static int kconfig_key_command(window *wind, d_event *event, kc_menu *menu)
 				print_create_table_items(fp, "joystick", kcl_joystick, kc_joystick);
 				print_create_table_items(fp, "mouse", kcl_mouse, kc_mouse);
 				print_create_table_items(fp, "rebirth", kcl_rebirth, kc_rebirth);
-				PHYSFS_close(fp);
-				
 			}
-			return 1;
+			return window_event_result::handled;
 #endif
 		case 0:		// some other event
 			break;
@@ -1099,13 +1084,12 @@ static int kconfig_key_command(window *wind, d_event *event, kc_menu *menu)
 		default:
 			break;
 	}
-	
-	return 0;
+	return window_event_result::ignored;
 }
 
-static int kconfig_handler(window *wind, d_event *event, kc_menu *menu)
+static window_event_result kconfig_handler(window *wind,const d_event &event, kc_menu *menu)
 {
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_WINDOW_ACTIVATED:
 			game_flush_inputs();
@@ -1118,26 +1102,28 @@ static int kconfig_handler(window *wind, d_event *event, kc_menu *menu)
 		case EVENT_MOUSE_BUTTON_DOWN:
 		case EVENT_MOUSE_BUTTON_UP:
 #if defined(DXX_BUILD_DESCENT_I)
-			if (menu->changing && (menu->items[menu->citem].type == BT_MOUSE_BUTTON) && (event->type == EVENT_MOUSE_BUTTON_DOWN))
+			if (menu->changing && (menu->items[menu->citem].type == BT_MOUSE_BUTTON) && (event.type == EVENT_MOUSE_BUTTON_DOWN))
 #elif defined(DXX_BUILD_DESCENT_II)
-			if (menu->changing && (menu->items[menu->citem].type == BT_MOUSE_BUTTON) && (event->type == EVENT_MOUSE_BUTTON_UP))
+			if (menu->changing && (menu->items[menu->citem].type == BT_MOUSE_BUTTON) && (event.type == EVENT_MOUSE_BUTTON_UP))
 #endif
 			{
 				kc_change_mousebutton(*menu, event, menu->mitems[menu->citem] );
-				menu->mouse_state = (event->type == EVENT_MOUSE_BUTTON_DOWN);
-				return 1;
+				menu->mouse_state = (event.type == EVENT_MOUSE_BUTTON_DOWN);
+				return window_event_result::handled;
 			}
 
 			if (event_mouse_get_button(event) == MBTN_RIGHT)
 			{
 				if (!menu->changing)
-					window_close(wind);
-				return 1;
+				{
+					return window_event_result::close;
+				}
+				return window_event_result::handled;
 			}
 			else if (event_mouse_get_button(event) != MBTN_LEFT)
-				return 0;
+				return window_event_result::ignored;
 
-			menu->mouse_state = (event->type == EVENT_MOUSE_BUTTON_DOWN);
+			menu->mouse_state = (event.type == EVENT_MOUSE_BUTTON_DOWN);
 			return kconfig_mouse(wind, event, menu);
 
 		case EVENT_MOUSE_MOVED:
@@ -1162,11 +1148,11 @@ static int kconfig_handler(window *wind, d_event *event, kc_menu *menu)
 
 		case EVENT_KEY_COMMAND:
 		{
-			int rval = kconfig_key_command(wind, event, menu);
-			if (rval)
+			window_event_result rval = kconfig_key_command(wind, event, menu);
+			if (rval != window_event_result::ignored)
 				return rval;
 			if (menu->changing && menu->items[menu->citem].type == BT_KEY) kc_change_key(*menu, event, menu->mitems[menu->citem]);
-			return 0;
+			return window_event_result::ignored;
 		}
 
 		case EVENT_IDLE:
@@ -1182,7 +1168,7 @@ static int kconfig_handler(window *wind, d_event *event, kc_menu *menu)
 			break;
 			
 		case EVENT_WINDOW_CLOSE:
-			d_free(menu);
+			delete menu;
 			
 			// Update save values...
 			
@@ -1197,26 +1183,17 @@ static int kconfig_handler(window *wind, d_event *event, kc_menu *menu)
 			
 			for (unsigned i=0; i < lengthof(kc_rebirth); i++)
 				PlayerCfg.KeySettingsRebirth[i] = kcm_rebirth[i].value;
-			return 0;	// continue closing
-			break;
-			
+			return window_event_result::ignored;	// continue closing
 		default:
-			return 0;
+			return window_event_result::ignored;
 			break;
 	}
-	
-	return 1;
+	return window_event_result::handled;
 }
 
 static void kconfig_sub(const char *litems, const kc_item * items,kc_mitem *mitems,int nitems, const char *title)
 {
-	kc_menu *menu;
-
-	CALLOC(menu, kc_menu, 1);
-	
-	if (!menu)
-		return;
-
+	kc_menu *menu = new kc_menu{};
 	menu->items = items;
 	menu->litems = litems;
 	menu->mitems = mitems;
@@ -1228,7 +1205,7 @@ static void kconfig_sub(const char *litems, const kc_item * items,kc_mitem *mite
 
 	if (!(menu->wind = window_create(&grd_curscreen->sc_canvas, (SWIDTH - FSPACX(320))/2, (SHEIGHT - FSPACY(200))/2, FSPACX(320), FSPACY(200),
 					   kconfig_handler, menu)))
-		d_free(menu);
+		delete menu;
 }
 
 template <std::size_t N>
@@ -1282,7 +1259,7 @@ static void kc_drawquestion( kc_menu *menu, const kc_item *item )
 #if defined(DXX_BUILD_DESCENT_I)
 	int c = BM_XRGB(21,0,24);
 
-	gr_setcolor( gr_fade_table[fades[menu->q_fade_i]*256+c] );
+	gr_setcolor( gr_fade_table[fades[menu->q_fade_i]][c] );
 #elif defined(DXX_BUILD_DESCENT_II)
 	gr_setcolor(BM_XRGB(21*fades[menu->q_fade_i]/31,0,24*fades[menu->q_fade_i]/31));
 #endif
@@ -1311,11 +1288,11 @@ static void kc_set_exclusive_binding(kc_menu &menu, kc_mitem &mitem, unsigned ty
 	menu.changing = 0;
 }
 
-static void kc_change_key( kc_menu &menu, d_event *event, kc_mitem &mitem )
+static void kc_change_key( kc_menu &menu,const d_event &event, kc_mitem &mitem )
 {
 	ubyte keycode = 255;
 
-	Assert(event->type == EVENT_KEY_COMMAND);
+	Assert(event.type == EVENT_KEY_COMMAND);
 	keycode = event_key_get_raw(event);
 
 	if (!(key_properties[keycode].key_text))
@@ -1328,31 +1305,31 @@ static void kc_change_key( kc_menu &menu, d_event *event, kc_mitem &mitem )
 	kc_set_exclusive_binding(menu, mitem, BT_KEY, keycode);
 }
 
-static void kc_change_joybutton( kc_menu &menu, d_event *event, kc_mitem &mitem )
+static void kc_change_joybutton( kc_menu &menu,const d_event &event, kc_mitem &mitem )
 {
 	int button = 255;
 
-	Assert(event->type == EVENT_JOYSTICK_BUTTON_DOWN);
+	Assert(event.type == EVENT_JOYSTICK_BUTTON_DOWN);
 	button = event_joystick_get_button(event);
 
 	kc_set_exclusive_binding(menu, mitem, BT_JOY_BUTTON, button);
 }
 
-static void kc_change_mousebutton( kc_menu &menu, d_event *event, kc_mitem &mitem)
+static void kc_change_mousebutton( kc_menu &menu,const d_event &event, kc_mitem &mitem)
 {
 	int button;
 
-	Assert(event->type == EVENT_MOUSE_BUTTON_DOWN || event->type == EVENT_MOUSE_BUTTON_UP);
+	Assert(event.type == EVENT_MOUSE_BUTTON_DOWN || event.type == EVENT_MOUSE_BUTTON_UP);
 	button = event_mouse_get_button(event);
 
 	kc_set_exclusive_binding(menu, mitem, BT_MOUSE_BUTTON, button);
 }
 
-static void kc_change_joyaxis( kc_menu &menu, d_event *event, kc_mitem &mitem )
+static void kc_change_joyaxis( kc_menu &menu,const d_event &event, kc_mitem &mitem )
 {
 	int axis, value;
 
-	Assert(event->type == EVENT_JOYSTICK_MOVED);
+	Assert(event.type == EVENT_JOYSTICK_MOVED);
 	event_joystick_get_axis( event, &axis, &value );
 
 	if ( abs(value-menu.old_jaxis[axis])<32 )
@@ -1362,12 +1339,12 @@ static void kc_change_joyaxis( kc_menu &menu, d_event *event, kc_mitem &mitem )
 	kc_set_exclusive_binding(menu, mitem, BT_JOY_AXIS, axis);
 }
 
-static void kc_change_mouseaxis( kc_menu &menu, d_event *event, kc_mitem &mitem )
+static void kc_change_mouseaxis( kc_menu &menu,const d_event &event, kc_mitem &mitem )
 {
 	int dx, dy, dz;
 	ubyte code = 255;
 
-	Assert(event->type == EVENT_MOUSE_MOVED);
+	Assert(event.type == EVENT_MOUSE_MOVED);
 	event_mouse_get_delta( event, &dx, &dy, &dz );
 	if ( abs(dx)>5 ) code = 0;
 	if ( abs(dy)>5 ) code = 1;
@@ -1465,7 +1442,7 @@ static void clamp_symmetric_value(fix& value, const fix& bound)
 	clamp_value(value, -bound, bound);
 }
 
-void kconfig_read_controls(d_event *event, int automap_flag)
+void kconfig_read_controls(const d_event &event, int automap_flag)
 {
 	int i = 0, j = 0, speed_factor = cheats.turbo?2:1;
 	static fix64 mouse_delta_time = 0;
@@ -1474,25 +1451,25 @@ void kconfig_read_controls(d_event *event, int automap_flag)
 	// --- Don't do anything if in debug mode ---
 	if ( keyd_pressed[KEY_DELETE] )
 	{
-		memset( &Controls, 0, sizeof(control_info) );
+		Controls = {};
 		return;
 	}
 #endif
 
 	Controls.pitch_time = Controls.vertical_thrust_time = Controls.heading_time = Controls.sideways_thrust_time = Controls.bank_time = Controls.forward_thrust_time = 0;
 
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_KEY_COMMAND:
 		case EVENT_KEY_RELEASE:
-			for (i = 0; i < lengthof(kc_keyboard); i++)
+			for (uint_fast32_t i = 0; i < lengthof(kc_keyboard); i++)
 			{
 				if (kcm_keyboard[i].value < 255 && kcm_keyboard[i].value == event_key_get_raw(event))
 				{
-					input_button_matched(kc_keyboard[i], (event->type==EVENT_KEY_COMMAND));
+					input_button_matched(kc_keyboard[i], (event.type==EVENT_KEY_COMMAND));
 				}
 			}
-			if (!automap_flag && event->type == EVENT_KEY_COMMAND)
+			if (!automap_flag && event.type == EVENT_KEY_COMMAND)
 				for (i = 0, j = 0; i < 28; i += 3, j++)
 					if (kcm_rebirth[i].value < 255 && kcm_rebirth[i].value == event_key_get_raw(event))
 					{
@@ -1504,14 +1481,14 @@ void kconfig_read_controls(d_event *event, int automap_flag)
 		case EVENT_JOYSTICK_BUTTON_UP:
 			if (!(PlayerCfg.ControlType & CONTROL_USING_JOYSTICK))
 				break;
-			for (i = 0; i < lengthof(kc_joystick); i++)
+			for (uint_fast32_t i = 0; i < lengthof(kc_joystick); i++)
 			{
 				if (kcm_joystick[i].value < 255 && kc_joystick[i].type == BT_JOY_BUTTON && kcm_joystick[i].value == event_joystick_get_button(event))
 				{
-					input_button_matched(kc_joystick[i], (event->type==EVENT_JOYSTICK_BUTTON_DOWN));
+					input_button_matched(kc_joystick[i], (event.type==EVENT_JOYSTICK_BUTTON_DOWN));
 				}
 			}
-			if (!automap_flag && event->type == EVENT_JOYSTICK_BUTTON_DOWN)
+			if (!automap_flag && event.type == EVENT_JOYSTICK_BUTTON_DOWN)
 				for (i = 1, j = 0; i < 29; i += 3, j++)
 					if (kcm_rebirth[i].value < 255 && kcm_rebirth[i].value == event_joystick_get_button(event))
 					{
@@ -1523,14 +1500,14 @@ void kconfig_read_controls(d_event *event, int automap_flag)
 		case EVENT_MOUSE_BUTTON_UP:
 			if (!(PlayerCfg.ControlType & CONTROL_USING_MOUSE))
 				break;
-			for (i = 0; i < lengthof(kc_mouse); i++)
+			for (uint_fast32_t i = 0; i < lengthof(kc_mouse); i++)
 			{
 				if (kcm_mouse[i].value < 255 && kc_mouse[i].type == BT_MOUSE_BUTTON && kcm_mouse[i].value == event_mouse_get_button(event))
 				{
-					input_button_matched(kc_mouse[i], (event->type==EVENT_MOUSE_BUTTON_DOWN));
+					input_button_matched(kc_mouse[i], (event.type==EVENT_MOUSE_BUTTON_DOWN));
 				}
 			}
-			if (!automap_flag && event->type == EVENT_MOUSE_BUTTON_DOWN)
+			if (!automap_flag && event.type == EVENT_MOUSE_BUTTON_DOWN)
 				for (i = 2, j = 0; i < 30; i += 3, j++)
 					if (kcm_rebirth[i].value < 255 && kcm_rebirth[i].value == event_mouse_get_button(event))
 					{

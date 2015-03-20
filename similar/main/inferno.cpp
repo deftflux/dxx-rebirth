@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -81,8 +87,12 @@ char copyright[] = "DESCENT II  COPYRIGHT (C) 1994-1996 PARALLAX SOFTWARE CORPOR
 #include "../texmap/scanline.h" //for select_tmap -MM
 #include "event.h"
 #include "rbaudio.h"
-#ifndef __LINUX__
+#ifndef __linux__
 #include "messagebox.h"
+#else
+#ifdef WORDS_NEED_ALIGNMENT
+#include <sys/prctl.h>
+#endif
 #endif
 #ifdef EDITOR
 #include "editor/editor.h"
@@ -93,7 +103,8 @@ char copyright[] = "DESCENT II  COPYRIGHT (C) 1994-1996 PARALLAX SOFTWARE CORPOR
 #ifdef USE_UDP
 #include "net_udp.h"
 #endif
-
+#include "dxxsconf.h"
+#include "compiler-begin.h"
 #ifdef USE_TRACKER
 #  include "curlutil.h"
 #endif
@@ -104,9 +115,6 @@ int Screen_mode=-1;					//game screen or editor screen?
 int HiresGFXAvailable = 0;
 int MacHog = 0;	// using a Mac hogfile?
 #elif defined(DXX_BUILD_DESCENT_II)
-#ifdef	EDITOR
-char	Auto_file[128] = "";
-#endif
 
 #endif
 
@@ -115,12 +123,14 @@ static void print_commandline_help()
 {
 	printf( "\n System Options:\n\n");
 	printf( "  -nonicefps                    Don't free CPU-cycles\n");
-	printf( "  -maxfps <n>                   Set maximum framerate to <n>\n\t\t\t\t(default: %i, availble: %i-%i)\n", MAXIMUM_FPS, MINIMUM_FPS, MAXIMUM_FPS);
+	printf( "  -maxfps <n>                   Set maximum framerate to <n>\n\t\t\t\t(default: %i, available: %i-%i)\n", MAXIMUM_FPS, MINIMUM_FPS, MAXIMUM_FPS);
 	printf( "  -hogdir <s>                   set shared data directory to <s>\n");
 	printf( "  -nohogdir                     don't try to use shared data directory\n");
 	printf( "  -use_players_dir              put player files and saved games in Players subdirectory\n");
 	printf( "  -lowmem                       Lowers animation detail for better performance with\n\t\t\t\tlow memory\n");
 	printf( "  -pilot <s>                    Select pilot <s> automatically\n");
+	printf( "  -auto-record-demo             Start recording on level entry\n");
+	printf( "  -record-demo-format           Set demo name automatically\n");
 	printf( "  -autodemo                     Start in demo mode\n");
 	printf( "  -window                       Run the game in a window\n");
 	printf( "  -noborders                    Do not show borders in window mode\n");
@@ -161,6 +171,7 @@ static void print_commandline_help()
 	printf( "  -udp_hostaddr <s>             Use IP address/Hostname <s> for manual game joining\n\t\t\t\t(default: %s)\n", UDP_MANUAL_ADDR_DEFAULT);
 	printf( "  -udp_hostport <n>             Use UDP port <n> for manual game joining (default: %i)\n", UDP_PORT_DEFAULT);
 	printf( "  -udp_myport <n>               Set my own UDP port to <n> (default: %i)\n", UDP_PORT_DEFAULT);
+	printf( "  -no-tracker                   Disable tracker (unless overridden by later -tracker_hostaddr)\n");
 #ifdef USE_TRACKER
 	printf( "  -tracker_host <s>             Address of Tracker server to register/query games to/from\n\t\t\t\t(default: %s)\n", TRACKER_HOST_DEFAULT);
 #endif // USE_TRACKER
@@ -210,7 +221,7 @@ static void print_commandline_help()
 int Quitting = 0;
 
 // Default event handler for everything except the editor
-int standard_handler(d_event *event)
+int standard_handler(const d_event &event)
 {
 	int key;
 
@@ -241,7 +252,7 @@ int standard_handler(d_event *event)
 		return 1;
 	}
 
-	switch (event->type)
+	switch (event.type)
 	{
 		case EVENT_MOUSE_BUTTON_DOWN:
 		case EVENT_MOUSE_BUTTON_UP:
@@ -321,13 +332,17 @@ int standard_handler(d_event *event)
 int main(int argc, char *argv[])
 {
 	mem_init();
-#ifdef __LINUX__
+#ifdef __linux__
 	error_init(NULL);
+#ifdef WORDS_NEED_ALIGNMENT
+	prctl(PR_SET_UNALIGN, PR_UNALIGN_NOPRINT, 0, 0, 0);
+#endif
 #else
 	error_init(msgbox_error);
 	set_warn_func(msgbox_warning);
 #endif
-	PHYSFSX_init(argc, argv);
+	if (!PHYSFSX_init(argc, argv))
+		return 1;
 	con_init();  // Initialise the console
 
 	setbuf(stdout, NULL); // unbuffered output via printf
@@ -403,16 +418,16 @@ int main(int argc, char *argv[])
 	con_printf(CON_NORMAL, "%s  %s", DESCENT_VERSION, g_descent_build_datetime); // D1X version
 	con_printf(CON_NORMAL, "This is a MODIFIED version of Descent, based on %s.", BASED_VERSION);
 	con_printf(CON_NORMAL, "%s\n%s",TXT_COPYRIGHT,TXT_TRADEMARK);
-	con_printf(CON_NORMAL, "Copyright (C) 2005-2013 Christian Beckhaeuser\n");
+	con_printf(CON_NORMAL, "Copyright (C) 2005-2013 Christian Beckhaeuser");
 #elif defined(DXX_BUILD_DESCENT_II)
 	con_printf(CON_NORMAL, "%s%s  %s", DESCENT_VERSION, PHYSFSX_exists(MISSION_DIR "d2x.hog",1) ? "  Vertigo Enhanced" : "", g_descent_build_datetime); // D2X version
 	con_printf(CON_NORMAL, "This is a MODIFIED version of Descent 2, based on %s.", BASED_VERSION);
 	con_printf(CON_NORMAL, "%s\n%s",TXT_COPYRIGHT,TXT_TRADEMARK);
-	con_printf(CON_NORMAL, "Copyright (C) 1999 Peter Hawkins, 2002 Bradley Bell, 2005-2013 Christian Beckhaeuser\n");
+	con_printf(CON_NORMAL, "Copyright (C) 1999 Peter Hawkins, 2002 Bradley Bell, 2005-2013 Christian Beckhaeuser");
 #endif
 
 	if (GameArg.DbgVerbose)
-		con_printf(CON_VERBOSE,"%s%s", TXT_VERBOSE_1, "");
+		con_puts(CON_VERBOSE, TXT_VERBOSE_1);
 	
 	ReadConfigFile();
 
@@ -476,7 +491,7 @@ int main(int argc, char *argv[])
 	con_printf( CON_DEBUG, "\nRunning game..." );
 	init_game();
 
-	Players[Player_num].callsign[0] = '\0';
+	Players[Player_num].callsign.fill(0);
 
 #if defined(DXX_BUILD_DESCENT_I)
 	key_flush();
@@ -485,8 +500,7 @@ int main(int argc, char *argv[])
 	//	to write certain data.
 	#ifdef	EDITOR
 	if (GameArg.EdiAutoLoad) {
-		strcpy(Auto_file, GameArg.EdiAutoLoad);
-		strcpy(Players[0].callsign, "dummy");
+		Players[0].callsign = "dummy";
 	} else
 	#endif
 #endif
@@ -494,7 +508,7 @@ int main(int argc, char *argv[])
 		if(GameArg.SysPilot)
 		{
 			char filename[32] = "";
-			int j;
+			unsigned j;
 
 			snprintf(filename, sizeof(filename), "%s%.12s", PLAYER_DIRECTORY_STRING(""), GameArg.SysPilot);
 			for (j = GameArg.SysUsePlayersDir? 8 : 0; filename[j] != '\0'; j++) {
@@ -503,12 +517,16 @@ int main(int argc, char *argv[])
 						filename[j] = '\0';
 				}
 			}
-			if(!strstr(filename,".plr")) // if player hasn't specified .plr extension in argument, add it
-				strcat(filename,".plr");
+			if (j < sizeof(filename) - 4 && (j <= 4 || strcmp(&filename[j - 4], ".plr"))) // if player hasn't specified .plr extension in argument, add it
+			{
+				strcpy(&filename[j], ".plr");
+				j += 4;
+			}
 			if(PHYSFSX_exists(filename,0))
 			{
-				strcpy(strstr(filename,".plr"),"\0");
-				strcpy(Players[Player_num].callsign, GameArg.SysUsePlayersDir? &filename[8] : filename);
+				filename[j - 4] = 0;
+				char *b = GameArg.SysUsePlayersDir? &filename[8] : filename;
+				Players[Player_num].callsign.copy(b, std::distance(b, end(filename)));
 				read_player_file();
 				WriteConfigFile();
 			}
@@ -518,7 +536,8 @@ int main(int argc, char *argv[])
 #if defined(DXX_BUILD_DESCENT_II)
 #ifdef EDITOR
 	if (GameArg.EdiAutoLoad) {
-		strcpy(Level_names[0], Auto_file);
+		/* Any number >= FILENAME_LEN works */
+		Level_names[0].copy_if(GameArg.EdiAutoLoad, Level_names[0].size());
 		LoadLevel(1, 1);
 	}
 	else
@@ -554,7 +573,7 @@ int main(int argc, char *argv[])
 	free_text();
 	args_exit();
 	newmenu_free_background();
-	free_mission();
+	Current_mission.reset();
 	PHYSFSX_removeArchiveContent();
 
 	return(0);		//presumably successful exit

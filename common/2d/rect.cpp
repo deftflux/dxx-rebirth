@@ -1,4 +1,10 @@
 /*
+ * Portions of this file are copyright Rebirth contributors and licensed as
+ * described in COPYING.txt.
+ * Portions of this file are copyright Parallax Software and licensed
+ * according to the Parallax license below.
+ * See COPYING.txt for license details.
+
 THE COMPUTER CODE CONTAINED HEREIN IS THE SOLE PROPERTY OF PARALLAX
 SOFTWARE CORPORATION ("PARALLAX").  PARALLAX, IN DISTRIBUTING THE CODE TO
 END-USERS, AND SUBJECT TO ALL OF THE TERMS AND CONDITIONS HEREIN, GRANTS A
@@ -34,23 +40,19 @@ void gr_urect(int left,int top,int right,int bot)
 		return;
 	}
 #else
-	int i;
-
-	for ( i=top; i<=bot; i++ )
+	for ( int i=top; i<=bot; i++ )
 		gr_uscanline( left, right, i );
 #endif
 }
 
 void gr_rect(int left,int top,int right,int bot)
 {
-	int i;
-
 #ifdef OGL
 	if (TYPE == BM_OGL) {
 		ogl_urect(left,top,right,bot);
 		return;
 	}
 #endif
-	for ( i=top; i<=bot; i++ )
+	for ( int i=top; i<=bot; i++ )
 		gr_scanline( left, right, i );
 }
