@@ -1268,6 +1268,8 @@ static void net_udp_send_sequence_packet(UDP_sequence_packet seq, const _sockadd
 	memcpy(&buf[len], seq.player.callsign.buffer(), CALLSIGN_LEN+1);		len += CALLSIGN_LEN+1;
 	buf[len] = seq.player.connected;				len++;
 	buf[len] = seq.player.rank;					len++;
+	PUT_INTEL_INT( &buf[len], seq.player.tracker_uid1 );		len += 4;
+	PUT_INTEL_INT( &buf[len], seq.player.tracker_uid2 );		len += 4;
 	dxx_sendto(recv_addr, UDP_Socket[0], buf, 0);
 }
 
@@ -1279,6 +1281,8 @@ static void net_udp_receive_sequence_packet(ubyte *data, UDP_sequence_packet *se
 	memcpy(seq->player.callsign.buffer(), &(data[len]), CALLSIGN_LEN+1);	len += CALLSIGN_LEN+1;
 	seq->player.connected = data[len];				len++;
 	memcpy (&(seq->player.rank),&(data[len]),1);			len++;
+	seq->player.tracker_uid1 = GET_INTEL_INT( data + len );		len += 4;
+	seq->player.tracker_uid2 = GET_INTEL_INT( data + len );		len += 4;
 	
 	if (multi_i_am_master())
 		seq->player.protocol.udp.addr = sender_addr;
@@ -1309,7 +1313,9 @@ void net_udp_init()
 	UDP_Seq.type = UPID_REQUEST;
 	UDP_Seq.player.callsign = Players[Player_num].callsign;
 
-	UDP_Seq.player.rank=GetMyNetRanking();	
+	UDP_Seq.player.rank=GetMyNetRanking();
+	UDP_Seq.player.tracker_uid1 = PlayerCfg.TrackerUID1;
+	UDP_Seq.player.tracker_uid2 = PlayerCfg.TrackerUID2;
 
 	multi_new_game();
 	net_udp_flush();
@@ -1483,6 +1489,8 @@ static net_udp_new_player(UDP_sequence_packet *their)
 
 	ClipRank (&their->player.rank);
 	Netgame.players[pnum].rank=their->player.rank;
+	Netgame.players[pnum].tracker_uid1 = their->player.tracker_uid1;
+	Netgame.players[pnum].tracker_uid2 = their->player.tracker_uid2;
 
 	Players[pnum].connected = CONNECT_PLAYING;
 	Players[pnum].net_kills_total = 0;
@@ -2173,6 +2181,8 @@ static void net_udp_add_player(UDP_sequence_packet *p)
 	Netgame.players[N_players].protocol.udp.addr = p->player.protocol.udp.addr;
 	Netgame.players[N_players].rank=p->player.rank;
 	Netgame.players[N_players].connected = CONNECT_PLAYING;
+	Netgame.players[N_players].tracker_uid1 = p->player.tracker_uid1;
+	Netgame.players[N_players].tracker_uid2 = p->player.tracker_uid2;
 	Players[N_players].KillGoalCount=0;
 	Players[N_players].connected = CONNECT_PLAYING;
 	Netgame.players[N_players].LastPacketTime = timer_query();
@@ -2206,6 +2216,8 @@ static void net_udp_remove_player(UDP_sequence_packet *p)
 		Netgame.players[i].callsign = Netgame.players[i+1].callsign;
 		Netgame.players[i].protocol.udp.addr = Netgame.players[i+1].protocol.udp.addr;
 		Netgame.players[i].rank=Netgame.players[i+1].rank;
+		Netgame.players[i].tracker_uid1 = Netgame.players[i + 1].tracker_uid1;
+		Netgame.players[i].tracker_uid2 = Netgame.players[i + 1].tracker_uid2;
 		ClipRank (&Netgame.players[i].rank);
 	}
 		
@@ -3969,6 +3981,8 @@ abort:
 			{
 				Netgame.players[N_players].callsign = Netgame.players[i].callsign;
 				Netgame.players[N_players].rank=Netgame.players[i].rank;
+				Netgame.players[N_players].tracker_uid1 = Netgame.players[i].tracker_uid1;
+				Netgame.players[N_players].tracker_uid2 = Netgame.players[i].tracker_uid2;
 				ClipRank (&Netgame.players[N_players].rank);
 			}
 			Players[N_players].connected = CONNECT_PLAYING;
