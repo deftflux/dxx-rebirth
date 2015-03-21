@@ -2436,6 +2436,8 @@ static uint_fast32_t net_udp_prepare_heavy_game_info(const _sockaddr *addr, ubyt
 			memcpy(&buf[len], Netgame.players[i].callsign.buffer(), CALLSIGN_LEN+1); 	len += CALLSIGN_LEN+1;
 			buf[len] = Netgame.players[i].connected;				len++;
 			buf[len] = Netgame.players[i].rank;					len++;
+			PUT_INTEL_INT( buf + len, Netgame.players[i].tracker_uid1 );		len += 4;
+			PUT_INTEL_INT( buf + len, Netgame.players[i].tracker_uid2 );		len += 4;
 			if (addr && *addr == Netgame.players[i].protocol.udp.addr)
 				your_index = i;
 		}
@@ -2669,6 +2671,8 @@ static void net_udp_process_game_info(const uint8_t *data, uint_fast32_t, const 
 			len += CALLSIGN_LEN+1;
 			i.connected = data[len];				len++;
 			i.rank = data[len];					len++;
+			i.tracker_uid1 = GET_INTEL_INT( &data[len] );		len += 4;
+			i.tracker_uid2 = GET_INTEL_INT( &data[len] );		len += 4;
 		}
 		Netgame.levelnum = GET_INTEL_INT(&(data[len]));					len += 4;
 		Netgame.gamemode = data[len];							len++;
