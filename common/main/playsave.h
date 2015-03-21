@@ -102,6 +102,8 @@ struct player_config
 	ntstring<GUIDEBOT_NAME_LEN> GuidebotName, GuidebotNameReal;
 #endif
 	int HudMode;
+	uint32_t TrackerUID1;
+	uint32_t TrackerUID2;
 #if defined(DXX_BUILD_DESCENT_II)
 	int EscortHotKeys;
 #endif

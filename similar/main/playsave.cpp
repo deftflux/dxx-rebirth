@@ -158,6 +158,9 @@ COPYRIGHT 1993-1999 PARALLAX SOFTWARE CORPORATION.  ALL RIGHTS RESERVED.
 #define GRAPHICS_ALPHAEFFECTS_NAME_TEXT "alphaeffects"
 #define GRAPHICS_DYNLIGHTCOLOR_NAME_TEXT "dynlightcolor"
 #define PLX_VERSION_HEADER_TEXT "[plx version]"
+#define TRACKER_HEADER_TEXT "[tracker]"
+#define TRACKER_UID1_TEXT "uid1"
+#define TRACKER_UID2_TEXT "uid2"
 #define END_TEXT	"[end]"
 
 #define SAVE_FILE_ID MAKE_SIG('D','P','L','R')
@@ -196,6 +199,9 @@ int new_player_config()
 	for (unsigned i=0;i < N_SAVE_SLOTS;i++)
 		saved_games[i].name[0] = 0;
 #endif
+	uint32_t iTrackerUid1 = time( NULL ) * d_rand();
+	uint32_t iTrackerUid2 = d_rand() * d_rand();
+
 	InitWeaponOrdering (); //setup default weapon priorities
 	PlayerCfg.ControlType=0; // Assume keyboard
 	PlayerCfg.KeySettings = DefaultKeySettings;
@@ -219,6 +225,8 @@ int new_player_config()
 	PlayerCfg.ReticleRGBA[0] = RET_COLOR_DEFAULT_R; PlayerCfg.ReticleRGBA[1] = RET_COLOR_DEFAULT_G; PlayerCfg.ReticleRGBA[2] = RET_COLOR_DEFAULT_B; PlayerCfg.ReticleRGBA[3] = RET_COLOR_DEFAULT_A;
 	PlayerCfg.ReticleSize = 0;
 	PlayerCfg.HudMode = 0;
+	PlayerCfg.TrackerUID1 = iTrackerUid1;
+	PlayerCfg.TrackerUID2 = iTrackerUid2;
 #if defined(DXX_BUILD_DESCENT_I)
 	PlayerCfg.BombGauge = 1;
 #elif defined(DXX_BUILD_DESCENT_II)
@@ -392,6 +400,22 @@ static int read_player_dxx(const char *filename)
 				PlayerCfg.KeySettingsRebirth[i]   = kc1;
 				PlayerCfg.KeySettingsRebirth[i+1] = kc2;
 				PlayerCfg.KeySettingsRebirth[i+2] = kc3;
+			}
+		}
+		else if( !strcmp( line, TRACKER_HEADER_TEXT ) )
+		{
+			while( PHYSFSX_fgets( line, f ) && !PHYSFS_eof( f ) && strcmp( line, END_TEXT ) )
+			{
+				const char *value = splitword( line, '=' );
+
+				if( !value )
+					continue;
+
+				if( !strcmp( line, TRACKER_UID1_TEXT ) )
+					PlayerCfg.TrackerUID1 = atoi( value );
+
+				else if( !strcmp( line, TRACKER_UID2_TEXT ) )
+					PlayerCfg.TrackerUID2 = atoi( value );
 			}
 		}
 		else if (!strcmp(line,COCKPIT_HEADER_TEXT))
@@ -713,6 +737,10 @@ static int write_player_dxx(const char *filename)
 		PHYSFSX_printf(fout,"9=" WEAPON_KEYv2_VALUE_TEXT "\n",PlayerCfg.KeySettingsRebirth[24],PlayerCfg.KeySettingsRebirth[25],PlayerCfg.KeySettingsRebirth[26]);
 		PHYSFSX_printf(fout,"0=" WEAPON_KEYv2_VALUE_TEXT "\n",PlayerCfg.KeySettingsRebirth[27],PlayerCfg.KeySettingsRebirth[28],PlayerCfg.KeySettingsRebirth[29]);
 		PHYSFSX_printf(fout,END_TEXT "\n");
+		PHYSFSX_printf(fout,TRACKER_HEADER_TEXT "\n");
+		PHYSFSX_printf(fout,TRACKER_UID1_TEXT "=%u\n", PlayerCfg.TrackerUID1 );
+		PHYSFSX_printf(fout,TRACKER_UID2_TEXT "=%u\n", PlayerCfg.TrackerUID2 );
+		PHYSFSX_printf(fout,END_TEXT "\n" );
 		PHYSFSX_printf(fout,COCKPIT_HEADER_TEXT "\n");
 #if defined(DXX_BUILD_DESCENT_I)
 		PHYSFSX_printf(fout,COCKPIT_MODE_NAME_TEXT "=%i\n",PlayerCfg.CockpitMode[0]);
