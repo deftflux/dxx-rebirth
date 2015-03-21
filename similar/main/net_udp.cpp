@@ -3877,6 +3877,7 @@ GetPlayersAgain:
 		data["v_major"] = DXX_VERSION_MAJORi;
 		data["v_minor"] = DXX_VERSION_MINORi;
 		data["v_micro"] = DXX_VERSION_MICROi;
+		data["v_proto"] = MULTI_PROTO_VERSION;
 		data["v_game"] = DXX_NAME_NUMBER;
 		data["port"] = UDP_MyPort;
 		data["id"] = Netgame.protocol.udp.GameID;
