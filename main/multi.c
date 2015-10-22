@@ -2453,7 +2453,7 @@ void multi_powcap_cap_objects()
 	char type;
 	int index;
 
-	if (!(Game_mode & GM_NETWORK))
+	if (!(Game_mode & GM_NETWORK) || (Game_mode & GM_MULTI_COOP))
 		return;
 
 	Players[Player_num].secondary_ammo[PROXIMITY_INDEX]+=Proximity_dropped;
@@ -2506,7 +2506,7 @@ void multi_powcap_adjust_cap_for_player(int pnum)
 
 	int index;
 
-	if (!(Game_mode & GM_NETWORK))
+	if (!(Game_mode & GM_NETWORK) || (Game_mode & GM_MULTI_COOP))
 		return;
 
 	for (index=0;index<MAX_PRIMARY_WEAPONS;index++)
@@ -2535,7 +2535,7 @@ void multi_powcap_adjust_remote_cap(int pnum)
 
 	int index;
 
-	if (!(Game_mode & GM_NETWORK))
+	if (!(Game_mode & GM_NETWORK) || (Game_mode & GM_MULTI_COOP))
 		return;
 
 	for (index=0;index<MAX_PRIMARY_WEAPONS;index++)
@@ -3011,7 +3011,7 @@ multi_prep_level(void)
 		multi_set_robot_ai(); // Set all Robot AI to types we can cope with
 	}
 
-	if (Game_mode & GM_NETWORK)
+	if ((Game_mode & GM_NETWORK) && !(Game_mode & GM_MULTI_COOP))
 	{
 		multi_powcap_adjust_cap_for_player(Player_num);
 		multi_send_powcap_update();
@@ -3221,6 +3221,9 @@ int multi_all_players_alive()
 
 void multi_send_powcap_update ()
 {
+    if (!(Game_mode & GM_NETWORK) || (Game_mode & GM_MULTI_COOP))
+		return;
+
 	int i;
 
 	multibuf[0]=MULTI_POWCAP_UPDATE;
@@ -3232,6 +3235,9 @@ void multi_send_powcap_update ()
 
 void multi_do_powcap_update (const ubyte *buf)
 {
+    if (!(Game_mode & GM_NETWORK) || (Game_mode & GM_MULTI_COOP))
+		return;
+
 	int i;
 
 	for (i=0;i<MAX_POWERUP_TYPES;i++)
